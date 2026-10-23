@@ -911,15 +911,17 @@ createApp({
       const token = localStorage.getItem('rh_auth_token');
       if (!token) {
         currentUser.value = null;
+        window.location.href = '/sign-in?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
         return;
       }
       try {
         const res = await authFetch('/api/auth/me');
         if (res.ok) {
           currentUser.value = await res.json();
-        } else if (res.status === 401) {
+        } else if (res.status === 401 || res.status === 403) {
           localStorage.removeItem('rh_auth_token');
           currentUser.value = null;
+          window.location.href = '/sign-in?redirect=' + encodeURIComponent(window.location.pathname + window.location.search);
         }
       } catch (err) {
         console.error('Failed to fetch current user:', err);
@@ -1087,13 +1089,10 @@ createApp({
         await authFetch('/api/auth/logout', { method: 'POST' });
       } catch(e){}
       localStorage.removeItem('rh_auth_token');
+      localStorage.removeItem('rh_auth_user');
       currentUser.value = null;
       showUserDropdown.value = false;
-      if (activeTab.value === 'admin') {
-        activeTab.value = 'studio';
-      }
-      await refreshTasks();
-      await refreshGallery();
+      window.location.href = '/sign-in';
     };
 
     const openChangePwdModal = () => {

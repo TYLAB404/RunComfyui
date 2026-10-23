@@ -10,10 +10,15 @@ import base64
 import requests
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Depends, Response
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from security import encrypt_key, decrypt_key, mask_key, verify_key_with_runninghub
+from database import (
+    db_save_task, db_update_task, db_load_tasks, db_get_task, db_delete_task,
+    is_rate_limited, record_failed_attempt, clear_failed_attempts
+)
 from auth import (
     load_users, save_users, sanitize_user, get_user_by_id, get_user_by_identifier,
     create_user, update_user_fields, set_user_password, delete_user_by_id,
@@ -174,25 +179,17 @@ def get_api_keys_safe(cfg: Optional[Dict[str, Any]] = None) -> List[Dict[str, An
     return safe_list
 
 def load_tasks() -> List[Dict[str, Any]]:
-    if os.path.exists(TASKS_PATH):
-        try:
-            with open(TASKS_PATH, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return []
+    """从高并发 SQLite 数据库读取任务（支持大并发与事务一致性）"""
+    return db_load_tasks(is_admin=True, limit=500)
 
 def save_tasks(tasks: List[Dict[str, Any]]):
-    with open(TASKS_PATH, "w", encoding="utf-8") as f:
-        json.dump(tasks, f, indent=2, ensure_ascii=False)
+    """持久化保存任务至 SQLite"""
+    for t in tasks:
+        db_save_task(t)
 
 def update_task_record(task_id: str, updates: Dict[str, Any]):
-    tasks = load_tasks()
-    for t in tasks:
-        if t.get("taskId") == task_id:
-            t.update(updates)
-            break
-    save_tasks(tasks)
+    """原子更新任务状态、输出图像或运行时长"""
+    db_update_task(task_id, updates)
 
 # ----------------- 异步后台实时截流与轮询任务 -----------------
 
@@ -656,25 +653,32 @@ async def login_user(req: LoginRequest, request: Request, response: Response):
     cfg = load_config()
     sys_cfg = cfg.get("system", {})
     
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"{client_ip}:{req.identifier.strip().lower()}"
+    if is_rate_limited(rate_key):
+        raise HTTPException(status_code=429, detail="密码连续错误次数过多，账户已被临时锁定 15 分钟以防暴力破解，请稍后再试")
+    
     # Cloudflare Turnstile 验证
     if sys_cfg.get("turnstileEnabled"):
         secret_enc = sys_cfg.get("turnstileSecretKeyEncrypted", "")
         secret_key = decrypt_key(secret_enc) if secret_enc else ""
         if secret_key:
-            client_ip = request.client.host if request.client else ""
             ok, msg = await verify_turnstile_token(req.turnstileToken, secret_key, client_ip)
             if not ok:
                 raise HTTPException(status_code=400, detail=msg)
     
     user = get_user_by_identifier(req.identifier)
     if not user:
+        record_failed_attempt(rate_key)
         raise HTTPException(status_code=400, detail="用户名或邮箱不存在")
     if not user.get("isActive", True):
         raise HTTPException(status_code=403, detail="该账户已被管理员停用封禁，请联系管理员")
     
     if not verify_password(req.password, user.get("passwordHash", ""), user.get("salt", "")):
+        record_failed_attempt(rate_key)
         raise HTTPException(status_code=400, detail="密码错误，请重新输入")
     
+    clear_failed_attempts(rate_key)
     update_user_fields(user["id"], {"lastLogin": int(time.time())})
     user["lastLogin"] = int(time.time())
     
@@ -1373,7 +1377,6 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
 def admin_list_all_tasks(_: Dict[str, Any] = Depends(get_current_admin)):
     """管理员全量任务审计视图"""
     return load_tasks()
-    return tasks
 
 @app.get("/api/tasks/{task_id}")
 def get_task(task_id: str):
@@ -1487,6 +1490,34 @@ def delete_gallery_file(filename: str, current_user: Optional[Dict[str, Any]] = 
         except Exception:
             pass
     return {"status": "ok"}
+
+# ----------------- 独立前端门户路由 -----------------
+
+@app.get("/sign-in")
+def serve_sign_in_page():
+    """独立登录/注册门户页面 (参考 Moyuu 风格深色全屏体验)"""
+    login_path = os.path.join(STATIC_DIR, "login.html")
+    if os.path.exists(login_path):
+        return FileResponse(login_path)
+    return RedirectResponse(url="/")
+
+@app.get("/login")
+def serve_login_alias():
+    """别名快速跳转"""
+    return RedirectResponse(url="/sign-in")
+
+@app.get("/register")
+def serve_register_alias():
+    """别名快速跳转至注册选项卡"""
+    return RedirectResponse(url="/sign-in#register")
+
+@app.get("/admin")
+def serve_admin_page():
+    """独立开发者超级后台管理中心 (纯前后端分离专属看板)"""
+    admin_path = os.path.join(STATIC_DIR, "admin.html")
+    if os.path.exists(admin_path):
+        return FileResponse(admin_path)
+    return RedirectResponse(url="/")
 
 # 挂载静态文件
 app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")

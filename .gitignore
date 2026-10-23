@@ -14,6 +14,12 @@ data/.secret.key
 data/config.json
 data/users.json
 data/tasks.json
+data/app.db*
+*.db
+*.sqlite
+*.sqlite3
+*-wal
+*-shm
 .env
 *.env
 *.key
