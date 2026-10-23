@@ -4,6 +4,7 @@ import time
 import random
 import asyncio
 import aiohttp
+import copy
 import urllib.parse
 import uuid
 import base64
@@ -1371,35 +1372,8 @@ def detect_silent_audio_subgraphs(nodes: Dict[str, Any]) -> Set[str]:
                                     hidden_ids.update(chain)
     return hidden_ids
 
-@app.post("/api/workflows/inspect")
-def inspect_workflow_endpoint(payload: Dict[str, Any]):
-    """通过 RunningHub OpenAPI 读取工作流的 ComfyUI 原始结构并做深度动态提取"""
-    workflow_id = payload.get("workflowId")
-    if not workflow_id:
-        raise HTTPException(status_code=400, detail="Missing workflowId")
-    
-    cfg = load_config()
-    api_key = payload.get("apiKey") or get_active_api_key(cfg)
-    if not api_key:
-        raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中添加启用密钥")
-    
-    url = f"{RUNNINGHUB_API_URL}/api/openapi/getJsonApiFormat"
-    try:
-        res = requests.post(url, json={"apiKey": api_key, "workflowId": str(workflow_id)}, timeout=15)
-        raw_data = res.json()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Request to RunningHub failed: {str(e)}")
-    
-    if raw_data.get("code") != 0:
-        raise HTTPException(status_code=400, detail=raw_data.get("msg") or "获取工作流信息失败")
-    
-    prompt_str = raw_data.get("data", {}).get("prompt", "{}")
-    try:
-        nodes = json.loads(prompt_str)
-    except Exception:
-        nodes = {}
-
-    # 动态深度结构解析
+def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """对 ComfyUI 节点结构做深度动态解析，提取提示词、尺寸、采样器、参考图视频、以及全节点可调项"""
     prompt_nodes = []
     sampler_nodes = []
     latent_nodes = []
@@ -1577,9 +1551,6 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
     all_editable_nodes.sort(key=node_sort_key)
 
     return {
-        "status": "ok",
-        "workflowId": str(workflow_id),
-        "totalNodes": len(nodes),
         "hiddenAuxiliaryNodeIds": list(hidden_node_ids) if hidden_node_ids else [],
         "dynamicSchema": {
             "promptNodes": categorized_prompts,
@@ -1590,6 +1561,81 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
             "qualityNodes": quality_nodes,
             "allEditableNodes": all_editable_nodes
         }
+    }
+
+@app.post("/api/workflows/inspect")
+def inspect_workflow_endpoint(payload: Dict[str, Any]):
+    """通过 RunningHub OpenAPI 读取工作流的 ComfyUI 原始结构并做深度动态提取"""
+    workflow_id = payload.get("workflowId")
+    if not workflow_id:
+        raise HTTPException(status_code=400, detail="Missing workflowId")
+    
+    cfg = load_config()
+    api_key = payload.get("apiKey") or get_active_api_key(cfg)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中添加启用密钥")
+    
+    url = f"{RUNNINGHUB_API_URL}/api/openapi/getJsonApiFormat"
+    try:
+        res = requests.post(url, json={"apiKey": api_key, "workflowId": str(workflow_id)}, timeout=15)
+        raw_data = res.json()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Request to RunningHub failed: {str(e)}")
+    
+    if raw_data.get("code") != 0:
+        raise HTTPException(status_code=400, detail=raw_data.get("msg") or "获取工作流信息失败")
+    
+    prompt_str = raw_data.get("data", {}).get("prompt", "{}")
+    try:
+        nodes = json.loads(prompt_str)
+    except Exception:
+        nodes = {}
+
+    parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
+    return {
+        "status": "ok",
+        "workflowId": str(workflow_id),
+        "totalNodes": len(nodes),
+        "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
+        "dynamicSchema": parsed["dynamicSchema"]
+    }
+
+@app.post("/api/workflows/parse_json")
+async def parse_workflow_json_endpoint(
+    file: UploadFile = File(...),
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
+):
+    """用户直接上传本地 ComfyUI 工作流 JSON 文件（免 workflowId 直接执行模式）"""
+    cfg = load_config()
+    filename = file.filename or "custom_workflow.json"
+    content_bytes = await file.read()
+    try:
+        content_text = content_bytes.decode("utf-8")
+        raw_json = json.loads(content_text)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"文件不是合法的 JSON 格式: {str(e)}")
+
+    # 智能识别与校验 ComfyUI 格式
+    if isinstance(raw_json, dict) and "prompt" in raw_json and isinstance(raw_json["prompt"], dict):
+        nodes = raw_json["prompt"]
+    elif isinstance(raw_json, dict) and any("class_type" in v for v in raw_json.values() if isinstance(v, dict)):
+        nodes = raw_json
+    elif isinstance(raw_json, dict) and "nodes" in raw_json and isinstance(raw_json["nodes"], list):
+        raise HTTPException(
+            status_code=400, 
+            detail="检测到您上传的是 ComfyUI Web 画布工程文件。请在 ComfyUI 设置中开启【Enable Dev mode Options (启用开发者模式)】，并在菜单中点击【Save (API Format) / 导出 API 格式】后再上传即可直接运行。"
+        )
+    else:
+        raise HTTPException(status_code=400, detail="未能识别出有效的 ComfyUI 工作流节点拓扑，请确保为 ComfyUI API 格式 JSON。")
+
+    parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
+    return {
+        "status": "ok",
+        "workflowName": filename,
+        "totalNodes": len(nodes),
+        "customPrompt": nodes,
+        "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
+        "dynamicSchema": parsed["dynamicSchema"]
     }
 
 @app.post("/api/upload")
@@ -1661,6 +1707,7 @@ class GenerateRequest(BaseModel):
     negativePrompt: Optional[str] = None
     workflowName: Optional[str] = None
     taskType: Optional[str] = "Standard"
+    customPrompt: Optional[Dict[str, Any]] = None
 
 @app.post("/api/generate")
 async def generate_task(
@@ -1677,6 +1724,8 @@ async def generate_task(
     api_key = get_active_api_key(cfg)
     if not api_key:
         raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中添加启用密钥")
+
+    is_custom_proxy = bool(req.customPrompt or str(req.workflowId).startswith("custom_"))
 
     # 匹配目标工作流并计算点数单价 (P0-5 计费闭环)
     target_wf = next((w for w in cfg.get("workflows", []) if str(w.get("id")) == str(req.workflowId)), {})
@@ -1697,36 +1746,89 @@ async def generate_task(
     # 规范化算力档位：Standard (标准极速独享通道) vs Lite (经济共享排队通道)
     task_type = "Lite" if req.taskType and req.taskType.strip().lower() == "lite" else "Standard"
 
-    payload = {
-        "apiKey": api_key,
-        "workflowId": str(req.workflowId),
-        "nodeInfoList": req.nodeInfoList,
-        "taskType": task_type
-    }
+    task_id = None
+    net_wss_url = None
 
-    headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
-    try:
-        res = await asyncio.to_thread(
-            requests.post,
-            f"{RUNNINGHUB_API_URL}/task/openapi/create",
-            json=payload,
-            headers=headers,
-            timeout=25
-        )
-        data = res.json()
-    except Exception as e:
-        # 异常退还已扣减点数
-        if points_deducted and current_user:
-            db_refund_user_points(current_user["id"], task_cost, reason="调用云端引擎失败全额退款")
-        raise HTTPException(status_code=500, detail=f"调用 RunningHub 创建任务失败: {str(e)}")
+    if is_custom_proxy:
+        # 模式 A: 用户上传的本地 ComfyUI 工作流，通过 RunningHub 原生 Proxy 代理通道免 ID 直接运行
+        prompt_dict = copy.deepcopy(req.customPrompt or {})
+        # 将用户在前端面板上修改过的字段参数反写回 prompt 节点结构
+        for item in req.nodeInfoList:
+            nid = str(item.get("nodeId"))
+            fname = item.get("fieldName")
+            fval = item.get("fieldValue")
+            if nid in prompt_dict and "inputs" in prompt_dict[nid]:
+                prompt_dict[nid]["inputs"][fname] = fval
 
-    if data.get("code") != 0:
-        if points_deducted and current_user:
-            db_refund_user_points(current_user["id"], task_cost, reason=f"云端拒绝任务退还: {data.get('msg')}")
-        raise HTTPException(status_code=400, detail=data.get("msg") or "创建任务失败")
+        client_id = str(uuid.uuid4())
+        proxy_payload = {
+            "prompt": prompt_dict,
+            "client_id": client_id
+        }
 
-    task_id = data.get("data", {}).get("taskId")
-    net_wss_url = data.get("data", {}).get("netWssUrl")
+        last_err = ""
+        # 优先通过 .ai 域名提交原生 ComfyUI 原生代理任务，故障时无缝降级至 .cn
+        for host in ["www.runninghub.ai", "www.runninghub.cn"]:
+            try:
+                p_url = f"https://{host}/proxy/{api_key}/prompt"
+                res = await asyncio.to_thread(
+                    requests.post,
+                    p_url,
+                    json=proxy_payload,
+                    timeout=25
+                )
+                if res.status_code == 200:
+                    try:
+                        p_data = res.json()
+                        task_id = p_data.get("prompt_id")
+                        if task_id:
+                            break
+                        else:
+                            last_err = res.text or "云端返回空响应"
+                    except Exception:
+                        last_err = res.text
+                else:
+                    last_err = f"HTTP {res.status_code}: {res.text}"
+            except Exception as e:
+                last_err = str(e)
+                continue
+
+        if not task_id:
+            if points_deducted and current_user:
+                db_refund_user_points(current_user["id"], task_cost, reason=f"原生代理提交失败退还: {last_err}")
+            raise HTTPException(status_code=500, detail=f"提交至云端 ComfyUI 原生代理引擎失败: {last_err}")
+    else:
+        # 模式 B: 传统的 RunningHub 云端已保存模板工作流 (通过 workflowId 调度)
+        payload = {
+            "apiKey": api_key,
+            "workflowId": str(req.workflowId),
+            "nodeInfoList": req.nodeInfoList,
+            "taskType": task_type
+        }
+
+        headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
+        try:
+            res = await asyncio.to_thread(
+                requests.post,
+                f"{RUNNINGHUB_API_URL}/task/openapi/create",
+                json=payload,
+                headers=headers,
+                timeout=25
+            )
+            data = res.json()
+        except Exception as e:
+            # 异常退还已扣减点数
+            if points_deducted and current_user:
+                db_refund_user_points(current_user["id"], task_cost, reason="调用云端引擎失败全额退款")
+            raise HTTPException(status_code=500, detail=f"调用 RunningHub 创建任务失败: {str(e)}")
+
+        if data.get("code") != 0:
+            if points_deducted and current_user:
+                db_refund_user_points(current_user["id"], task_cost, reason=f"云端拒绝任务退还: {data.get('msg')}")
+            raise HTTPException(status_code=400, detail=data.get("msg") or "创建任务失败")
+
+        task_id = data.get("data", {}).get("taskId")
+        net_wss_url = data.get("data", {}).get("netWssUrl")
 
     user_id = current_user["id"] if current_user else ""
     user_name = current_user["username"] if current_user else "匿名访客"
@@ -1734,9 +1836,10 @@ async def generate_task(
     task_record = {
         "taskId": str(task_id),
         "workflowId": str(req.workflowId),
-        "workflowName": req.workflowName or f"工作流 {req.workflowId}",
-        "taskType": task_type,
+        "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
+        "taskType": "Proxy-Native" if is_custom_proxy else task_type,
         "userId": user_id,
+        "username": user_name,
         "username": user_name,
         "positivePrompt": req.positivePrompt or "",
         "negativePrompt": req.negativePrompt or "",

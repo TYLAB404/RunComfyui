@@ -295,15 +295,30 @@
             
             <div class="flex gap-2">
               <select v-model="selectedWorkflowId" @change="onWorkflowChange" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-indigo-500">
+                <option v-if="customWorkflow" value="custom_upload">
+                  📁 [本地] {{ customWorkflow.name }} ({{ customWorkflow.totalNodes }} 节点)
+                </option>
                 <option v-for="wf in workflows" :key="wf.id" :value="wf.id">
                   {{ wf.name }} (ID: {{ wf.id }})
                 </option>
               </select>
-              <button @click="loadWorkflowSchema(selectedWorkflowId)" title="重新拉取解析该工作流" class="px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs whitespace-nowrap">
-                🔄 重新同步
+              <button @click="triggerUploadWorkflowFile" title="直接导入本地 ComfyUI API JSON 文件，免 workflowId 直接执行" class="px-3 bg-indigo-900/40 hover:bg-indigo-800/60 text-indigo-300 rounded-xl border border-indigo-700/60 text-xs font-semibold whitespace-nowrap flex items-center gap-1 transition">
+                <span>📁 导入JSON</span>
+              </button>
+              <button v-if="selectedWorkflowId !== 'custom_upload'" @click="loadWorkflowSchema(selectedWorkflowId)" title="重新拉取解析该工作流" class="px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs whitespace-nowrap">
+                🔄 刷新
               </button>
             </div>
-            <p v-if="currentWorkflow?.description" class="text-xs text-slate-400">{{ currentWorkflow.description }}</p>
+            <input type="file" ref="workflowFileInput" accept=".json" @change="handleWorkflowFileSelected" class="hidden" />
+            
+            <div v-if="selectedWorkflowId === 'custom_upload'" class="flex items-center justify-between p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-800/40 text-xs text-indigo-300">
+              <div class="flex items-center gap-2 truncate">
+                <span class="px-2 py-0.5 rounded bg-indigo-600 text-white text-[10px] font-bold">免ID直跑</span>
+                <span class="truncate font-mono">{{ customWorkflow?.name }}</span>
+              </div>
+              <button @click="clearCustomWorkflow" class="text-slate-400 hover:text-red-400 text-xs ml-2">清除切换</button>
+            </div>
+            <p v-else-if="currentWorkflow?.description" class="text-xs text-slate-400">{{ currentWorkflow.description }}</p>
           </div>
 
 

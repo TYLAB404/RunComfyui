@@ -102,6 +102,10 @@ createApp({
     const dynamicQuality = ref([]);
     const allEditableNodes = ref([]);
 
+    // 本地上传的 ComfyUI 工作流 (免 workflowId 原生代理执行模式)
+    const customWorkflow = ref(null);
+    const workflowFileInput = ref(null);
+
     // 全节点覆盖字典与原始默认字典（严格只提交用户修改过的字段）
     const nodeOverrides = ref({});
     const originalDefaults = ref({});
@@ -271,9 +275,91 @@ createApp({
       }
     };
 
+    // 统一将解析好的 ComfyUI dynamicSchema 绑定到响应式表单中
+    const applyParsedSchema = (data) => {
+      dynamicSchema.value = data.dynamicSchema;
+      dynamicSchemaTotalNodes.value = data.totalNodes;
+
+      // 初始化全量字段字典
+      const overrides = {};
+      const defaults = {};
+      (data.dynamicSchema.allEditableNodes || []).forEach(node => {
+        overrides[node.nodeId] = { ...node.fields };
+        defaults[node.nodeId] = { ...node.fields };
+      });
+      nodeOverrides.value = overrides;
+      originalDefaults.value = defaults;
+      allEditableNodes.value = data.dynamicSchema.allEditableNodes || [];
+
+      // 1. 动态生成提示词绑定表单
+      dynamicPrompts.value = (data.dynamicSchema.promptNodes || []).map(p => ({
+        nodeId: p.nodeId,
+        role: p.role,
+        label: p.label,
+        fieldName: p.fieldName || 'text',
+        currentValue: p.defaultValue || ''
+      }));
+
+      // 2. 动态采样器/步数调度绑定 (严格只包含该节点实际存在的字段)
+      if (data.dynamicSchema.samplerNode) {
+        const sn = data.dynamicSchema.samplerNode;
+        dynamicSampler.value = {
+          nodeId: sn.nodeId,
+          class_type: sn.class_type,
+          fields: { ...sn.fields }
+        };
+      } else {
+        dynamicSampler.value = null;
+      }
+
+      // 3. 动态尺寸绑定 (EmptyLatentImage)
+      if (data.dynamicSchema.latentNode) {
+        const ln = data.dynamicSchema.latentNode;
+        dynamicLatent.value = {
+          nodeId: ln.nodeId,
+          class_type: ln.class_type,
+          fields: {
+            width: ln.fields.width || 512,
+            height: ln.fields.height || 512,
+            batch_size: ln.fields.batch_size || 1
+          }
+        };
+      } else {
+        dynamicLatent.value = null;
+      }
+
+      // 4. 动态参考图输入 (LoadImage)
+      dynamicImages.value = (data.dynamicSchema.imageNodes || []).map(im => ({
+        nodeId: im.nodeId,
+        fieldName: im.fieldName || 'image',
+        defaultValue: im.defaultValue || '',
+        uploadedFileName: '',
+        previewUrl: null,
+        isUploading: false
+      }));
+
+      // 5. 动态参考视频输入 (VHS_LoadVideo)
+      dynamicVideos.value = (data.dynamicSchema.videoNodes || []).map(vm => ({
+        nodeId: vm.nodeId,
+        fieldName: vm.fieldName || 'video',
+        defaultValue: vm.defaultValue || '',
+        uploadedFileName: '',
+        previewUrl: null,
+        isUploading: false
+      }));
+
+      // 6. 动态画质基准参数 (PrimitiveInt 等)
+      dynamicQuality.value = (data.dynamicSchema.qualityNodes || []).map(qm => ({
+        nodeId: qm.nodeId,
+        fieldName: qm.fieldName || 'value',
+        defaultValue: qm.defaultValue,
+        currentValue: qm.defaultValue
+      }));
+    };
+
     // 动态拉取指定工作流在云端的真实节点拓扑
     const loadWorkflowSchema = async (wfId) => {
-      if (!wfId) return;
+      if (!wfId || wfId === 'custom_upload') return;
       isLoadingSchema.value = true;
       try {
         const res = await authFetch('/api/workflows/inspect', {
@@ -283,85 +369,7 @@ createApp({
         });
         const data = await res.json();
         if (data.status === 'ok') {
-          dynamicSchema.value = data.dynamicSchema;
-          dynamicSchemaTotalNodes.value = data.totalNodes;
-
-          // 初始化全量字段字典
-          const overrides = {};
-          const defaults = {};
-          (data.dynamicSchema.allEditableNodes || []).forEach(node => {
-            overrides[node.nodeId] = { ...node.fields };
-            defaults[node.nodeId] = { ...node.fields };
-          });
-          nodeOverrides.value = overrides;
-          originalDefaults.value = defaults;
-          allEditableNodes.value = data.dynamicSchema.allEditableNodes || [];
-
-          // 1. 动态生成提示词绑定表单
-          dynamicPrompts.value = (data.dynamicSchema.promptNodes || []).map(p => ({
-            nodeId: p.nodeId,
-            role: p.role,
-            label: p.label,
-            fieldName: p.fieldName || 'text',
-            currentValue: p.defaultValue || ''
-          }));
-
-          // 2. 动态采样器/步数调度绑定 (严格只包含该节点实际存在的字段)
-          if (data.dynamicSchema.samplerNode) {
-            const sn = data.dynamicSchema.samplerNode;
-            dynamicSampler.value = {
-              nodeId: sn.nodeId,
-              class_type: sn.class_type,
-              fields: { ...sn.fields }
-            };
-          } else {
-            dynamicSampler.value = null;
-          }
-
-          // 3. 动态尺寸绑定 (EmptyLatentImage)
-          if (data.dynamicSchema.latentNode) {
-            const ln = data.dynamicSchema.latentNode;
-            dynamicLatent.value = {
-              nodeId: ln.nodeId,
-              class_type: ln.class_type,
-              fields: {
-                width: ln.fields.width || 512,
-                height: ln.fields.height || 512,
-                batch_size: ln.fields.batch_size || 1
-              }
-            };
-          } else {
-            dynamicLatent.value = null;
-          }
-
-          // 4. 动态参考图输入 (LoadImage)
-          dynamicImages.value = (data.dynamicSchema.imageNodes || []).map(im => ({
-            nodeId: im.nodeId,
-            fieldName: im.fieldName || 'image',
-            defaultValue: im.defaultValue || '',
-            uploadedFileName: '',
-            previewUrl: null,
-            isUploading: false
-          }));
-
-          // 5. 动态参考视频输入 (VHS_LoadVideo)
-          dynamicVideos.value = (data.dynamicSchema.videoNodes || []).map(vm => ({
-            nodeId: vm.nodeId,
-            fieldName: vm.fieldName || 'video',
-            defaultValue: vm.defaultValue || '',
-            uploadedFileName: '',
-            previewUrl: null,
-            isUploading: false
-          }));
-
-          // 6. 动态画质基准参数 (PrimitiveInt 等)
-          dynamicQuality.value = (data.dynamicSchema.qualityNodes || []).map(qm => ({
-            nodeId: qm.nodeId,
-            fieldName: qm.fieldName || 'value',
-            defaultValue: qm.defaultValue,
-            currentValue: qm.defaultValue
-          }));
-
+          applyParsedSchema(data);
         } else {
           console.warn('获取工作流节点结构失败:', data);
         }
@@ -369,6 +377,56 @@ createApp({
         console.error('拉取工作流节点失败:', err);
       } finally {
         isLoadingSchema.value = false;
+      }
+    };
+
+    // 触发导入本地 ComfyUI 工作流 JSON 文件
+    const triggerUploadWorkflowFile = () => {
+      if (workflowFileInput.value) {
+        workflowFileInput.value.click();
+      }
+    };
+
+    // 清除自定义工作流并切回预设工作流
+    const clearCustomWorkflow = () => {
+      customWorkflow.value = null;
+      if (workflows.value.length > 0) {
+        selectedWorkflowId.value = workflows.value[0].id;
+        loadWorkflowSchema(selectedWorkflowId.value);
+      }
+    };
+
+    // 处理用户选择的本地工作流 JSON 文件
+    const handleWorkflowFileSelected = async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      isLoadingSchema.value = true;
+      try {
+        const res = await authFetch('/api/workflows/parse_json', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          customWorkflow.value = {
+            name: data.workflowName,
+            totalNodes: data.totalNodes,
+            prompt: data.customPrompt
+          };
+          selectedWorkflowId.value = 'custom_upload';
+          applyParsedSchema(data);
+        } else {
+          alert('解析本地工作流失败: ' + (data.detail || JSON.stringify(data)));
+        }
+      } catch (err) {
+        alert('上传工作流文件发生异常: ' + err.message);
+      } finally {
+        isLoadingSchema.value = false;
+        if (e.target) e.target.value = '';
       }
     };
 
@@ -600,14 +658,16 @@ createApp({
 
       // 提取核心正向提示词用于任务展示记录
       const mainPrompt = dynamicPrompts.value.length > 0 ? dynamicPrompts.value[0].currentValue : '';
+      const isCustom = selectedWorkflowId.value === 'custom_upload' && customWorkflow.value;
 
       const payload = {
         workflowId: selectedWorkflowId.value,
-        workflowName: currentWorkflow.value ? currentWorkflow.value.name : null,
+        workflowName: isCustom ? customWorkflow.value.name : (currentWorkflow.value ? currentWorkflow.value.name : null),
         positivePrompt: mainPrompt,
         negativePrompt: dynamicPrompts.value.length > 1 ? dynamicPrompts.value[1].currentValue : '',
         nodeInfoList: nodeInfoList,
-        taskType: selectedTaskType.value || 'Standard'
+        taskType: selectedTaskType.value || 'Standard',
+        customPrompt: isCustom ? customWorkflow.value.prompt : null
       };
 
       if (publicConfig.value.requireLoginToGenerate && !currentUser.value) {
@@ -1465,6 +1525,11 @@ createApp({
       dynamicVideos,
       dynamicQuality,
       allEditableNodes,
+      customWorkflow,
+      workflowFileInput,
+      triggerUploadWorkflowFile,
+      clearCustomWorkflow,
+      handleWorkflowFileSelected,
       nodeOverrides,
       originalDefaults,
       showAllNodes,
