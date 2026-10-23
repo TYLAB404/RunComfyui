@@ -187,8 +187,13 @@ def decode_jwt_token(token: str) -> Optional[Dict[str, Any]]:
 async def verify_turnstile_token(token: str, secret_key: str, remote_ip: str = "") -> Tuple[bool, str]:
     if not secret_key:
         return True, "未配置 Turnstile SecretKey，默认放行"
+    
+    # 官方测试密钥无条件放行 (用于本地开发与压测)
+    if secret_key.startswith("1x0000000000000000000000000000000"):
+        return True, "测试密钥验证通过"
+
     if not token:
-        return False, "请先勾选并完成 Cloudflare 人机安全验证"
+        return False, "请先完成 Cloudflare 人机安全验证（如显示“验证失败”，请检查该 Key 是否允许了 localhost/当前域名）"
     
     url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
     payload = {
@@ -199,16 +204,21 @@ async def verify_turnstile_token(token: str, secret_key: str, remote_ip: str = "
         payload["remoteip"] = remote_ip
     
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, data=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+        # 设置合理的超时时间 (4秒)，防止外部网络阻塞登录请求
+        timeout = aiohttp.ClientTimeout(total=4.0, connect=3.0)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, data=payload) as resp:
                 data = await resp.json()
                 if data.get("success"):
                     return True, "人机验证通过"
                 codes = data.get("error-codes", [])
                 err_msg = ", ".join(codes) if codes else "人机安全验证未通过"
-                return False, f"Turnstile 校验失败: {err_msg}"
+                return False, f"Turnstile 校验未通过: {err_msg}"
     except Exception as e:
-        return False, f"无法连接 Cloudflare Turnstile 验证服务器: {str(e)}"
+        # 网络异常容错保护：国内网络直连 Cloudflare 常发性丢包与 DNS 污染
+        # 为防止外部网络抖动导致全站用户无法登录，结合内置的 IP 级防暴力破解限流保障，执行柔性降级
+        print(f"[Turnstile Warning] 无法连通 Cloudflare 验签服务器 ({e})，触发安全降级放行（已有本地防爆破限流兜底）")
+        return True, "Cloudflare 网络连通异常，已启动本地安全门禁降级放行"
 
 # ----------------- 用户创建与管理逻辑 (SQLite 事务原子操作) -----------------
 
