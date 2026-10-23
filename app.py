@@ -219,6 +219,21 @@ def update_task_record(task_id: str, updates: Dict[str, Any]):
     """原子更新任务状态、输出图像或运行时长"""
     db_update_task(task_id, updates)
 
+def get_output_fingerprint(item: Dict[str, Any]) -> str:
+    """提取产物文件的唯一物理指纹（归一化 URL 双斜杠与文件名，杜绝阶段性截流与最终结果重复展示）"""
+    url = item.get("url") or item.get("remoteUrl") or ""
+    clean = url.split("?")[0].strip()
+    if "://" in clean:
+        proto, rest = clean.split("://", 1)
+        clean = proto + "://" + "/".join(p for p in rest.split("/") if p)
+    base = os.path.basename(clean)
+    if base and "." in base and not base.startswith("data:"):
+        return base
+    fname = item.get("filename") or ""
+    if fname and "." in fname and not fname.endswith("_preview.png"):
+        return fname
+    return clean
+
 # ----------------- 异步后台实时截流与轮询任务 -----------------
 
 CANCELLED_TASKS = set()
@@ -458,15 +473,22 @@ async def poll_task_status(task_id: str, api_key: str):
                                 "fileType": "video" if is_video else "image"
                             })
                     
-                    # 合并官方直链结果与先前截流的直链，单行落盘
+                    # 智能指纹去重合并：官方直链优先，消除 WebSocket 阶段性截流产生的同节点同文件重复展示
                     cur_t = db_get_task(str(task_id))
                     existing_files = [f for f in (cur_t.get("outputs", []) if cur_t else []) if not f.get("isRealtimePreview")]
-                    seen_urls = set()
+                    seen_fps = set()
                     final_outputs = []
-                    for f in saved_files + existing_files:
-                        u = f.get("url")
-                        if u and u not in seen_urls:
-                            seen_urls.add(u)
+                    # 1. 优先存入官方标准产出
+                    for f in saved_files:
+                        fp = get_output_fingerprint(f)
+                        if fp and fp not in seen_fps:
+                            seen_fps.add(fp)
+                            final_outputs.append(f)
+                    # 2. 补充官方列表中未包含的其他节点真实产出 (避免同图重复)
+                    for f in existing_files:
+                        fp = get_output_fingerprint(f)
+                        if fp and fp not in seen_fps:
+                            seen_fps.add(fp)
                             final_outputs.append(f)
 
                     update_task_record(str(task_id), {
