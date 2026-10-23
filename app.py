@@ -1796,12 +1796,24 @@ def convert_ui_workflow_to_prompt(ui_json: Dict[str, Any], obj_info: Dict[str, A
             node_def = obj_info.get(ntype, {})
             req_inputs = node_def.get("input", {}).get("required", {})
             opt_inputs = node_def.get("input", {}).get("optional", {})
-            all_spec = {**req_inputs, **opt_inputs}
 
-            # 筛选出属于 widget 的参数项（即未被 incoming link 连接的必要参数）
+            def is_widget_type(spec):
+                if not isinstance(spec, (list, tuple)) or len(spec) == 0:
+                    return False
+                t = spec[0]
+                if isinstance(t, list):
+                    return True  # 下拉列表选项
+                if isinstance(t, str) and t.upper() in ["INT", "FLOAT", "STRING", "BOOLEAN", "BOOLEAN_NOT"]:
+                    return True
+                return False
+
+            # 筛选出属于真实 widget 的参数项（即未被 incoming link 占用，且属于前端控件而非纯连线插槽）
             widget_field_names = []
-            for fname, fspec in all_spec.items():
-                if fname not in inputs:
+            for fname, fspec in req_inputs.items():
+                if is_widget_type(fspec) and fname not in inputs:
+                    widget_field_names.append((fname, fspec))
+            for fname, fspec in opt_inputs.items():
+                if is_widget_type(fspec) and fname not in inputs:
                     widget_field_names.append((fname, fspec))
 
             w_idx = 0
@@ -1812,9 +1824,8 @@ def convert_ui_workflow_to_prompt(ui_json: Dict[str, Any], obj_info: Dict[str, A
                 w_idx += 1
                 inputs[fname] = val
                 # 处理 ComfyUI LiteGraph 专用的 control_after_generate 虚拟占位组件 (如 'randomize', 'fixed')
-                if isinstance(fspec, list) and len(fspec) > 1 and isinstance(fspec[1], dict) and fspec[1].get("control_after_generate"):
-                    if w_idx < len(w_values) and isinstance(w_values[w_idx], str) and w_values[w_idx] in ["randomize", "fixed", "increment", "decrement"]:
-                        w_idx += 1
+                if w_idx < len(w_values) and isinstance(w_values[w_idx], str) and w_values[w_idx] in ["randomize", "fixed", "increment", "decrement"]:
+                    w_idx += 1
 
         prompt[nid] = {
             "class_type": ntype,
@@ -1967,18 +1978,43 @@ async def submit_proxy_prompt_async(api_key: str, proxy_payload: Dict[str, Any])
                         break  # 跳出当前 host，进行下一轮重试
 
                     # 2. 精准提取 ComfyUI 报告的真实节点或模型错误
+                    print(f"[Proxy Prompt Response] status=200 text={resp_text[:1000]}", flush=True)
+
+                    node_errs = p_data.get("node_errors")
                     err = p_data.get("error")
+                    if isinstance(err, dict) and not node_errs:
+                        extra_info = err.get("extra_info")
+                        if isinstance(extra_info, dict) and extra_info.get("node_errors"):
+                            node_errs = extra_info.get("node_errors")
+
+                    err_details_list = []
+                    if node_errs and isinstance(node_errs, dict):
+                        for nid, nerr in node_errs.items():
+                            if isinstance(nerr, dict):
+                                err_list = nerr.get("errors", [])
+                                ctype = nerr.get("class_type", "")
+                                msg_parts = []
+                                for e in err_list:
+                                    if isinstance(e, dict):
+                                        msg_parts.append(e.get("message") or e.get("type") or str(e))
+                                    else:
+                                        msg_parts.append(str(e))
+                                detail_str = f"节点 #{nid} ({ctype}): {', '.join(msg_parts) if msg_parts else json.dumps(nerr, ensure_ascii=False)}"
+                                err_details_list.append(detail_str)
+                            else:
+                                err_details_list.append(f"节点 #{nid}: {str(nerr)}")
+
+                    if err_details_list:
+                        combined_detail = "; ".join(err_details_list)
+                        print(f"[Proxy Prompt Node Error] {combined_detail}", flush=True)
+                        return None, f"云端 ComfyUI 节点校验失败: {combined_detail}"
+
                     if isinstance(err, dict):
                         msg = err.get("message") or err.get("type") or str(err)
                         details = err.get("details", "")
                         return None, f"云端 ComfyUI 校验报错: {msg} {details}".strip()
-
-                    node_errs = p_data.get("node_errors")
-                    if node_errs and isinstance(node_errs, dict):
-                        err_msgs = []
-                        for nid, nerr in node_errs.items():
-                            err_msgs.append(f"节点 #{nid}: {json.dumps(nerr, ensure_ascii=False)}")
-                        return None, f"工作流节点参数不合法: {'; '.join(err_msgs)}"
+                    elif err:
+                        return None, f"云端 ComfyUI 报错: {err}"
 
                     last_err = resp_text or "云端返回空响应"
                 except Exception:
