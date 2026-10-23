@@ -108,6 +108,20 @@ createApp({
     const showAllNodes = ref(false);
     const allNodesSearch = ref('');
 
+    // 实时下行通知系统 (SSE Toast)
+    const toastMessage = ref('');
+    const showToast = ref(false);
+    let toastTimer = null;
+
+    const showToastNotification = (msg) => {
+      toastMessage.value = msg;
+      showToast.value = true;
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {
+        showToast.value = false;
+      }, 3500);
+    };
+
     const newWf = ref({
       id: '',
       name: '',
@@ -929,6 +943,58 @@ createApp({
       }
     };
 
+    let userEventSource = null;
+
+    const initUserEventStream = () => {
+      if (!currentUser.value) return;
+      if (userEventSource) {
+        try { userEventSource.close(); } catch(e){}
+      }
+
+      const token = localStorage.getItem('rh_auth_token') || '';
+      const sseUrl = `/api/events/user?token=${encodeURIComponent(token)}`;
+      userEventSource = new EventSource(sseUrl);
+
+      userEventSource.onmessage = (event) => {
+        try {
+          if (!event.data) return;
+          const payload = JSON.parse(event.data);
+
+          // 1. 核心：0.1 秒即时秒踢与强制退出 (KICK_OFF)
+          if (payload.type === 'KICK_OFF') {
+            console.warn('[Security Event] Received KICK_OFF signal from server:', payload);
+            if (userEventSource) {
+              userEventSource.close();
+              userEventSource = null;
+            }
+            localStorage.removeItem('rh_auth_token');
+            localStorage.removeItem('rh_auth_user');
+            currentUser.value = null;
+            const reason = payload.data?.reason || '您的账号已被管理员停用，已强制下线。';
+            alert(`⚠️ 安全通知：\n${reason}`);
+            window.location.href = '/sign-in';
+          }
+
+          // 2. 核心：算力点数 0 延迟实时跳变 (POINTS_UPDATED)
+          else if (payload.type === 'POINTS_UPDATED') {
+            const newPoints = payload.data?.points;
+            if (newPoints !== undefined && currentUser.value) {
+              const oldPoints = currentUser.value.points;
+              currentUser.value.points = newPoints;
+              console.log(`[SSE] Points updated dynamically: ${oldPoints} -> ${newPoints}`);
+              showToastNotification(`🪙 算力余额已实时更新为: ${newPoints} 点`);
+            }
+          }
+        } catch(e) {
+          // 心跳或格式忽略
+        }
+      };
+
+      userEventSource.onerror = (err) => {
+        // SSE 会在连接中断时由浏览器底层自动发起静默重连
+      };
+    };
+
     const fetchCurrentUser = async () => {
       const token = localStorage.getItem('rh_auth_token');
       if (!token) {
@@ -940,6 +1006,7 @@ createApp({
         const res = await authFetch('/api/auth/me');
         if (res.ok) {
           currentUser.value = await res.json();
+          initUserEventStream();
         } else if (res.status === 401 || res.status === 403) {
           localStorage.removeItem('rh_auth_token');
           currentUser.value = null;
@@ -1107,6 +1174,10 @@ createApp({
     };
 
     const logout = async () => {
+      if (userEventSource) {
+        try { userEventSource.close(); } catch(e){}
+        userEventSource = null;
+      }
       try {
         await authFetch('/api/auth/logout', { method: 'POST' });
       } catch(e){}
@@ -1343,9 +1414,15 @@ createApp({
 
     onUnmounted(() => {
       if (pollingTimer) clearInterval(pollingTimer);
+      if (userEventSource) {
+        try { userEventSource.close(); } catch(e){}
+        userEventSource = null;
+      }
     });
 
     return {
+      toastMessage,
+      showToast,
       activeTab,
       switchTab,
       config,

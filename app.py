@@ -10,7 +10,7 @@ import base64
 import requests
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Depends, Response
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -62,6 +62,21 @@ RUNNINGHUB_API_URL = "https://www.runninghub.cn"
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(OUTPUTS_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
+
+# ----------------- 用户实时 SSE 长连接广播中枢 (0 延迟下行推送) -----------------
+USER_EVENT_CHANNELS: Dict[str, List[asyncio.Queue]] = {}
+
+async def notify_user(user_id: str, event_type: str, data: Dict[str, Any]):
+    """向指定在线用户广播实时下行事件 (0.1秒秒级下发，无感知极速同步)"""
+    queues = USER_EVENT_CHANNELS.get(str(user_id), [])
+    if not queues:
+        return
+    msg = json.dumps({"type": event_type, "data": data, "timestamp": int(time.time())}, ensure_ascii=False)
+    for q in list(queues):
+        try:
+            await q.put(msg)
+        except Exception:
+            pass
 
 # ----------------- 数据加载与保存 -----------------
 
@@ -603,6 +618,8 @@ async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]
     if not token:
         token = request.cookies.get("auth_token")
     if not token:
+        token = request.query_params.get("token")
+    if not token:
         return None
     
     payload = decode_jwt_token(token)
@@ -757,6 +774,48 @@ def get_me(user: Dict[str, Any] = Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="用户不存在")
     return sanitize_user(fresh)
 
+@app.get("/api/events/user")
+async def user_events_stream(
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """用户长连接实时下行 SSE 事件通道 (秒级停用踢出、实时算力到账同步)"""
+    user_id = str(current_user["id"])
+    queue = asyncio.Queue()
+    USER_EVENT_CHANNELS.setdefault(user_id, []).append(queue)
+
+    async def event_generator():
+        try:
+            # 建立长连接时即刻下发当前会话状态
+            yield f"data: {json.dumps({'type': 'CONNECTED', 'data': {'userId': user_id, 'points': current_user.get('points', 0)}})}\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    # 等待下行事件或 15 秒心跳保活
+                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield f"data: {msg}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            if user_id in USER_EVENT_CHANNELS:
+                try:
+                    USER_EVENT_CHANNELS[user_id].remove(queue)
+                    if not USER_EVENT_CHANNELS[user_id]:
+                        del USER_EVENT_CHANNELS[user_id]
+                except Exception:
+                    pass
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
 @app.post("/api/auth/logout")
 def logout_user(response: Response):
     response.delete_cookie(key="auth_token")
@@ -826,8 +885,11 @@ def admin_list_users(_: Dict[str, Any] = Depends(get_current_admin)):
     result.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
     return result
 
+class AdminResetPasswordRequest(BaseModel):
+    newPassword: str
+
 @app.put("/api/admin/users/{user_id}")
-def admin_update_user(user_id: str, req: AdminUpdateUserRequest, admin: Dict[str, Any] = Depends(get_current_admin)):
+async def admin_update_user(user_id: str, req: AdminUpdateUserRequest, admin: Dict[str, Any] = Depends(get_current_admin)):
     user = get_user_by_id(user_id)
     if not user:
         raise HTTPException(status_code=404, detail="用户不存在")
@@ -843,24 +905,75 @@ def admin_update_user(user_id: str, req: AdminUpdateUserRequest, admin: Dict[str
                 raise HTTPException(status_code=400, detail="系统必须保留至少一位管理员，无法降级自身")
         updates["role"] = req.role
     
+    points_changed = False
     if req.points is not None:
-        updates["points"] = max(0, int(req.points))
+        new_pts = max(0, int(req.points))
+        if new_pts != user.get("points", 0):
+            updates["points"] = new_pts
+            points_changed = True
+
+    is_deactivating = False
     if req.isActive is not None:
         if user_id == admin["id"] and not req.isActive:
             raise HTTPException(status_code=400, detail="不能封禁当前登录的管理员账号")
+        if not req.isActive and user.get("isActive", True):
+            is_deactivating = True
         updates["isActive"] = bool(req.isActive)
     
     if updates:
         update_user_fields(user_id, updates)
     
+    pwd_changed = False
     if req.newPassword and len(req.newPassword.strip()) >= 6:
         set_user_password(user_id, req.newPassword.strip())
+        pwd_changed = True
     
     fresh = get_user_by_id(user_id)
+
+    # 核心：实时 SSE 下发，真正实现 0.1 秒秒踢与算力余额原地跳变
+    if is_deactivating:
+        await notify_user(
+            user_id=user_id,
+            event_type="KICK_OFF",
+            data={"reason": "您的账户已被管理员停用，已强制下线"}
+        )
+    elif pwd_changed:
+        await notify_user(
+            user_id=user_id,
+            event_type="KICK_OFF",
+            data={"reason": "管理员已修改您的密码凭据，请重新登录"}
+        )
+    elif points_changed and fresh:
+        await notify_user(
+            user_id=user_id,
+            event_type="POINTS_UPDATED",
+            data={"points": fresh.get("points", 0), "reason": "管理员在后台更新了您的算力点数"}
+        )
+
     return {"status": "ok", "user": sanitize_user(fresh)}
 
+@app.post("/api/admin/users/{user_id}/reset-password")
+async def admin_reset_user_password(
+    user_id: str,
+    req: AdminResetPasswordRequest,
+    admin: Dict[str, Any] = Depends(get_current_admin)
+):
+    if len(req.newPassword.strip()) < 6:
+        raise HTTPException(status_code=400, detail="新密码不能少于 6 位")
+    user = get_user_by_id(user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    set_user_password(user_id, req.newPassword.strip())
+    # 实时通知被重置密码的用户秒退
+    await notify_user(
+        user_id=user_id,
+        event_type="KICK_OFF",
+        data={"reason": "管理员已重置您的登录密码，请使用新密码重新登录"}
+    )
+    return {"status": "ok"}
+
 @app.delete("/api/admin/users/{user_id}")
-def admin_delete_user(user_id: str, admin: Dict[str, Any] = Depends(get_current_admin)):
+async def admin_delete_user(user_id: str, admin: Dict[str, Any] = Depends(get_current_admin)):
     if user_id == admin["id"]:
         raise HTTPException(status_code=400, detail="无法删除当前正在登录的管理员账号")
     
@@ -868,6 +981,11 @@ def admin_delete_user(user_id: str, admin: Dict[str, Any] = Depends(get_current_
     if not target:
         raise HTTPException(status_code=404, detail="用户不存在")
     
+    await notify_user(
+        user_id=user_id,
+        event_type="KICK_OFF",
+        data={"reason": "您的账号已被管理员注销，会话已终止"}
+    )
     delete_user_by_id(user_id)
     return {"status": "ok", "message": f"用户 {target.get('username')} 已被安全删除"}
 
