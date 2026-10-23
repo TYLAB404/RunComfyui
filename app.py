@@ -9,7 +9,7 @@ import urllib.parse
 import uuid
 import base64
 import requests
-from typing import Dict, Any, List, Optional, Set
+from typing import Dict, Any, List, Optional, Set, Tuple
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Depends, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -1814,6 +1814,73 @@ async def upload_file_to_runninghub(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"上传至 RunningHub 发生异常: {str(e)}")
 
+async def submit_proxy_prompt_async(api_key: str, proxy_payload: Dict[str, Any]) -> Tuple[Optional[str], str]:
+    """
+    向 RunningHub 云端 ComfyUI 原生代理引擎提交 Prompt 任务
+    具备智能排队等待、curl_cffi加速与精确错误原因解析
+    """
+    hosts = ["www.runninghub.ai", "runninghub.ai"]
+    last_err = ""
+
+    def _do_post(url: str, payload: dict) -> Tuple[int, str]:
+        # 1. 优先尝试 curl_cffi 模拟浏览器，规避跨境网络握手卡顿
+        try:
+            from curl_cffi import requests as c_requests
+            r = c_requests.post(url, json=payload, impersonate="chrome120", timeout=25)
+            return r.status_code, r.text
+        except Exception:
+            pass
+        # 2. 备用标准 requests
+        try:
+            r = requests.post(url, json=payload, timeout=25)
+            return r.status_code, r.text
+        except Exception as e:
+            return 0, str(e)
+
+    # 针对云端单任务独占队列机制：若前序任务正在运行，最多智能重试 4 次（每次间隔 3 秒）
+    for attempt in range(4):
+        for host in hosts:
+            p_url = f"https://{host}/proxy/{api_key}/prompt"
+            status_code, resp_text = await asyncio.to_thread(_do_post, p_url, proxy_payload)
+            if status_code == 200:
+                try:
+                    p_data = json.loads(resp_text)
+                    task_id = p_data.get("prompt_id")
+                    if task_id:
+                        return str(task_id), ""
+
+                    # 1. 检测是否是云端单通道队列占用 (排队中)
+                    if "queue_remaining" in resp_text or resp_text.strip() == "{}":
+                        last_err = "当前云端原生 ComfyUI 算力通道正在执行前序任务，请稍候约十几秒待出图完毕后再试。"
+                        break  # 跳出当前 host，进行下一轮重试
+
+                    # 2. 精准提取 ComfyUI 报告的真实节点或模型错误
+                    err = p_data.get("error")
+                    if isinstance(err, dict):
+                        msg = err.get("message") or err.get("type") or str(err)
+                        details = err.get("details", "")
+                        return None, f"云端 ComfyUI 校验报错: {msg} {details}".strip()
+
+                    node_errs = p_data.get("node_errors")
+                    if node_errs and isinstance(node_errs, dict):
+                        err_msgs = []
+                        for nid, nerr in node_errs.items():
+                            err_msgs.append(f"节点 #{nid}: {json.dumps(nerr, ensure_ascii=False)}")
+                        return None, f"工作流节点参数不合法: {'; '.join(err_msgs)}"
+
+                    last_err = resp_text or "云端返回空响应"
+                except Exception:
+                    last_err = resp_text
+            elif status_code > 0:
+                last_err = f"云端服务返回 HTTP {status_code}: {resp_text}"
+            else:
+                last_err = f"连接云端超时或网络中断: {resp_text}"
+
+        # 每次重试等待 3 秒，给云端前序任务完成出图释放显存的时间
+        await asyncio.sleep(3)
+
+    return None, last_err or "当前云端原生 ComfyUI 算力通道正在运算中，请稍候约十几秒后再试。"
+
 class GenerateRequest(BaseModel):
     workflowId: str
     nodeInfoList: List[Dict[str, Any]]
@@ -1880,37 +1947,13 @@ async def generate_task(
             "client_id": client_id
         }
 
-        last_err = ""
-        # 优先通过 .ai 域名提交原生 ComfyUI 原生代理任务，故障时无缝降级至 .cn
-        for host in ["www.runninghub.ai", "www.runninghub.cn"]:
-            try:
-                p_url = f"https://{host}/proxy/{api_key}/prompt"
-                res = await asyncio.to_thread(
-                    requests.post,
-                    p_url,
-                    json=proxy_payload,
-                    timeout=25
-                )
-                if res.status_code == 200:
-                    try:
-                        p_data = res.json()
-                        task_id = p_data.get("prompt_id")
-                        if task_id:
-                            break
-                        else:
-                            last_err = res.text or "云端返回空响应"
-                    except Exception:
-                        last_err = res.text
-                else:
-                    last_err = f"HTTP {res.status_code}: {res.text}"
-            except Exception as e:
-                last_err = str(e)
-                continue
+        task_id, last_err = await submit_proxy_prompt_async(api_key, proxy_payload)
 
         if not task_id:
+            print(f"[Proxy Prompt Failed] Reason: {last_err}")
             if points_deducted and current_user:
                 db_refund_user_points(current_user["id"], task_cost, reason=f"原生代理提交失败退还: {last_err}")
-            raise HTTPException(status_code=500, detail=f"提交至云端 ComfyUI 原生代理引擎失败: {last_err}")
+            raise HTTPException(status_code=400, detail=f"提交至云端 ComfyUI 原生代理引擎失败: {last_err}")
     else:
         # 模式 B: 传统的 RunningHub 云端已保存模板工作流 (通过 workflowId 调度)
         payload = {
