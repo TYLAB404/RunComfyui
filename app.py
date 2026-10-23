@@ -1600,12 +1600,124 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
         "dynamicSchema": parsed["dynamicSchema"]
     }
 
+OBJECT_INFO_CACHE_PATH = os.path.join(DATA_DIR, "object_info_cache.json")
+_MEMORY_OBJECT_INFO: Optional[Dict[str, Any]] = None
+
+def get_cached_object_info(api_key: str) -> Dict[str, Any]:
+    """
+    获取或缓存 RunningHub 云端全部节点的完整定义（19800+ 节点定义）
+    用于在用户上传普通 Web 画布格式工作流时，自动将其无缝编译为标准的 ComfyUI API Prompt 格式
+    """
+    global _MEMORY_OBJECT_INFO
+    if _MEMORY_OBJECT_INFO is not None:
+        return _MEMORY_OBJECT_INFO
+
+    # 1. 尝试从本地磁盘缓存加载
+    if os.path.exists(OBJECT_INFO_CACHE_PATH):
+        try:
+            mtime = os.path.getmtime(OBJECT_INFO_CACHE_PATH)
+            # 7天内缓存有效
+            if time.time() - mtime < 86400 * 7:
+                with open(OBJECT_INFO_CACHE_PATH, "r", encoding="utf-8") as f:
+                    _MEMORY_OBJECT_INFO = json.load(f)
+                    return _MEMORY_OBJECT_INFO
+        except Exception:
+            pass
+
+    # 2. 从云端 proxy 拉取
+    if not api_key:
+        return {}
+
+    for host in ["www.runninghub.cn", "www.runninghub.ai"]:
+        try:
+            url = f"https://{host}/proxy/{api_key}/object_info"
+            res = requests.get(url, timeout=12)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, dict) and len(data) > 100:
+                    _MEMORY_OBJECT_INFO = data
+                    try:
+                        with open(OBJECT_INFO_CACHE_PATH, "w", encoding="utf-8") as f:
+                            json.dump(data, f, ensure_ascii=False)
+                    except Exception:
+                        pass
+                    return _MEMORY_OBJECT_INFO
+        except Exception:
+            continue
+
+    return _MEMORY_OBJECT_INFO or {}
+
+def convert_ui_workflow_to_prompt(ui_json: Dict[str, Any], obj_info: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    将 ComfyUI Web 画布工程文件 (LiteGraph 格式) 自动转换为云端可执行的 API Prompt 格式
+    """
+    nodes = ui_json.get("nodes", [])
+    links = ui_json.get("links", [])
+
+    # 1. 建立 link_id 映射：link_id -> [origin_node_id, origin_slot_index]
+    link_map = {}
+    for l in links:
+        if isinstance(l, (list, tuple)) and len(l) >= 4:
+            lid, src_id, src_slot = l[0], str(l[1]), l[2]
+            link_map[lid] = [src_id, src_slot]
+
+    prompt = {}
+    for node in nodes:
+        nid = str(node.get("id"))
+        ntype = node.get("type")
+        if not nid or not ntype:
+            continue
+
+        inputs = {}
+        # A. 关联所有输入连线
+        for inp in node.get("inputs", []):
+            name = inp.get("name")
+            lid = inp.get("link")
+            if lid is not None and lid in link_map:
+                inputs[name] = link_map[lid]
+
+        # B. 映射 widgets_values 参数
+        w_values = node.get("widgets_values")
+        if isinstance(w_values, dict):
+            inputs.update(w_values)
+        elif isinstance(w_values, list):
+            node_def = obj_info.get(ntype, {})
+            req_inputs = node_def.get("input", {}).get("required", {})
+            opt_inputs = node_def.get("input", {}).get("optional", {})
+            all_spec = {**req_inputs, **opt_inputs}
+
+            # 筛选出属于 widget 的参数项（即未被 incoming link 连接的必要参数）
+            widget_field_names = []
+            for fname, fspec in all_spec.items():
+                if fname not in inputs:
+                    widget_field_names.append((fname, fspec))
+
+            w_idx = 0
+            for fname, fspec in widget_field_names:
+                if w_idx >= len(w_values):
+                    break
+                val = w_values[w_idx]
+                w_idx += 1
+                inputs[fname] = val
+                # 处理 ComfyUI LiteGraph 专用的 control_after_generate 虚拟占位组件 (如 'randomize', 'fixed')
+                if isinstance(fspec, list) and len(fspec) > 1 and isinstance(fspec[1], dict) and fspec[1].get("control_after_generate"):
+                    if w_idx < len(w_values) and isinstance(w_values[w_idx], str) and w_values[w_idx] in ["randomize", "fixed", "increment", "decrement"]:
+                        w_idx += 1
+
+        prompt[nid] = {
+            "class_type": ntype,
+            "inputs": inputs,
+            "_meta": {"title": node.get("title") or ntype}
+        }
+
+    return prompt
+
 @app.post("/api/workflows/parse_json")
 async def parse_workflow_json_endpoint(
     file: UploadFile = File(...),
     current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
 ):
-    """用户直接上传本地 ComfyUI 工作流 JSON 文件（免 workflowId 直接执行模式）"""
+    """用户直接上传本地 ComfyUI 工作流 JSON 文件（免 workflowId 直接执行模式，支持 Web 画布与 API 两种格式自动转换）"""
     cfg = load_config()
     filename = file.filename or "custom_workflow.json"
     content_bytes = await file.read()
@@ -1615,18 +1727,20 @@ async def parse_workflow_json_endpoint(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"文件不是合法的 JSON 格式: {str(e)}")
 
-    # 智能识别与校验 ComfyUI 格式
+    # 智能识别与自适应转换 ComfyUI 格式
     if isinstance(raw_json, dict) and "prompt" in raw_json and isinstance(raw_json["prompt"], dict):
         nodes = raw_json["prompt"]
     elif isinstance(raw_json, dict) and any("class_type" in v for v in raw_json.values() if isinstance(v, dict)):
         nodes = raw_json
     elif isinstance(raw_json, dict) and "nodes" in raw_json and isinstance(raw_json["nodes"], list):
-        raise HTTPException(
-            status_code=400, 
-            detail="检测到您上传的是 ComfyUI Web 画布工程文件。请在 ComfyUI 设置中开启【Enable Dev mode Options (启用开发者模式)】，并在菜单中点击【Save (API Format) / 导出 API 格式】后再上传即可直接运行。"
-        )
+        # 用户上传的是普通 ComfyUI Web 画布工程文件：自动转码为 API Prompt 格式！
+        api_key = get_active_api_key(cfg)
+        obj_info = get_cached_object_info(api_key)
+        nodes = convert_ui_workflow_to_prompt(raw_json, obj_info)
+        if not nodes:
+            raise HTTPException(status_code=400, detail="画布工程文件自动转换失败，未识别到有效节点。")
     else:
-        raise HTTPException(status_code=400, detail="未能识别出有效的 ComfyUI 工作流节点拓扑，请确保为 ComfyUI API 格式 JSON。")
+        raise HTTPException(status_code=400, detail="未能识别出有效的 ComfyUI 工作流节点拓扑，请确保为 ComfyUI 格式 JSON。")
 
     parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
     return {
