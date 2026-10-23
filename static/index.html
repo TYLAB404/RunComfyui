@@ -128,63 +128,106 @@
           </div>
         </div>
 
-        <!-- 密钥管理下拉 -->
-        <div class="relative">
-          <div v-if="showKeyDropdown" class="fixed inset-0 z-30" @click="showKeyDropdown = false"></div>
-
-          <div v-if="keys && keys.length > 0" class="relative z-40">
-            <button 
-              @click="showKeyDropdown = !showKeyDropdown" 
-              class="flex items-center gap-1.5 sm:gap-2 text-xs bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-slate-600 px-2.5 sm:px-3 py-1.5 rounded-full transition text-slate-200 shadow-sm">
-              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-              <span class="font-semibold text-emerald-400 max-w-[60px] sm:max-w-none truncate">{{ activeKeyName || '主密钥' }}</span>
-              <span class="font-mono text-slate-400 text-[11px] hidden sm:inline">{{ activeMaskedKey }}</span>
-              <span class="text-[10px] text-slate-400">▾</span>
-            </button>
-
-            <!-- 密钥下拉浮层 -->
-            <div 
-              v-if="showKeyDropdown" 
-              class="absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl py-2 z-50 backdrop-blur-xl">
-              <div class="px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
-                <span class="font-medium text-slate-300">切换生效密钥 (共 {{ keys.length }} 个)</span>
-                <span class="text-emerald-400 text-[10px]">🛡️ AES-256</span>
-              </div>
-              <div class="max-h-60 overflow-y-auto py-1 space-y-0.5">
-                <div 
-                  v-for="k in keys" 
-                  :key="k.id"
-                  @click="switchKey(k.id)"
-                  class="px-3 py-2 flex items-center justify-between hover:bg-slate-800 cursor-pointer transition text-xs"
-                  :class="k.isActive ? 'bg-indigo-950/40 border-l-2 border-indigo-500' : ''">
-                  <div class="truncate mr-2">
-                    <div class="flex items-center gap-1.5">
-                      <span class="font-semibold" :class="k.isActive ? 'text-indigo-300' : 'text-slate-200'">{{ k.name }}</span>
-                      <span v-if="k.isActive" class="text-[9px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.2 rounded font-mono">生效中</span>
-                    </div>
-                    <div class="font-mono text-[10px] text-slate-400 mt-0.5">{{ k.maskedKey }}</div>
-                  </div>
-                  <div v-if="k.isActive" class="text-indigo-400 text-sm">✓</div>
-                </div>
-              </div>
-              <div class="border-t border-slate-800 pt-1 mt-1 px-2 flex items-center justify-between text-xs">
-                <button 
-                  @click="switchTab('settings'); showKeyDropdown = false" 
-                  class="w-full text-center py-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition flex items-center justify-center gap-1.5 text-xs">
-                  <span>⚙️</span> <span>进入密钥保险箱管理</span>
-                </button>
-              </div>
-            </div>
+        <!-- 1. 普通用户与访客视角：展示算力引擎就绪状态与点数，绝不展示误导性“添加Key” -->
+        <template v-if="!currentUser || currentUser.role !== 'admin'">
+          <!-- 算力点数胶囊 (登录后展示) -->
+          <div 
+            v-if="currentUser"
+            class="flex items-center gap-1.5 text-xs bg-indigo-950/60 border border-indigo-700/60 px-2.5 sm:px-3 py-1.5 rounded-full text-indigo-300 font-mono shadow-sm"
+            title="您当前的可用算力点数">
+            <span>⚡</span>
+            <span class="font-bold text-white">{{ currentUser.points || 0 }}</span>
+            <span class="text-[10px] text-indigo-400">点</span>
           </div>
 
-          <button 
-            v-else 
-            @click="switchTab('settings')"
-            class="flex items-center gap-1 text-xs text-amber-400 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-800/60 px-2.5 sm:px-3 py-1.5 rounded-full transition animate-pulse">
+          <!-- 云端引擎运行状态 (由平台统一密钥驱动) -->
+          <div 
+            v-if="config && config.hasKey"
+            class="flex items-center gap-1.5 text-xs bg-slate-900 border border-emerald-500/40 px-2.5 sm:px-3 py-1.5 rounded-full text-slate-200 shadow-sm"
+            title="平台已接入官方云端 GPU 算力通道，状态正常，可直接提交生成">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span class="font-semibold text-emerald-400">算力就绪</span>
+          </div>
+          <div 
+            v-else
+            class="flex items-center gap-1.5 text-xs bg-slate-900 border border-amber-600/40 text-amber-400 px-2.5 sm:px-3 py-1.5 rounded-full shadow-sm"
+            title="平台算力通道维护中，请联系管理员">
             <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
-            <span>添加 Key</span>
-          </button>
-        </div>
+            <span>算力维护中</span>
+          </div>
+        </template>
+
+        <!-- 2. 管理员专属视角：展示管理后台直达链接及密钥池管理下拉 -->
+        <template v-else>
+          <a 
+            href="/admin" 
+            target="_blank"
+            class="hidden sm:flex items-center gap-1.5 text-xs bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 px-2.5 sm:px-3 py-1.5 rounded-full transition shadow-sm"
+            title="前往超级管理员专属管理后台">
+            <span>⚙️</span>
+            <span>管理后台</span>
+          </a>
+
+          <!-- 密钥管理下拉 -->
+          <div class="relative">
+            <div v-if="showKeyDropdown" class="fixed inset-0 z-30" @click="showKeyDropdown = false"></div>
+
+            <div v-if="keys && keys.length > 0" class="relative z-40">
+              <button 
+                @click="showKeyDropdown = !showKeyDropdown" 
+                class="flex items-center gap-1.5 sm:gap-2 text-xs bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-slate-600 px-2.5 sm:px-3 py-1.5 rounded-full transition text-slate-200 shadow-sm">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span class="font-semibold text-emerald-400 max-w-[60px] sm:max-w-none truncate">{{ activeKeyName || '主密钥' }}</span>
+                <span class="font-mono text-slate-400 text-[11px] hidden sm:inline">{{ activeMaskedKey }}</span>
+                <span class="text-[10px] text-slate-400">▾</span>
+              </button>
+
+              <!-- 密钥下拉浮层 -->
+              <div 
+                v-if="showKeyDropdown" 
+                class="absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl py-2 z-50 backdrop-blur-xl">
+                <div class="px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                  <span class="font-medium text-slate-300">切换生效密钥 (共 {{ keys.length }} 个)</span>
+                  <span class="text-emerald-400 text-[10px]">🛡️ AES-256</span>
+                </div>
+                <div class="max-h-60 overflow-y-auto py-1 space-y-0.5">
+                  <div 
+                    v-for="k in keys" 
+                    :key="k.id"
+                    @click="switchKey(k.id)"
+                    class="px-3 py-2 flex items-center justify-between hover:bg-slate-800 cursor-pointer transition text-xs"
+                    :class="k.isActive ? 'bg-indigo-950/40 border-l-2 border-indigo-500' : ''">
+                    <div class="truncate mr-2">
+                      <div class="flex items-center gap-1.5">
+                        <span class="font-semibold" :class="k.isActive ? 'text-indigo-300' : 'text-slate-200'">{{ k.name }}</span>
+                        <span v-if="k.isActive" class="text-[9px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.2 rounded font-mono">生效中</span>
+                      </div>
+                      <div class="font-mono text-[10px] text-slate-400 mt-0.5">{{ k.maskedKey }}</div>
+                    </div>
+                    <div v-if="k.isActive" class="text-indigo-400 text-sm">✓</div>
+                  </div>
+                </div>
+                <div class="border-t border-slate-800 pt-1 mt-1 px-2">
+                  <a 
+                    href="/admin" 
+                    target="_blank"
+                    class="w-full text-center py-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800 transition flex items-center justify-center gap-1.5 text-xs">
+                    <span>⚙️</span> <span>进入管理后台配置</span>
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <a 
+              v-else 
+              href="/admin"
+              target="_blank"
+              class="flex items-center gap-1 text-xs text-amber-400 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-800/60 px-2.5 sm:px-3 py-1.5 rounded-full transition animate-pulse">
+              <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+              <span>后台配置 Key</span>
+            </a>
+          </div>
+        </template>
       </div>
     </header>
 

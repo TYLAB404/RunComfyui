@@ -475,9 +475,8 @@ createApp({
 
     // 提交运行生成任务：严格遵循“未修改不注入”铁律，只提交用户确实更改过的参数！
     const submitDynamicGeneration = async () => {
-      if (!config.value.hasKey && (!keys.value || keys.value.length === 0)) {
-        alert('请先在顶部导航或“设置”中配置并启用你的 RunningHub API Key');
-        activeTab.value = 'settings';
+      if (!config.value.hasKey) {
+        alert('当前平台算力引擎未就绪（未配置有效 API Key），请联系系统管理员配置启用');
         return;
       }
 
@@ -614,6 +613,7 @@ createApp({
         if (data.status === 'ok') {
           activeOutputIndex.value = 0;
           await refreshTasks();
+          await fetchCurrentUser();
         } else {
           alert('任务创建失败: ' + (data.detail || JSON.stringify(data)));
           isGenerating.value = false;
