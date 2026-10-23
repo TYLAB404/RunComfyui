@@ -1649,23 +1649,131 @@ def get_cached_object_info(api_key: str) -> Dict[str, Any]:
 
 def convert_ui_workflow_to_prompt(ui_json: Dict[str, Any], obj_info: Dict[str, Any]) -> Dict[str, Any]:
     """
-    将 ComfyUI Web 画布工程文件 (LiteGraph 格式) 自动转换为云端可执行的 API Prompt 格式
+    将 ComfyUI Web 画布工程文件 (LiteGraph 格式) 自动转换为云端可执行的 API Prompt 格式。
+    自动解析并穿透前端虚拟总线节点 (Set_*/Get_* 无线总线节点、Reroute 重定向节点、Primitive 原生数值节点、Note 视觉便签等)。
     """
     nodes = ui_json.get("nodes", [])
     links = ui_json.get("links", [])
+    nodes_by_id = {str(n.get("id")): n for n in nodes if n.get("id") is not None}
 
-    # 1. 建立 link_id 映射：link_id -> [origin_node_id, origin_slot_index]
+    # 1. 建立基础 link_id 映射：link_id -> [origin_node_id, origin_slot_index]
     link_map = {}
     for l in links:
         if isinstance(l, (list, tuple)) and len(l) >= 4:
-            lid, src_id, src_slot = l[0], str(l[1]), l[2]
+            lid, src_id, src_slot = l[0], str(l[1]), int(l[2])
             link_map[lid] = [src_id, src_slot]
 
+    # 2. 识别与提取虚拟节点元数据
+    def extract_var_name(node: dict, prefix: str) -> str:
+        ntype = str(node.get("type", "")).strip()
+        title = str(node.get("title", "")).strip()
+        props = node.get("properties") or {}
+        if ntype.lower().startswith(prefix.lower() + "_"):
+            return ntype[len(prefix) + 1:].strip()
+        if title.lower().startswith(prefix.lower() + "_"):
+            return title[len(prefix) + 1:].strip()
+        for k in ["name", "var_name", "variable_name", "key"]:
+            if props.get(k):
+                return str(props[k]).strip()
+        wv = node.get("widgets_values")
+        if isinstance(wv, list) and len(wv) > 0 and isinstance(wv[0], str) and wv[0].strip():
+            return wv[0].strip()
+        elif isinstance(wv, dict):
+            for k in ["name", "var_name", "variable_name", "key"]:
+                if wv.get(k):
+                    return str(wv[k]).strip()
+        if title and title != ntype and not title.lower().startswith("set") and not title.lower().startswith("get"):
+            return title.strip()
+        return ""
+
+    def is_virtual_node(node: dict) -> bool:
+        ntype = str(node.get("type", "")).strip().lower()
+        title = str(node.get("title", "")).strip().lower()
+        if ntype == "reroute" or title == "reroute":
+            return True
+        if ntype.startswith("set_") or ntype.startswith("get_"):
+            return True
+        if ntype in ["setnode", "getnode", "set", "get"]:
+            return True
+        if ntype.startswith("primitive"):
+            return True
+        if ntype in ["note", "markdown", "textnote", "group"]:
+            return True
+        return False
+
+    reroute_node_map = {}
+    for nid, node in nodes_by_id.items():
+        ntype = str(node.get("type", "")).strip().lower()
+        title = str(node.get("title", "")).strip().lower()
+        if ntype == "reroute" or title == "reroute":
+            for inp in node.get("inputs", []):
+                if inp.get("link") is not None:
+                    reroute_node_map[nid] = inp.get("link")
+                    break
+
+    get_node_map = {}
+    for nid, node in nodes_by_id.items():
+        ntype = str(node.get("type", "")).strip().lower()
+        if ntype.startswith("get_") or ntype in ["getnode", "get"]:
+            get_node_map[nid] = extract_var_name(node, "get")
+
+    wireless_bus = {}
+    for nid, node in nodes_by_id.items():
+        ntype = str(node.get("type", "")).strip().lower()
+        if ntype.startswith("set_") or ntype in ["setnode", "set"]:
+            var_name = extract_var_name(node, "set")
+            for inp in node.get("inputs", []):
+                in_lid = inp.get("link")
+                if in_lid is not None:
+                    wireless_bus[var_name] = in_lid
+                    break
+
+    primitive_node_map = {}
+    for nid, node in nodes_by_id.items():
+        ntype = str(node.get("type", "")).strip().lower()
+        if ntype.startswith("primitive"):
+            wv = node.get("widgets_values")
+            if isinstance(wv, list) and len(wv) > 0:
+                primitive_node_map[nid] = wv[0]
+
+    # 3. 递归穿透解析真实信号源 (递归展开 Reroute 链与 Get/Set 虚拟无线总线)
+    def resolve_source(nid: str, slot: int, visited=None):
+        if visited is None:
+            visited = set()
+        if (nid, slot) in visited or len(visited) > 30:
+            return [nid, slot]
+        visited.add((nid, slot))
+
+        if nid in reroute_node_map:
+            in_lid = reroute_node_map[nid]
+            if in_lid in link_map:
+                up_nid, up_slot = link_map[in_lid]
+                return resolve_source(up_nid, up_slot, visited)
+
+        if nid in get_node_map:
+            var_name = get_node_map[nid]
+            if var_name in wireless_bus:
+                in_lid = wireless_bus[var_name]
+                if in_lid in link_map:
+                    up_nid, up_slot = link_map[in_lid]
+                    return resolve_source(up_nid, up_slot, visited)
+
+        return [nid, slot]
+
+    # 4. 全局替换所有连线映射至最终实体节点
+    for lid in list(link_map.keys()):
+        src_id, src_slot = link_map[lid]
+        final_src_id, final_src_slot = resolve_source(src_id, src_slot)
+        link_map[lid] = [final_src_id, final_src_slot]
+
+    # 5. 生成 API Prompt 字典（剔除所有虚拟节点，直连实体节点）
     prompt = {}
     for node in nodes:
         nid = str(node.get("id"))
         ntype = node.get("type")
         if not nid or not ntype:
+            continue
+        if is_virtual_node(node):
             continue
 
         inputs = {}
@@ -1674,7 +1782,11 @@ def convert_ui_workflow_to_prompt(ui_json: Dict[str, Any], obj_info: Dict[str, A
             name = inp.get("name")
             lid = inp.get("link")
             if lid is not None and lid in link_map:
-                inputs[name] = link_map[lid]
+                src_nid, src_slot = link_map[lid]
+                if src_nid in primitive_node_map:
+                    inputs[name] = primitive_node_map[src_nid]
+                else:
+                    inputs[name] = [src_nid, src_slot]
 
         # B. 映射 widgets_values 参数
         w_values = node.get("widgets_values")
