@@ -8,7 +8,7 @@ import urllib.parse
 import uuid
 import base64
 import requests
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Set
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Depends, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -150,7 +150,8 @@ def load_config() -> Dict[str, Any]:
         "turnstileSecretKeyEncrypted": "",
         "allowRegistration": True,
         "defaultUserPoints": 100,
-        "requireLoginToGenerate": False
+        "requireLoginToGenerate": False,
+        "hideAuxiliaryAudioChain": True
     }
     for sk, sv in system_defaults.items():
         if sk not in sys_cfg:
@@ -608,6 +609,7 @@ class AdminSystemConfigRequest(BaseModel):
     allowRegistration: Optional[bool] = None
     defaultUserPoints: Optional[int] = None
     requireLoginToGenerate: Optional[bool] = None
+    hideAuxiliaryAudioChain: Optional[bool] = None
 
 async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]]:
     """从 Authorization 标头或 Cookie 中解析用户（未登录返回 None）"""
@@ -1024,6 +1026,8 @@ def admin_update_system_config(req: AdminSystemConfigRequest, _: Dict[str, Any] 
         sys_cfg["defaultUserPoints"] = max(0, int(req.defaultUserPoints))
     if req.requireLoginToGenerate is not None:
         sys_cfg["requireLoginToGenerate"] = bool(req.requireLoginToGenerate)
+    if req.hideAuxiliaryAudioChain is not None:
+        sys_cfg["hideAuxiliaryAudioChain"] = bool(req.hideAuxiliaryAudioChain)
     
     save_config(cfg)
     safe_data = get_system_config_safe(cfg)
@@ -1152,7 +1156,8 @@ def get_config(current_user: Optional[Dict[str, Any]] = Depends(get_current_user
             "siteTitle": cfg.get("system", {}).get("siteTitle", "RunningHub 智能调度中心"),
             "allowRegistration": bool(cfg.get("system", {}).get("allowRegistration", True)),
             "requireLoginToGenerate": bool(cfg.get("system", {}).get("requireLoginToGenerate", True)),
-            "defaultUserPoints": cfg.get("system", {}).get("defaultUserPoints", 100)
+            "defaultUserPoints": cfg.get("system", {}).get("defaultUserPoints", 100),
+            "hideAuxiliaryAudioChain": bool(cfg.get("system", {}).get("hideAuxiliaryAudioChain", True))
         }
     }
     
@@ -1322,7 +1327,49 @@ def delete_workflow(workflow_id: str, _: Dict[str, Any] = Depends(get_current_ad
     cfg["workflows"] = [w for w in cfg.get("workflows", []) if w.get("id") != workflow_id]
     save_config(cfg)
     return {"status": "ok"}
-    return {"status": "ok"}
+
+def detect_silent_audio_subgraphs(nodes: Dict[str, Any]) -> Set[str]:
+    """
+    拓扑检测 ComfyUI 中常见的静音/占位音频生成 4 节点流水线：
+    Node 1 (GetImageSize / GetImageSizeAndCount)
+      -> Node 2 (SimpleCalculator / SimpleCalculatorKJ)
+        -> Node 3 (EmptyAudio)
+          -> Node 4 (SaveAudio / SaveAudioAdvanced)
+    
+    严格限制：只有当这 4 个节点严格按照此有向无环依赖链级联连接时，才认定为辅助占位链路并隐藏。
+    若任意节点独立存在或未形成该完整 4 节点链路，则视为用户真实操作节点，正常展示。
+    """
+    def normalize_type(ctype: Any) -> str:
+        return str(ctype).replace("_", "").replace(" ", "").lower()
+
+    def is_node_type(node: Dict[str, Any], candidates: List[str]) -> bool:
+        norm = normalize_type(node.get("class_type", ""))
+        return any(c in norm for c in candidates)
+
+    def get_node_incoming_sources(node: Dict[str, Any]) -> Set[str]:
+        sources = set()
+        inputs = node.get("inputs", {})
+        if isinstance(inputs, dict):
+            for val in inputs.values():
+                if isinstance(val, (list, tuple)) and len(val) >= 1:
+                    sources.add(str(val[0]))
+        return sources
+
+    hidden_ids: Set[str] = set()
+    for n4_id, n4 in nodes.items():
+        if is_node_type(n4, ["saveaudio"]):
+            for n3_id in get_node_incoming_sources(n4):
+                n3 = nodes.get(n3_id)
+                if n3 and is_node_type(n3, ["emptyaudio"]):
+                    for n2_id in get_node_incoming_sources(n3):
+                        n2 = nodes.get(n2_id)
+                        if n2 and is_node_type(n2, ["simplecalculator"]):
+                            for n1_id in get_node_incoming_sources(n2):
+                                n1 = nodes.get(n1_id)
+                                if n1 and is_node_type(n1, ["getimagesize"]):
+                                    chain = {str(n1_id), str(n2_id), str(n3_id), str(n4_id)}
+                                    hidden_ids.update(chain)
+    return hidden_ids
 
 @app.post("/api/workflows/inspect")
 def inspect_workflow_endpoint(payload: Dict[str, Any]):
@@ -1488,6 +1535,20 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
                 "fieldMeta": field_meta
             })
 
+    # 拓扑检测静音音频占位辅助链路 (GetImageSize -> Simple Calculator -> Empty Audio -> Save Audio)
+    hide_auxiliary = bool(cfg.get("system", {}).get("hideAuxiliaryAudioChain", True))
+    hidden_node_ids: Set[str] = detect_silent_audio_subgraphs(nodes) if hide_auxiliary else set()
+
+    if hidden_node_ids:
+        prompt_nodes = [p for p in prompt_nodes if str(p.get("nodeId")) not in hidden_node_ids]
+        sampler_nodes = [s for s in sampler_nodes if str(s.get("nodeId")) not in hidden_node_ids]
+        latent_nodes = [l for l in latent_nodes if str(l.get("nodeId")) not in hidden_node_ids]
+        image_nodes = [im for im in image_nodes if str(im.get("nodeId")) not in hidden_node_ids]
+        video_nodes = [vm for vm in video_nodes if str(vm.get("nodeId")) not in hidden_node_ids]
+        quality_nodes = [q for q in quality_nodes if str(q.get("nodeId")) not in hidden_node_ids]
+        output_nodes = [o for o in output_nodes if str(o.get("nodeId")) not in hidden_node_ids]
+        all_editable_nodes = [n for n in all_editable_nodes if str(n.get("nodeId")) not in hidden_node_ids]
+
     # 智能区分正向、负向与主体提示词
     categorized_prompts = []
     for p in prompt_nodes:
@@ -1519,6 +1580,7 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
         "status": "ok",
         "workflowId": str(workflow_id),
         "totalNodes": len(nodes),
+        "hiddenAuxiliaryNodeIds": list(hidden_node_ids) if hidden_node_ids else [],
         "dynamicSchema": {
             "promptNodes": categorized_prompts,
             "samplerNode": sampler_nodes[0] if sampler_nodes else None,
