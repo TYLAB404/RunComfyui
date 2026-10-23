@@ -14,6 +14,7 @@ data/.secret.key
 data/config.json
 data/users.json
 data/tasks.json
+data/object_info_cache.json
 data/app.db*
 *.db
 *.sqlite
