@@ -8,24 +8,24 @@ import uuid
 import aiohttp
 from typing import Optional, List, Dict, Any, Tuple
 from security import SECRET_KEY_FILE
-from database import get_db_connection
+from database import get_db_connection, db_bump_token_version
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 从加密套件派生 JWT 签名密钥（保持长期稳定，跨重启不丢失）
+# 从安全加密密钥派生 JWT 签名密钥（严格 fail-fast 启动门禁，严禁源码内嵌硬编码弱密钥）
 def _get_jwt_secret() -> bytes:
     env_secret = os.getenv("JWT_SECRET_KEY")
-    if env_secret:
-        return env_secret.encode("utf-8")
+    if env_secret and len(env_secret.strip()) >= 16:
+        return hashlib.sha256(env_secret.strip().encode("utf-8")).digest()
     if os.path.exists(SECRET_KEY_FILE):
         try:
             with open(SECRET_KEY_FILE, "rb") as f:
                 content = f.read().strip()
                 if content:
-                    return hashlib.sha256(content + b"::JWT_SALT_2026").digest()
-        except Exception:
-            pass
-    return b"RUNNINGHUB_WEB_DEFAULT_JWT_SECRET_SALT_2026"
+                    return hashlib.sha256(content + b"::JWT_SALT_2026_RUNNINGHUB").digest()
+        except Exception as e:
+            raise RuntimeError(f"[Security Fail-Fast] 无法读取安全密钥文件 {SECRET_KEY_FILE}: {e}")
+    raise RuntimeError("[Security Fail-Fast] 未检测到有效的 JWT_SECRET_KEY 环境变量或 .secret.key 主加密凭证，为防账号伪造系统强制拒绝启动！")
 
 _JWT_SECRET = _get_jwt_secret()
 
@@ -33,7 +33,9 @@ _JWT_SECRET = _get_jwt_secret()
 
 def sanitize_user(row: Any) -> Dict[str, Any]:
     """将数据库行转换为安全的前端用户字典，彻底剥离 password_hash 和 salt"""
-    if isinstance(row, sqlite3_row := getattr(sqlite3_row := None, "__class__", dict)) or hasattr(row, "keys"):
+    if not row:
+        return {}
+    if hasattr(row, "keys"):
         d = dict(row)
     elif isinstance(row, dict):
         d = dict(row)
@@ -47,6 +49,7 @@ def sanitize_user(row: Any) -> Dict[str, Any]:
         "role": d.get("role", "user"),
         "points": d.get("points", 0),
         "isActive": bool(d.get("is_active", 1)),
+        "tokenVersion": d.get("token_version", 1),
         "createdAt": d.get("created_at", 0),
         "lastLogin": d.get("last_login", 0),
         "taskCount": d.get("task_count", 0)
@@ -69,6 +72,8 @@ def db_row_to_user(row: Any) -> Optional[Dict[str, Any]]:
         "points": d.get("points", 0),
         "isActive": bool(d.get("is_active", 1)),
         "is_active": bool(d.get("is_active", 1)),
+        "token_version": d.get("token_version", 1),
+        "tokenVersion": d.get("token_version", 1),
         "createdAt": d.get("created_at", 0),
         "created_at": d.get("created_at", 0),
         "lastLogin": d.get("last_login", 0),
@@ -292,6 +297,12 @@ def update_user_fields(user_id: str, updates: Dict[str, Any]) -> Optional[Dict[s
         cursor = conn.cursor()
         cursor.execute(sql, tuple(values))
         conn.commit()
+
+    # 若修改了用户状态（如封禁）或角色权限，立即自增 token_version 强制吊销旧 Token，实现 0.1 秒秒级踢出
+    if "isActive" in updates and not updates["isActive"]:
+        db_bump_token_version(str(user_id))
+    elif "role" in updates:
+        db_bump_token_version(str(user_id))
         
     return get_user_by_id(user_id)
 
@@ -304,7 +315,11 @@ def set_user_password(user_id: str, new_password: str) -> bool:
             (pwd_hash, salt, str(user_id))
         )
         conn.commit()
-        return cursor.rowcount > 0
+        ok = cursor.rowcount > 0
+    if ok:
+        # 修改密码后立即吊销旧会话 Token
+        db_bump_token_version(str(user_id))
+    return ok
 
 def delete_user_by_id(user_id: str) -> bool:
     with get_db_connection() as conn:

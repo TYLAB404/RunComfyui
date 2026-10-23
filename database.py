@@ -2,7 +2,7 @@ import os
 import sqlite3
 import json
 import time
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -121,6 +121,37 @@ def init_database():
                 int(time.time())
             ))
 
+        # 4. 积分对账流水台账表 (Points Ledger - 彻底解决 P0-5 计费虚设问题)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS points_ledger (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            task_id TEXT,
+            amount INTEGER NOT NULL,
+            balance_after INTEGER NOT NULL,
+            reason TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_points_user_id ON points_ledger (user_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_points_created_at ON points_ledger (created_at DESC);")
+
+        # 5. 自动无损增量同步字段 (避免 SQLite 重建表)
+        def _add_col_if_missing(tbl, col, def_sql):
+            cursor.execute(f"PRAGMA table_info({tbl});")
+            cols = [r[1] for r in cursor.fetchall()]
+            if col not in cols:
+                cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {def_sql};")
+
+        _add_col_if_missing("users", "token_version", "INTEGER NOT NULL DEFAULT 1")
+        _add_col_if_missing("tasks", "queue_remaining", "INTEGER DEFAULT 0")
+        _add_col_if_missing("tasks", "status_text", "TEXT DEFAULT ''")
+        _add_col_if_missing("tasks", "progress_percent", "REAL DEFAULT 0")
+        _add_col_if_missing("tasks", "current_step", "INTEGER DEFAULT 0")
+        _add_col_if_missing("tasks", "current_node_id", "TEXT DEFAULT ''")
+        _add_col_if_missing("tasks", "error_message", "TEXT DEFAULT ''")
+        _add_col_if_missing("tasks", "cost", "INTEGER DEFAULT 0")
+
         conn.commit()
 
         # 3. 自动迁移 tasks.json 历史任务至 SQLite
@@ -187,6 +218,13 @@ def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
         "status": d.get("status"),
         "duration": d.get("duration", 0),
         "consumeCoins": d.get("consume_coins", "0"),
+        "queueRemaining": d.get("queue_remaining", 0),
+        "statusText": d.get("status_text", ""),
+        "progressPercent": d.get("progress_percent", 0),
+        "currentStep": d.get("current_step", 0),
+        "currentNodeId": d.get("current_node_id", ""),
+        "error": d.get("error_message", ""),
+        "cost": d.get("cost", 0),
         "outputs": outputs,
         "nodeInfoList": node_info,
         "createdAt": d.get("created_at"),
@@ -200,7 +238,7 @@ def db_load_tasks(user_id: Optional[str] = None, is_admin: bool = False, limit: 
             cursor.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?;", (limit,))
         elif user_id:
             cursor.execute(
-                "SELECT * FROM tasks WHERE user_id = ? OR user_id = '' OR user_id IS NULL ORDER BY created_at DESC LIMIT ?;", 
+                "SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?;", 
                 (str(user_id), limit)
             )
         else:
@@ -223,13 +261,14 @@ def db_save_task(task: Dict[str, Any]):
         INSERT INTO tasks (
             task_id, user_id, username, workflow_id, workflow_name, task_type,
             positive_prompt, negative_prompt, status, duration, consume_coins,
-            outputs_json, node_info_json, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            outputs_json, node_info_json, cost, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
             status = excluded.status,
             duration = excluded.duration,
             consume_coins = excluded.consume_coins,
             outputs_json = excluded.outputs_json,
+            cost = excluded.cost,
             updated_at = excluded.updated_at;
         """, (
             str(task["taskId"]),
@@ -245,6 +284,7 @@ def db_save_task(task: Dict[str, Any]):
             str(task.get("consumeCoins", "0")),
             json.dumps(task.get("outputs", []), ensure_ascii=False),
             json.dumps(task.get("nodeInfoList", []), ensure_ascii=False),
+            int(task.get("cost", 0) or 0),
             int(task.get("createdAt", time.time())),
             int(task.get("updatedAt", time.time()))
         ))
@@ -261,7 +301,15 @@ def db_update_task(task_id: str, updates: Dict[str, Any]):
             "duration": "duration",
             "consumeCoins": "consume_coins",
             "updatedAt": "updated_at",
-            "taskType": "task_type"
+            "taskType": "task_type",
+            "cost": "cost",
+            "queueRemaining": "queue_remaining",
+            "statusText": "status_text",
+            "progressPercent": "progress_percent",
+            "currentStep": "current_step",
+            "currentNodeId": "current_node_id",
+            "error": "error_message",
+            "errorMessage": "error_message"
         }
         for k, v in updates.items():
             if k in mapping:
@@ -285,6 +333,88 @@ def db_delete_task(task_id: str):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM tasks WHERE task_id = ?;", (str(task_id),))
         conn.commit()
+
+# ----------------- 积分计费原子操作与流水账本 (P0-5 资产防超卖与防并发并发) -----------------
+
+def db_deduct_user_points(user_id: str, amount: int, task_id: str = "", reason: str = "工作流生图扣费") -> Tuple[bool, int, str]:
+    """
+    原子扣减用户积分：
+    采用 SQL 原生条件更新 UPDATE ... WHERE points >= amount，彻底杜绝并发下余额扣成负数！
+    返回 (成功标志, 扣后余额, 错误信息)
+    """
+    if amount <= 0:
+        with get_db_connection() as conn:
+            c = conn.cursor()
+            c.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
+            r = c.fetchone()
+            return True, (r[0] if r else 0), ""
+
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        # 1. 原子条件扣减
+        cursor.execute(
+            "UPDATE users SET points = points - ? WHERE id = ? AND points >= ? AND is_active = 1;",
+            (amount, str(user_id), amount)
+        )
+        if cursor.rowcount == 0:
+            # 扣减失败，查询当前状态
+            cursor.execute("SELECT points, is_active FROM users WHERE id = ?;", (str(user_id),))
+            row = cursor.fetchone()
+            if not row:
+                return False, 0, "用户不存在"
+            if not row[1]:
+                return False, row[0], "用户账户已被封禁，禁止消费"
+            return False, row[0], f"算力点数不足（当前余额: {row[0]}, 本次需要: {amount}）"
+
+        # 2. 查询扣减后最新余额
+        cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
+        new_balance = cursor.fetchone()[0]
+
+        # 3. 记录流水台账
+        ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"
+        cursor.execute("""
+        INSERT INTO points_ledger (id, user_id, task_id, amount, balance_after, reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, (ledger_id, str(user_id), str(task_id), -amount, new_balance, reason, int(time.time())))
+
+        conn.commit()
+        return True, new_balance, "扣费成功"
+
+def db_refund_user_points(user_id: str, amount: int, task_id: str = "", reason: str = "生图失败/取消退款") -> Tuple[bool, int]:
+    """原子退还用户积分，并写入退款对账流水"""
+    if amount <= 0:
+        return True, 0
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET points = points + ? WHERE id = ?;", (amount, str(user_id)))
+        cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
+        row = cursor.fetchone()
+        new_balance = row[0] if row else 0
+
+        ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"
+        cursor.execute("""
+        INSERT INTO points_ledger (id, user_id, task_id, amount, balance_after, reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, (ledger_id, str(user_id), str(task_id), amount, new_balance, reason, int(time.time())))
+        conn.commit()
+        return True, new_balance
+
+def db_bump_token_version(user_id: str) -> int:
+    """递增用户的 token 版本号，使之前签发的所有旧 JWT 立即失效（用于改密、封禁与秒踢）"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET token_version = token_version + 1 WHERE id = ?;", (str(user_id),))
+        cursor.execute("SELECT token_version FROM users WHERE id = ?;", (str(user_id),))
+        row = cursor.fetchone()
+        conn.commit()
+        return row[0] if row else 1
+
+def db_get_token_version(user_id: str) -> int:
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT token_version FROM users WHERE id = ?;", (str(user_id),))
+        row = cursor.fetchone()
+        return row[0] if row else 1
 
 # ----------------- 公告表 (Announcements) 封装操作 -----------------
 

@@ -18,6 +18,7 @@ from security import encrypt_key, decrypt_key, mask_key, verify_key_with_running
 from database import (
     db_save_task, db_update_task, db_load_tasks, db_get_task, db_delete_task,
     db_get_announcements, db_save_announcement, db_update_announcement, db_delete_announcement,
+    db_deduct_user_points, db_refund_user_points, db_bump_token_version,
     is_rate_limited, record_failed_attempt, clear_failed_attempts
 )
 from auth import (
@@ -28,13 +29,26 @@ from auth import (
 
 app = FastAPI(title="RunningHub Web Controller", version="1.0.0")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# 生产级安全 CORS 配置：严禁 wildcard * 与 allow_credentials=True 混用
+_CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS")
+if _CORS_ORIGINS_ENV:
+    _ALLOWED_ORIGINS = [o.strip() for o in _CORS_ORIGINS_ENV.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_ALLOWED_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+else:
+    # 默认同源及本地开发环回地址白名单
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -134,8 +148,21 @@ def load_config() -> Dict[str, Any]:
     return cfg
 
 def save_config(cfg: Dict[str, Any]):
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    """原子化安全落盘：临时文件写入 + fsync + 原子重命名替换，杜绝服务崩溃写出空配置导致密钥丢失"""
+    tmp_path = f"{CONFIG_PATH}.tmp.{os.getpid()}_{random.randint(1000, 9999)}"
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, CONFIG_PATH)
+    except Exception as e:
+        if os.path.exists(tmp_path):
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+        raise e
 
 def get_system_config_safe(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """返回脱敏的系统全局配置（隐藏 Turnstile 密钥明文）"""
@@ -239,23 +266,21 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
                             b64_str = base64.b64encode(img_bytes).decode('ascii')
                             data_url = f"data:image/png;base64,{b64_str}"
 
-                            # 实时更新到任务 outputs 中（仅保留最新一帧预览，避免占用冗余存储）
-                            tasks = load_tasks()
-                            for t in tasks:
-                                if t.get("taskId") == task_id:
-                                    t["outputs"] = [o for o in t.get("outputs", []) if not o.get("isRealtimePreview")]
-                                    t["outputs"].insert(0, {
-                                        "filename": f"{task_id}_preview.png",
-                                        "url": data_url,
-                                        "size": len(img_bytes),
-                                        "nodeId": "Preview",
-                                        "title": f"实时截流预览 #{preview_count}",
-                                        "isRealtime": True,
-                                        "isRealtimePreview": True,
-                                        "fileType": "image"
-                                    })
-                                    save_tasks(tasks)
-                                    break
+                            # 实时更新到任务 outputs 中（仅保留最新一帧预览，单行原子更新，零写放大）
+                            cur_t = db_get_task(str(task_id))
+                            if cur_t:
+                                outs = [o for o in cur_t.get("outputs", []) if not o.get("isRealtimePreview")]
+                                outs.insert(0, {
+                                    "filename": f"{task_id}_preview.png",
+                                    "url": data_url,
+                                    "size": len(img_bytes),
+                                    "nodeId": "Preview",
+                                    "title": f"实时截流预览 #{preview_count}",
+                                    "isRealtime": True,
+                                    "isRealtimePreview": True,
+                                    "fileType": "image"
+                                })
+                                update_task_record(str(task_id), {"outputs": outs, "updatedAt": int(time.time())})
 
                     # 2. 处理 JSON 消息 (ComfyUI 节点执行状态与排队进度)
                     elif msg.type == aiohttp.WSMsgType.TEXT:
@@ -332,23 +357,22 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
                                             view_url = f"{target_url}/view?filename={fname}&subfolder={subfolder}&type={m_type}&clientId={client_id}"
 
                                     if view_url:
-                                        tasks = load_tasks()
-                                        for t in tasks:
-                                            if t.get("taskId") == task_id:
-                                                existing = [o.get("url") for o in t.get("outputs", [])]
-                                                if view_url not in existing:
-                                                    t.setdefault("outputs", []).insert(0, {
-                                                        "filename": fname or f"{task_id}_node_{node_id}",
-                                                        "url": view_url,
-                                                        "remoteUrl": view_url,
-                                                        "size": 0,
-                                                        "nodeId": node_id,
-                                                        "title": f"Node #{node_id} {'截流视频' if is_video else '截流图像'}",
-                                                        "isRealtime": True,
-                                                        "fileType": "video" if is_video else "image"
-                                                    })
-                                                    save_tasks(tasks)
-                                                break
+                                        cur_t = db_get_task(str(task_id))
+                                        if cur_t:
+                                            outs = cur_t.get("outputs", [])
+                                            existing = [o.get("url") for o in outs]
+                                            if view_url not in existing:
+                                                outs.insert(0, {
+                                                    "filename": fname or f"{task_id}_node_{node_id}",
+                                                    "url": view_url,
+                                                    "remoteUrl": view_url,
+                                                    "size": 0,
+                                                    "nodeId": node_id,
+                                                    "title": f"Node #{node_id} {'截流视频' if is_video else '截流图像'}",
+                                                    "isRealtime": True,
+                                                    "fileType": "video" if is_video else "image"
+                                                })
+                                                update_task_record(str(task_id), {"outputs": outs, "updatedAt": int(time.time())})
                         except Exception:
                             pass
                     elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
@@ -358,163 +382,161 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
 
 
 async def poll_task_status(task_id: str, api_key: str):
-    """后台异步轮询任务输出，并在完成后自动下载到本地 outputs"""
+    """后台异步轮询任务输出，并在完成后单行更新状态与计费流水"""
     start_time = time.time()
     outputs_url = f"{RUNNINGHUB_API_URL}/task/openapi/outputs"
     headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
     
     ws_started = False
-    # 彻底解除人为倒计时限制：只要任务处于 QUEUED 或 RUNNING，就永远保持轮询守候，直到云端任务自然结束！
-    while True:
-        await asyncio.sleep(2.5)
-        if str(task_id) in CANCELLED_TASKS:
-            # 任务已被用户主动取消，立即退出后台轮询
-            break
-        try:
-            res = await asyncio.to_thread(
-                requests.post,
-                outputs_url,
-                json={"apiKey": api_key, "taskId": str(task_id)},
-                headers=headers,
-                timeout=15
-            )
-            data = res.json()
-            code = data.get("code")
-            msg = data.get("msg")
+    try:
+        while True:
+            await asyncio.sleep(2.5)
+            if str(task_id) in CANCELLED_TASKS:
+                # 任务已被用户主动取消，立即退出后台轮询
+                break
+            try:
+                res = await asyncio.to_thread(
+                    requests.post,
+                    outputs_url,
+                    json={"apiKey": api_key, "taskId": str(task_id)},
+                    headers=headers,
+                    timeout=15
+                )
+                data = res.json()
+                code = data.get("code")
+                msg = data.get("msg")
 
-            # 813 状态表示云端排队中
-            if code == 813:
-                queue_duration = int(time.time() - start_time)
-                tasks = load_tasks()
-                for t in tasks:
-                    if t.get("taskId") == str(task_id):
-                        t.update({
-                            "status": "QUEUED",
-                            "queueDuration": queue_duration,
-                            "duration": queue_duration,
-                            "statusText": f"云端排队调度中 (已等待 {queue_duration}s)",
-                            "updatedAt": int(time.time())
-                        })
-                        save_tasks(tasks)
-                        break
+                # 813 状态表示云端排队中
+                if code == 813:
+                    queue_duration = int(time.time() - start_time)
+                    update_task_record(str(task_id), {
+                        "status": "QUEUED",
+                        "duration": queue_duration,
+                        "statusText": f"云端排队调度中 (已等待 {queue_duration}s)",
+                        "updatedAt": int(time.time())
+                    })
 
-            # 804 状态表示任务进入 RUNNING，启动 WebSocket 实时管道并保持耗时更新
-            if code == 804:
-                run_duration = int(time.time() - start_time)
-                tasks = load_tasks()
-                for t in tasks:
-                    if t.get("taskId") == str(task_id):
-                        cur_text = t.get("statusText", "")
-                        if "采样" not in cur_text and "节点" not in cur_text and "排队等待" not in cur_text:
-                            cur_text = f"云端 GPU 正在计算 ({run_duration}s)"
-                        t.update({
-                            "status": "RUNNING",
-                            "duration": run_duration,
-                            "statusText": cur_text,
-                            "updatedAt": int(time.time())
-                        })
-                        save_tasks(tasks)
-                        break
+                # 804 状态表示任务进入 RUNNING，启动 WebSocket 实时管道并保持耗时更新
+                elif code == 804:
+                    run_duration = int(time.time() - start_time)
+                    cur_t = db_get_task(str(task_id))
+                    cur_text = cur_t.get("statusText", "") if cur_t else ""
+                    if "采样" not in cur_text and "节点" not in cur_text and "排队等待" not in cur_text:
+                        cur_text = f"云端 GPU 正在计算 ({run_duration}s)"
+                    update_task_record(str(task_id), {
+                        "status": "RUNNING",
+                        "duration": run_duration,
+                        "statusText": cur_text,
+                        "updatedAt": int(time.time())
+                    })
 
-                if not ws_started and data.get("data"):
-                    ws_url = data["data"].get("netWssUrl")
-                    if ws_url:
-                        ws_started = True
-                        asyncio.create_task(listen_websocket_stream(ws_url, str(task_id), api_key))
-            
-            # 任务执行完毕且有生成结果
-            if code == 0 and data.get("data"):
-                output_items = data["data"]
-                saved_files = []
-                total_coins = "0"
-                for idx, item in enumerate(output_items):
-                    file_url = item.get("fileUrl")
-                    total_coins = item.get("consumeCoins", total_coins)
-                    if file_url:
-                        ext = item.get("fileType", "png").lower()
-                        is_video = ext in ["mp4", "webm", "mov", "gif"] or any(e in file_url.lower() for e in [".mp4", ".webm", ".mov", ".gif"])
-                        filename = f"{task_id}_{idx}.{ext}"
-                        
-                        # 纯远端直链模式：服务器零落盘、零下载中转，直接将官方 COS CDN 远端直链发给客户端！
-                        saved_files.append({
-                            "filename": filename,
-                            "url": file_url,
-                            "remoteUrl": file_url,
-                            "size": 0,
-                            "nodeId": str(item.get("nodeId", "")),
-                            "fileType": "video" if is_video else "image"
-                        })
+                    if not ws_started and data.get("data"):
+                        ws_url = data["data"].get("netWssUrl")
+                        if ws_url:
+                            ws_started = True
+                            asyncio.create_task(listen_websocket_stream(ws_url, str(task_id), api_key))
                 
-                # 合并官方直链结果与先前截流的直链，剔除临时 base64 预览
-                tasks = load_tasks()
-                for t in tasks:
-                    if t.get("taskId") == task_id:
-                        existing_files = [f for f in t.get("outputs", []) if not f.get("isRealtimePreview")]
-                        seen_urls = set()
-                        final_outputs = []
-                        for f in saved_files + existing_files:
-                            u = f.get("url")
-                            if u and u not in seen_urls:
-                                seen_urls.add(u)
-                                final_outputs.append(f)
+                # 任务执行完毕且有生成结果
+                elif code == 0 and data.get("data"):
+                    output_items = data["data"]
+                    saved_files = []
+                    total_coins = "0"
+                    for idx, item in enumerate(output_items):
+                        file_url = item.get("fileUrl")
+                        total_coins = item.get("consumeCoins", total_coins)
+                        if file_url:
+                            ext = item.get("fileType", "png").lower()
+                            is_video = ext in ["mp4", "webm", "mov", "gif"] or any(e in file_url.lower() for e in [".mp4", ".webm", ".mov", ".gif"])
+                            filename = f"{task_id}_{idx}.{ext}"
+                            
+                            saved_files.append({
+                                "filename": filename,
+                                "url": file_url,
+                                "remoteUrl": file_url,
+                                "size": 0,
+                                "nodeId": str(item.get("nodeId", "")),
+                                "fileType": "video" if is_video else "image"
+                            })
+                    
+                    # 合并官方直链结果与先前截流的直链，单行落盘
+                    cur_t = db_get_task(str(task_id))
+                    existing_files = [f for f in (cur_t.get("outputs", []) if cur_t else []) if not f.get("isRealtimePreview")]
+                    seen_urls = set()
+                    final_outputs = []
+                    for f in saved_files + existing_files:
+                        u = f.get("url")
+                        if u and u not in seen_urls:
+                            seen_urls.add(u)
+                            final_outputs.append(f)
 
-                        t.update({
-                            "status": "SUCCESS",
-                            "duration": int(time.time() - start_time),
-                            "consumeCoins": total_coins,
-                            "outputs": final_outputs,
-                            "updatedAt": int(time.time())
-                        })
-                        save_tasks(tasks)
-                        break
-                return
-            
-            # 正在排队或执行中
-            elif code in (803, 804) or "RUNNING" in str(msg) or "QUEUED" in str(msg):
-                update_task_record(task_id, {
-                    "status": "RUNNING",
-                    "duration": int(time.time() - start_time),
-                    "updatedAt": int(time.time())
-                })
-            else:
-                # 核心容错截流防护：
-                # 即使云端因结尾节点报错而返回 FAILED (code 805)，
-                # 但只要我们已经截获了真实视频或图像输出，直接判定为生成成功！
-                tasks = load_tasks()
-                has_captured_real_media = False
-                for t in tasks:
-                    if t.get("taskId") == task_id:
-                        for o in t.get("outputs", []):
+                    update_task_record(str(task_id), {
+                        "status": "SUCCESS",
+                        "duration": int(time.time() - start_time),
+                        "consumeCoins": total_coins,
+                        "outputs": final_outputs,
+                        "statusText": "生成任务已圆满完成",
+                        "updatedAt": int(time.time())
+                    })
+                    return
+                
+                # 正在排队或执行中
+                elif code in (803, 804) or "RUNNING" in str(msg) or "QUEUED" in str(msg):
+                    update_task_record(str(task_id), {
+                        "status": "RUNNING",
+                        "duration": int(time.time() - start_time),
+                        "updatedAt": int(time.time())
+                    })
+                else:
+                    # 容错截流防护：若已捕获有效媒体输出则视为成功，否则退还算力点数并标记失败
+                    cur_t = db_get_task(str(task_id))
+                    has_captured_real_media = False
+                    if cur_t:
+                        for o in cur_t.get("outputs", []):
                             if (o.get("isRealtime") and not o.get("isRealtimePreview")) or o.get("remoteUrl"):
                                 has_captured_real_media = True
                                 break
-                        break
 
-                if has_captured_real_media:
-                    update_task_record(task_id, {
-                        "status": "SUCCESS",
-                        "duration": int(time.time() - start_time),
-                        "updatedAt": int(time.time())
-                    })
-                    return
-                else:
-                    fail_data = data.get("data")
-                    err_msg = msg or "任务执行异常"
-                    if isinstance(fail_data, dict):
-                        failed_reason = fail_data.get("failedReason")
-                        if isinstance(failed_reason, dict) and failed_reason.get("exception_message"):
-                            err_msg = f"云端节点 #{failed_reason.get('node_id', '')} ({failed_reason.get('node_name', '')}) 报错: {failed_reason.get('exception_message', '')}"
+                    if has_captured_real_media:
+                        update_task_record(str(task_id), {
+                            "status": "SUCCESS",
+                            "duration": int(time.time() - start_time),
+                            "statusText": "生成完成 (已安全截流有效成果)",
+                            "updatedAt": int(time.time())
+                        })
+                        return
+                    else:
+                        fail_data = data.get("data")
+                        err_msg = msg or "任务执行异常"
+                        if isinstance(fail_data, dict):
+                            failed_reason = fail_data.get("failedReason")
+                            if isinstance(failed_reason, dict) and failed_reason.get("exception_message"):
+                                err_msg = f"云端节点 #{failed_reason.get('node_id', '')} ({failed_reason.get('node_name', '')}) 报错: {failed_reason.get('exception_message', '')}"
 
-                    update_task_record(task_id, {
-                        "status": "FAILED",
-                        "error": err_msg,
-                        "duration": int(time.time() - start_time),
-                        "updatedAt": int(time.time())
-                    })
-                    return
-        except Exception as e:
-            # 临时网络抖动，继续重试
-            pass
+                        # 自动退还用户扣除的算力点数 (P0-5 计费闭环)
+                        if cur_t and cur_t.get("userId") and cur_t.get("cost"):
+                            cost_val = int(cur_t.get("cost", 0))
+                            if cost_val > 0:
+                                db_refund_user_points(
+                                    user_id=cur_t["userId"],
+                                    amount=cost_val,
+                                    task_id=str(task_id),
+                                    reason=f"任务渲染失败全额退还算力 ({task_id})"
+                                )
+                                update_task_record(str(task_id), {"cost": 0})
+
+                        update_task_record(str(task_id), {
+                            "status": "FAILED",
+                            "error": err_msg,
+                            "statusText": f"执行失败: {err_msg[:40]}",
+                            "duration": int(time.time() - start_time),
+                            "updatedAt": int(time.time())
+                        })
+                        return
+            except Exception:
+                # 临时网络抖动，继续重试
+                pass
+    finally:
+        ACTIVE_POLL_TASKS.discard(str(task_id))
 
 
 
@@ -568,6 +590,13 @@ async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]
     user = get_user_by_id(payload["sub"])
     if not user or not user.get("isActive", True):
         return None
+
+    # 秒级会话吊销门禁：若管理员已停用账号或修改了密码，旧 Token 版本号即刻失配，实现 0.1 秒秒踢
+    expected_ver = user.get("token_version", 1)
+    token_ver = payload.get("ver", 1)
+    if expected_ver != token_ver:
+        return None
+
     return sanitize_user(user)
 
 async def get_current_user(user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)) -> Dict[str, Any]:
@@ -637,10 +666,12 @@ async def register_user(req: RegisterRequest, request: Request, response: Respon
     token = create_jwt_token({
         "sub": user["id"],
         "username": user["username"],
-        "role": user["role"]
+        "role": user["role"],
+        "ver": user.get("token_version", 1)
     })
     
-    response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax")
+    is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_secure)
     return {
         "status": "ok",
         "token": token,
@@ -686,9 +717,11 @@ async def login_user(req: LoginRequest, request: Request, response: Response):
     token = create_jwt_token({
         "sub": user["id"],
         "username": user["username"],
-        "role": user["role"]
+        "role": user["role"],
+        "ver": user.get("token_version", 1)
     })
-    response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax")
+    is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_secure)
     return {
         "status": "ok",
         "token": token,
@@ -943,9 +976,11 @@ async def admin_portal_login(req: LoginRequest, request: Request, response: Resp
     token = create_jwt_token({
         "sub": user["id"],
         "username": user["username"],
-        "role": "admin"
+        "role": "admin",
+        "ver": user.get("token_version", 1)
     })
-    response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax")
+    is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+    response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_secure)
     return {
         "status": "ok",
         "token": token,
@@ -964,27 +999,47 @@ class AddKeyModel(BaseModel):
     setActive: Optional[bool] = False
 
 @app.get("/api/config")
-def get_config():
+def get_config(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
+    """获取系统运行配置（严格鉴权隔离：普通用户与访客绝不泄露 API 密钥列表与激活信息）"""
     cfg = load_config()
     active_key_str = get_active_api_key(cfg)
-    active_info = None
-    for k in cfg.get("apiKeys", []):
-        if k.get("id") == cfg.get("activeKeyId"):
-            active_info = k
-            break
-    return {
+    is_admin = current_user and current_user.get("role") == "admin"
+    
+    base_res = {
         "hasKey": bool(active_key_str),
-        "activeKeyId": cfg.get("activeKeyId", ""),
-        "activeKeyName": active_info.get("name", "") if active_info else "",
-        "activeMaskedKey": mask_key(active_key_str) if active_key_str else "",
-        "keys": get_api_keys_safe(cfg),
         "workflows": cfg.get("workflows", []),
-        "system": get_system_config_safe(cfg)
+        "system": get_system_config_safe(cfg) if is_admin else {
+            "siteTitle": cfg.get("system", {}).get("siteTitle", "RunningHub 智能调度中心"),
+            "allowRegistration": bool(cfg.get("system", {}).get("allowRegistration", True)),
+            "requireLoginToGenerate": bool(cfg.get("system", {}).get("requireLoginToGenerate", True)),
+            "defaultUserPoints": cfg.get("system", {}).get("defaultUserPoints", 100)
+        }
     }
+    
+    if is_admin:
+        active_info = None
+        for k in cfg.get("apiKeys", []):
+            if k.get("id") == cfg.get("activeKeyId"):
+                active_info = k
+                break
+        base_res.update({
+            "activeKeyId": cfg.get("activeKeyId", ""),
+            "activeKeyName": active_info.get("name", "") if active_info else "",
+            "activeMaskedKey": mask_key(active_key_str) if active_key_str else "",
+            "keys": get_api_keys_safe(cfg)
+        })
+    else:
+        base_res.update({
+            "activeKeyId": "",
+            "activeKeyName": "",
+            "activeMaskedKey": "",
+            "keys": []
+        })
+    return base_res
 
 @app.post("/api/config")
-def update_config(data: ConfigUpdateModel):
-    """向下兼容的旧版单 Key 更新接口（已全面升级为安全落盘加密与池化管理）"""
+def update_config(data: ConfigUpdateModel, _: Dict[str, Any] = Depends(get_current_admin)):
+    """向下兼容的旧版单 Key 更新接口（仅限管理员访问）"""
     cfg = load_config()
     if data.apiKey and data.apiKey.strip():
         raw_key = data.apiKey.strip()
@@ -1010,8 +1065,8 @@ def update_config(data: ConfigUpdateModel):
     return {"status": "ok", "hasKey": bool(get_active_api_key(cfg))}
 
 @app.get("/api/keys")
-def list_keys():
-    """获取所有已存储的 API Key 列表（全流程脱敏，绝不向浏览器暴露明文或密文）"""
+def list_keys(_: Dict[str, Any] = Depends(get_current_admin)):
+    """获取所有已存储的 API Key 列表（仅限管理员，脱敏后输出）"""
     cfg = load_config()
     return {
         "status": "ok",
@@ -1020,8 +1075,8 @@ def list_keys():
     }
 
 @app.post("/api/keys")
-def add_key(data: AddKeyModel):
-    """添加新的 API Key（后端即时 AES-256 / Fernet 落盘加密，杜绝明文留存）"""
+def add_key(data: AddKeyModel, _: Dict[str, Any] = Depends(get_current_admin)):
+    """添加新的 API Key（仅限管理员，后端即时 Fernet 加密）"""
     raw_key = data.apiKey.strip()
     if not raw_key:
         raise HTTPException(status_code=400, detail="API Key 不能为空")
@@ -1047,8 +1102,8 @@ def add_key(data: AddKeyModel):
     }
 
 @app.post("/api/keys/{key_id}/activate")
-def activate_key(key_id: str):
-    """快速切换当前生效的活动 API Key"""
+def activate_key(key_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """切换当前激活的 API Key（仅限管理员）"""
     cfg = load_config()
     found = any(k.get("id") == key_id for k in cfg.get("apiKeys", []))
     if not found:
@@ -1062,8 +1117,8 @@ def activate_key(key_id: str):
     }
 
 @app.delete("/api/keys/{key_id}")
-def delete_key(key_id: str):
-    """删除指定的 API Key，如删除了当前激活项则自动平滑切换至下一项"""
+def delete_key(key_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """删除指定的 API Key（仅限管理员）"""
     cfg = load_config()
     cfg["apiKeys"] = [k for k in cfg.get("apiKeys", []) if k.get("id") != key_id]
     if cfg.get("activeKeyId") == key_id:
@@ -1076,8 +1131,8 @@ def delete_key(key_id: str):
     }
 
 @app.post("/api/keys/{key_id}/test")
-def test_key(key_id: str):
-    """实时连通性测试：调用 RunningHub 官方鉴权端点验证 Key 状态"""
+def test_key(key_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """实时连通性测试（仅限管理员）"""
     cfg = load_config()
     target_key = None
     for k in cfg.get("apiKeys", []):
@@ -1100,10 +1155,12 @@ class WorkflowModel(BaseModel):
     name: str
     description: Optional[str] = ""
     category: Optional[str] = "通用"
+    pointsCost: Optional[int] = 5
     defaultParams: Optional[Dict[str, Any]] = None
 
 @app.post("/api/workflows")
-def add_or_update_workflow(wf: WorkflowModel):
+def add_or_update_workflow(wf: WorkflowModel, _: Dict[str, Any] = Depends(get_current_admin)):
+    """添加或修改工作流（仅限管理员）"""
     cfg = load_config()
     workflows = cfg.get("workflows", [])
     existing = False
@@ -1119,10 +1176,12 @@ def add_or_update_workflow(wf: WorkflowModel):
     return {"status": "ok", "workflow": wf.dict()}
 
 @app.delete("/api/workflows/{workflow_id}")
-def delete_workflow(workflow_id: str):
+def delete_workflow(workflow_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """删除工作流（仅限管理员）"""
     cfg = load_config()
     cfg["workflows"] = [w for w in cfg.get("workflows", []) if w.get("id") != workflow_id]
     save_config(cfg)
+    return {"status": "ok"}
     return {"status": "ok"}
 
 @app.post("/api/workflows/inspect")
@@ -1332,21 +1391,50 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
     }
 
 @app.post("/api/upload")
-async def upload_file_to_runninghub(file: UploadFile = File(...)):
-    """上传本地图片或视频到 RunningHub，返回远程存储名，方便传入 LoadImage / VHS_LoadVideo 节点"""
+async def upload_file_to_runninghub(
+    file: UploadFile = File(...),
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
+):
+    """上传本地图片或视频到 RunningHub，严格限制单文件 30MB 与安全扩展名，防内存 DoS"""
     cfg = load_config()
+    sys_cfg = cfg.get("system", {})
+    if sys_cfg.get("requireLoginToGenerate") and not current_user:
+        raise HTTPException(status_code=401, detail="当前系统已开启强制登录，请先登录后再上传素材")
+
     api_key = get_active_api_key(cfg)
     if not api_key:
         raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中配置启用")
 
-    file_bytes = await file.read()
+    # 1. 安全扩展名白名单校验
+    filename_raw = file.filename or ""
+    allowed_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".mp4", ".webm", ".mov"}
+    ext = os.path.splitext(filename_raw)[1].lower()
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"不支持的文件格式: {ext}，仅支持图像与视频文件")
+
+    # 2. 流式分块读取并限流最大 30MB，彻底免疫内存 DoS
+    MAX_UPLOAD_SIZE = 30 * 1024 * 1024
+    chunk_size = 1024 * 512
+    total_size = 0
+    buffer = bytearray()
+    
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total_size += len(chunk)
+        if total_size > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail="素材文件过大，单文件上传上限为 30MB")
+        buffer.extend(chunk)
+
+    file_bytes = bytes(buffer)
     upload_url = "https://www.runninghub.ai/openapi/v2/media/upload/binary"
     headers = {
         "Authorization": f"Bearer {api_key}"
     }
 
     try:
-        files = {"file": (file.filename, file_bytes, file.content_type)}
+        files = {"file": (filename_raw, file_bytes, file.content_type)}
         res = await asyncio.to_thread(requests.post, upload_url, headers=headers, files=files, timeout=120)
         resp_data = res.json()
         if resp_data.get("code") == 0:
@@ -1359,6 +1447,8 @@ async def upload_file_to_runninghub(file: UploadFile = File(...)):
             }
         else:
             raise HTTPException(status_code=400, detail=resp_data.get("msg") or "上传失败")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"上传至 RunningHub 发生异常: {str(e)}")
 
@@ -1378,12 +1468,29 @@ async def generate_task(
 ):
     cfg = load_config()
     sys_cfg = cfg.get("system", {})
-    if sys_cfg.get("requireLoginToGenerate") and not current_user:
+    require_login = bool(sys_cfg.get("requireLoginToGenerate", True))
+    if require_login and not current_user:
         raise HTTPException(status_code=401, detail="当前系统已开启强制登录，请先登录后再提交生成任务")
 
     api_key = get_active_api_key(cfg)
     if not api_key:
         raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中添加启用密钥")
+
+    # 匹配目标工作流并计算点数单价 (P0-5 计费闭环)
+    target_wf = next((w for w in cfg.get("workflows", []) if str(w.get("id")) == str(req.workflowId)), {})
+    task_cost = int(target_wf.get("pointsCost", sys_cfg.get("defaultTaskCost", 5)))
+
+    # 原子条件扣减积分：SQL 级 points >= task_cost 严格行锁，彻底杜绝并发超扣与负数
+    points_deducted = False
+    if current_user:
+        ok, remaining, msg = db_deduct_user_points(
+            user_id=current_user["id"],
+            amount=task_cost,
+            reason=f"生成任务算力扣减 ({req.workflowName or req.workflowId})"
+        )
+        if not ok:
+            raise HTTPException(status_code=402, detail=f"算力点数不足：本次生成需 {task_cost} 点，您当前账户仅剩 {remaining} 点，请联系管理员充值")
+        points_deducted = True
 
     # 规范化算力档位：Standard (标准极速独享通道) vs Lite (经济共享排队通道)
     task_type = "Lite" if req.taskType and req.taskType.strip().lower() == "lite" else "Standard"
@@ -1402,13 +1509,18 @@ async def generate_task(
             f"{RUNNINGHUB_API_URL}/task/openapi/create",
             json=payload,
             headers=headers,
-            timeout=20
+            timeout=25
         )
         data = res.json()
     except Exception as e:
+        # 异常退还已扣减点数
+        if points_deducted and current_user:
+            db_refund_user_points(current_user["id"], task_cost, reason="调用云端引擎失败全额退款")
         raise HTTPException(status_code=500, detail=f"调用 RunningHub 创建任务失败: {str(e)}")
 
     if data.get("code") != 0:
+        if points_deducted and current_user:
+            db_refund_user_points(current_user["id"], task_cost, reason=f"云端拒绝任务退还: {data.get('msg')}")
         raise HTTPException(status_code=400, detail=data.get("msg") or "创建任务失败")
 
     task_id = data.get("data", {}).get("taskId")
@@ -1426,6 +1538,7 @@ async def generate_task(
         "username": user_name,
         "positivePrompt": req.positivePrompt or "",
         "negativePrompt": req.negativePrompt or "",
+        "cost": task_cost if points_deducted else 0,
         "status": "QUEUED",
         "createdAt": int(time.time()),
         "updatedAt": int(time.time()),
@@ -1435,9 +1548,8 @@ async def generate_task(
         "nodeInfoList": req.nodeInfoList
     }
 
-    tasks = load_tasks()
-    tasks.insert(0, task_record)
-    save_tasks(tasks)
+    # 单行原子写入任务，彻底根除 O(N) 写入放大
+    db_save_task(task_record)
 
     # 若为登录用户，累加其生成任务计数
     if current_user:
@@ -1448,10 +1560,11 @@ async def generate_task(
         except Exception:
             pass
 
-    # 启动后台双轨守护：轮询 + 实时 WebSocket 毫秒级截流
-    background_tasks.add_task(poll_task_status, str(task_id), api_key)
+    # 启动后台双轨守护：以独立协程登记并启动轮询与 WebSocket，彻底解决 BackgroundTasks 串行阻塞与重复轮询
+    ACTIVE_POLL_TASKS.add(str(task_id))
+    asyncio.create_task(poll_task_status(str(task_id), api_key))
     if net_wss_url:
-        background_tasks.add_task(listen_websocket_stream, net_wss_url, str(task_id), api_key)
+        asyncio.create_task(listen_websocket_stream(net_wss_url, str(task_id), api_key))
 
     return {
         "status": "ok",
@@ -1463,40 +1576,60 @@ ACTIVE_POLL_TASKS = set()
 
 @app.get("/api/tasks")
 async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
-    all_tasks = load_tasks()
     cfg = load_config()
     api_key = get_active_api_key(cfg)
+    
+    # 严格多租户数据行级隔离：前台任务列表只展示属于当前登录用户自己提交的任务
+    if current_user:
+        user_id_str = str(current_user["id"])
+        user_tasks = db_load_tasks(user_id=user_id_str, limit=200)
+    else:
+        user_tasks = []
+
     if api_key:
-        for t in all_tasks:
+        for t in user_tasks:
             tid = str(t.get("taskId"))
             if t.get("status") in ["RUNNING", "QUEUED"] and tid not in ACTIVE_POLL_TASKS and tid not in CANCELLED_TASKS:
                 ACTIVE_POLL_TASKS.add(tid)
                 asyncio.create_task(poll_task_status(tid, api_key))
     
-    # 严格多租户数据行级隔离：前台任务列表只展示属于当前登录用户自己提交的任务
-    if current_user:
-        user_id_str = str(current_user["id"])
-        return [t for t in all_tasks if str(t.get("userId")) == user_id_str]
-    else:
-        return []
+    return user_tasks
 
 @app.get("/api/admin/tasks")
 def admin_list_all_tasks(_: Dict[str, Any] = Depends(get_current_admin)):
     """管理员全量任务审计视图"""
-    return load_tasks()
+    return db_load_tasks(is_admin=True, limit=500)
 
 @app.get("/api/tasks/{task_id}")
-def get_task(task_id: str):
-    tasks = load_tasks()
-    for t in tasks:
-        if t.get("taskId") == task_id:
-            return t
-    raise HTTPException(status_code=404, detail="Task not found")
+def get_task(task_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
+    """获取单个任务详情（严格多租户鉴权校验，杜绝越权枚举读取）"""
+    t = db_get_task(str(task_id).strip())
+    if not t:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    task_owner = str(t.get("userId") or "")
+    if task_owner:
+        if not current_user:
+            raise HTTPException(status_code=404, detail="任务不存在")
+        if current_user.get("role") != "admin" and str(current_user["id"]) != task_owner:
+            raise HTTPException(status_code=404, detail="任务不存在")
+    return t
 
 @app.post("/api/tasks/{task_id}/cancel")
-async def cancel_task_endpoint(task_id: str):
-    """主动取消正在运行或排队中的任务，同时通知 RunningHub 云端与终止本地后台协程"""
+async def cancel_task_endpoint(task_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
+    """主动取消任务（严格租户校验 + 算力点数自动退还 + 单行原子状态更新）"""
     task_id_str = str(task_id).strip()
+    t = db_get_task(task_id_str)
+    if not t:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    task_owner = str(t.get("userId") or "")
+    if task_owner:
+        if not current_user:
+            raise HTTPException(status_code=403, detail="无权操作此任务")
+        if current_user.get("role") != "admin" and str(current_user["id"]) != task_owner:
+            raise HTTPException(status_code=403, detail="无权操作其他用户的任务")
+
     CANCELLED_TASKS.add(task_id_str)
 
     cfg = load_config()
@@ -1519,15 +1652,24 @@ async def cancel_task_endpoint(task_id: str):
         except Exception as e:
             cloud_status = f"云端取消请求异常: {str(e)}"
 
-    # 更新本地任务状态为 CANCELLED
-    tasks = load_tasks()
-    for t in tasks:
-        if str(t.get("taskId")) == task_id_str:
-            t["status"] = "CANCELLED"
-            t["error"] = "用户已主动取消任务"
-            t["updatedAt"] = int(time.time())
-            break
-    save_tasks(tasks)
+    # 算力点数退还闭环
+    cost_val = int(t.get("cost", 0) or 0)
+    if task_owner and cost_val > 0 and t.get("status") in ["QUEUED", "RUNNING"]:
+        db_refund_user_points(
+            user_id=task_owner,
+            amount=cost_val,
+            task_id=task_id_str,
+            reason=f"用户主动取消任务全额退款 ({task_id_str})"
+        )
+        update_task_record(task_id_str, {"cost": 0})
+
+    # 单行原子更新本地任务状态为 CANCELLED
+    update_task_record(task_id_str, {
+        "status": "CANCELLED",
+        "error": "用户已主动取消任务",
+        "statusText": "用户已主动取消",
+        "updatedAt": int(time.time())
+    })
 
     return {
         "status": "ok",
@@ -1543,8 +1685,7 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
         return []
     
     user_id_str = str(current_user["id"])
-    all_tasks = load_tasks()
-    tasks = [t for t in all_tasks if str(t.get("userId")) == user_id_str]
+    tasks = db_load_tasks(user_id=user_id_str, limit=500)
 
     items = []
     seen = set()
@@ -1572,21 +1713,43 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
     return items
 
 @app.delete("/api/gallery/{filename}")
-def delete_gallery_file(filename: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
-    tasks = load_tasks()
-    changed = False
-    for t in tasks:
-        # 如果非管理员且任务有归属，只有任务所属人可以删除
-        if current_user and current_user.get("role") != "admin" and t.get("userId"):
-            if str(t.get("userId")) != str(current_user["id"]):
-                continue
+def delete_gallery_file(filename: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """删除画廊成果（强制登录 + 严格所有权鉴权 + 单行更新消除写放大）"""
+    safe_name = os.path.basename(filename)
+    user_id = str(current_user["id"])
+    is_admin = current_user.get("role") == "admin"
+    
+    # 查找归属于该用户（或管理员模式下任意用户）且包含该文件的任务
+    user_tasks = db_load_tasks(limit=500) if is_admin else db_load_tasks(user_id=user_id, limit=500)
+    found_and_updated = False
+    
+    for t in user_tasks:
+        outs = t.get("outputs", [])
+        has_file = any(o.get("filename") == safe_name or os.path.basename(o.get("url", "").split("?")[0]) == safe_name for o in outs)
+        if has_file:
+            task_owner = str(t.get("userId") or "")
+            if not is_admin and task_owner != user_id:
+                raise HTTPException(status_code=403, detail="无权删除其他用户的成果文件")
+            
+            new_outs = [o for o in outs if o.get("filename") != safe_name and os.path.basename(o.get("url", "").split("?")[0]) != safe_name]
+            update_task_record(str(t.get("taskId")), {
+                "outputs": new_outs,
+                "updatedAt": int(time.time())
+            })
+            found_and_updated = True
 
-        new_outs = [o for o in t.get("outputs", []) if o.get("filename") != filename and os.path.basename(o.get("url", "").split("?")[0]) != filename]
-        if len(new_outs) != len(t.get("outputs", [])):
-            t["outputs"] = new_outs
-            changed = True
-    if changed:
-        save_tasks(tasks)
+    if not found_and_updated and not is_admin:
+        raise HTTPException(status_code=404, detail="文件不存在或无权操作")
+
+    # 本地文件安全清理
+    fpath = os.path.join(OUTPUTS_DIR, safe_name)
+    if os.path.exists(fpath):
+        try:
+            os.remove(fpath)
+        except Exception:
+            pass
+            
+    return {"status": "ok"}
     
     safe_name = os.path.basename(filename)
     fpath = os.path.join(OUTPUTS_DIR, safe_name)

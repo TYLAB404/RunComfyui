@@ -3,7 +3,7 @@ import time
 import requests
 from typing import List, Dict, Any, Optional
 
-API_KEY = "YOUR_RUNNINGHUB_API_KEY_HERE"
+API_KEY = os.getenv("RUNNINGHUB_API_KEY", "")
 BASE_URL = "https://www.runninghub.cn"
 
 
