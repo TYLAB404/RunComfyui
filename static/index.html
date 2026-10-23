@@ -1,0 +1,1667 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>RunningHub 云端工作流自适应控制台</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 3 -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <!-- Cloudflare Turnstile 人机安全验证 -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-indigo-500 selection:text-white antialiased">
+  <div id="app" v-cloak class="flex flex-col min-h-screen">
+    
+    <!-- 顶部导航栏 -->
+    <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 flex items-center justify-between gap-2">
+      <!-- 品牌 Logo 与标题 -->
+      <div class="flex items-center space-x-2.5 sm:space-x-3 flex-shrink-0">
+        <div class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 font-bold text-base sm:text-lg text-white">
+          RH
+        </div>
+        <div>
+          <h1 class="text-sm sm:text-base lg:text-lg font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent truncate max-w-[140px] sm:max-w-none">
+            {{ publicConfig.siteTitle || 'RunningHub 自适应控制台' }}
+          </h1>
+          <p class="text-[10px] sm:text-xs text-slate-400 hidden lg:block">智能解析 ComfyUI 云端拓扑 · 全节点参数自由修改 · 纯远端直链隐私安全</p>
+        </div>
+      </div>
+
+      <!-- 桌面端选项卡导航 (移动端自动收纳至底部原生浮动导航) -->
+      <nav class="hidden md:flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs sm:text-sm">
+        <button 
+          @click="switchTab('studio')"
+          :class="activeTab === 'studio' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
+          <span>🎨</span> <span>工作台</span>
+        </button>
+        <button 
+          @click="switchTab('workflows')"
+          :class="activeTab === 'workflows' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
+          <span>🗂</span> <span>工作流库</span>
+        </button>
+        <button 
+          @click="switchTab('tasks')"
+          :class="activeTab === 'tasks' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5 relative">
+          <span>⏳</span> <span>任务列表</span>
+          <span v-if="runningTasksCount > 0" class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-amber-400 rounded-full animate-ping"></span>
+        </button>
+        <button 
+          @click="switchTab('gallery')"
+          :class="activeTab === 'gallery' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
+          <span>🖼</span> <span>成果画廊</span>
+        </button>
+        <button 
+          @click="switchTab('settings')"
+          :class="activeTab === 'settings' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
+          <span>⚙️</span> <span>密钥设置</span>
+        </button>
+        <!-- 仅管理员可见后台管理入口 -->
+        <button 
+          v-if="currentUser && currentUser.role === 'admin'"
+          @click="switchTab('admin')"
+          :class="activeTab === 'admin' ? 'bg-amber-600 text-white shadow font-bold' : 'text-amber-400 hover:text-amber-300'"
+          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
+          <span>🛡️</span> <span>后台管理</span>
+        </button>
+      </nav>
+
+      <!-- 右侧 用户登录状态 + 密钥状态 -->
+      <div class="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+        <!-- 未登录状态：Moyuu 风格醒目登录/注册按钮 -->
+        <button 
+          v-if="!currentUser"
+          @click="openAuthModal('signin')"
+          class="flex items-center gap-1.5 text-xs bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-3 sm:px-3.5 py-1.5 rounded-full font-semibold shadow-md shadow-indigo-600/25 transition active:scale-95">
+          <span>✨</span>
+          <span>登录 / 注册</span>
+        </button>
+
+        <!-- 已登录状态：用户个人档案下拉浮层 -->
+        <div v-else class="relative">
+          <div v-if="showUserDropdown" class="fixed inset-0 z-30" @click="showUserDropdown = false"></div>
+          
+          <button 
+            @click="showUserDropdown = !showUserDropdown" 
+            class="flex items-center gap-1.5 text-xs bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-slate-600 px-2 sm:px-3 py-1.5 rounded-full transition text-slate-200 shadow-sm relative z-40">
+            <span class="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-600 to-purple-500 text-[10px] font-bold flex items-center justify-center text-white">
+              {{ (currentUser.username || 'U')[0].toUpperCase() }}
+            </span>
+            <span class="font-medium max-w-[70px] sm:max-w-[100px] truncate">{{ currentUser.username }}</span>
+            <span v-if="currentUser.role === 'admin'" class="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/40 px-1 rounded font-semibold hidden sm:inline">管理员</span>
+            <span class="text-[10px] text-slate-400">▾</span>
+          </button>
+
+          <!-- 用户专属菜单下拉 -->
+          <div 
+            v-if="showUserDropdown" 
+            class="absolute right-0 mt-2 w-56 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl py-2 z-50 backdrop-blur-xl">
+            <div class="px-3.5 py-2 border-b border-slate-800">
+              <div class="font-bold text-xs text-white truncate flex items-center gap-1.5">
+                <span>{{ currentUser.username }}</span>
+                <span :class="currentUser.role === 'admin' ? 'bg-amber-950 text-amber-300 border-amber-800' : 'bg-slate-800 text-slate-400 border-slate-700'" class="text-[9px] border px-1 rounded">
+                  {{ currentUser.role === 'admin' ? '👑 超级管理' : '👤 普通用户' }}
+                </span>
+              </div>
+              <div class="text-[10px] text-slate-400 truncate mt-0.5">{{ currentUser.email || '未绑定邮箱' }}</div>
+              <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                <span class="text-slate-400">算力余额:</span>
+                <span class="font-mono font-bold text-indigo-400">🪙 {{ currentUser.points || 0 }} 币</span>
+              </div>
+            </div>
+
+            <div class="py-1">
+              <button 
+                v-if="currentUser.role === 'admin'"
+                @click="switchTab('admin'); showUserDropdown = false"
+                class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-amber-300 flex items-center gap-2 transition font-medium">
+                <span>🛡️</span> <span>开发者后台管理</span>
+              </button>
+              <button 
+                @click="openChangePwdModal" 
+                class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-slate-300 flex items-center gap-2 transition">
+                <span>🔑</span> <span>修改账户密码</span>
+              </button>
+              <button 
+                @click="logout" 
+                class="w-full text-left px-3.5 py-2 hover:bg-rose-950/60 text-xs text-rose-400 flex items-center gap-2 transition">
+                <span>🚪</span> <span>退出当前登录</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 密钥管理下拉 -->
+        <div class="relative">
+          <div v-if="showKeyDropdown" class="fixed inset-0 z-30" @click="showKeyDropdown = false"></div>
+
+          <div v-if="keys && keys.length > 0" class="relative z-40">
+            <button 
+              @click="showKeyDropdown = !showKeyDropdown" 
+              class="flex items-center gap-1.5 sm:gap-2 text-xs bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-slate-600 px-2.5 sm:px-3 py-1.5 rounded-full transition text-slate-200 shadow-sm">
+              <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+              <span class="font-semibold text-emerald-400 max-w-[60px] sm:max-w-none truncate">{{ activeKeyName || '主密钥' }}</span>
+              <span class="font-mono text-slate-400 text-[11px] hidden sm:inline">{{ activeMaskedKey }}</span>
+              <span class="text-[10px] text-slate-400">▾</span>
+            </button>
+
+            <!-- 密钥下拉浮层 -->
+            <div 
+              v-if="showKeyDropdown" 
+              class="absolute right-0 mt-2 w-72 bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl py-2 z-50 backdrop-blur-xl">
+              <div class="px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-[11px] text-slate-400">
+                <span class="font-medium text-slate-300">切换生效密钥 (共 {{ keys.length }} 个)</span>
+                <span class="text-emerald-400 text-[10px]">🛡️ AES-256</span>
+              </div>
+              <div class="max-h-60 overflow-y-auto py-1 space-y-0.5">
+                <div 
+                  v-for="k in keys" 
+                  :key="k.id"
+                  @click="switchKey(k.id)"
+                  class="px-3 py-2 flex items-center justify-between hover:bg-slate-800 cursor-pointer transition text-xs"
+                  :class="k.isActive ? 'bg-indigo-950/40 border-l-2 border-indigo-500' : ''">
+                  <div class="truncate mr-2">
+                    <div class="flex items-center gap-1.5">
+                      <span class="font-semibold" :class="k.isActive ? 'text-indigo-300' : 'text-slate-200'">{{ k.name }}</span>
+                      <span v-if="k.isActive" class="text-[9px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.2 rounded font-mono">生效中</span>
+                    </div>
+                    <div class="font-mono text-[10px] text-slate-400 mt-0.5">{{ k.maskedKey }}</div>
+                  </div>
+                  <div v-if="k.isActive" class="text-indigo-400 text-sm">✓</div>
+                </div>
+              </div>
+              <div class="border-t border-slate-800 pt-1 mt-1 px-2 flex items-center justify-between text-xs">
+                <button 
+                  @click="switchTab('settings'); showKeyDropdown = false" 
+                  class="w-full text-center py-1.5 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition flex items-center justify-center gap-1.5 text-xs">
+                  <span>⚙️</span> <span>进入密钥保险箱管理</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <button 
+            v-else 
+            @click="switchTab('settings')"
+            class="flex items-center gap-1 text-xs text-amber-400 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-800/60 px-2.5 sm:px-3 py-1.5 rounded-full transition animate-pulse">
+            <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+            <span>添加 Key</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- 移动端底部高灵敏悬浮导航栏 (解决手机端屏幕挤压错位) -->
+    <nav class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 flex items-center justify-around py-2 px-1 shadow-2xl">
+      <button 
+        @click="switchTab('studio')" 
+        :class="activeTab === 'studio' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
+        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
+        <span class="text-base">🎨</span>
+        <span>工作台</span>
+      </button>
+      <button 
+        @click="switchTab('workflows')" 
+        :class="activeTab === 'workflows' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
+        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
+        <span class="text-base">🗂</span>
+        <span>工作流</span>
+      </button>
+      <button 
+        @click="switchTab('tasks')" 
+        :class="activeTab === 'tasks' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
+        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95 relative">
+        <span class="text-base">⏳</span>
+        <span>任务</span>
+        <span v-if="runningTasksCount > 0" class="absolute top-1 right-2 w-2 h-2 bg-amber-400 rounded-full animate-ping"></span>
+      </button>
+      <button 
+        @click="switchTab('gallery')" 
+        :class="activeTab === 'gallery' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
+        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
+        <span class="text-base">🖼</span>
+        <span>画廊</span>
+      </button>
+      <button 
+        v-if="currentUser && currentUser.role === 'admin'"
+        @click="switchTab('admin')" 
+        :class="activeTab === 'admin' ? 'text-amber-400 font-bold' : 'text-slate-400'"
+        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
+        <span class="text-base">🛡️</span>
+        <span>管理</span>
+      </button>
+      <button 
+        v-else
+        @click="switchTab('settings')" 
+        :class="activeTab === 'settings' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
+        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
+        <span class="text-base">⚙️</span>
+        <span>设置</span>
+      </button>
+    </nav>
+
+    <!-- 主体内容 (为移动端底部导航预留安全边距 pb-20 md:pb-6) -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 lg:p-6 pb-20 md:pb-6">
+
+      <!-- ================= TAB 1: 工作台 ================= -->
+      <div v-show="activeTab === 'studio'" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- 左侧动态参数调节面板 (7 cols) -->
+        <div class="lg:col-span-7 space-y-5">
+          
+          <!-- 工作流选择与状态 -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
+            <div class="flex items-center justify-between">
+              <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                <span>⚡ 当前工作流</span>
+                <span v-if="isLoadingSchema" class="text-indigo-400 text-[11px] animate-pulse">正在动态拉取云端节点...</span>
+                <span v-else-if="dynamicSchema" class="text-emerald-400 text-[11px] bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 rounded-full">
+                  已解析 {{ dynamicSchemaTotalNodes }} 个节点拓扑
+                </span>
+              </label>
+              <button @click="activeTab = 'workflows'" class="text-xs text-indigo-400 hover:underline">+ 导入新工作流</button>
+            </div>
+            
+            <div class="flex gap-2">
+              <select v-model="selectedWorkflowId" @change="onWorkflowChange" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-slate-100 focus:outline-none focus:border-indigo-500">
+                <option v-for="wf in workflows" :key="wf.id" :value="wf.id">
+                  {{ wf.name }} (ID: {{ wf.id }})
+                </option>
+              </select>
+              <button @click="loadWorkflowSchema(selectedWorkflowId)" title="重新拉取解析该工作流" class="px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 text-xs whitespace-nowrap">
+                🔄 重新同步
+              </button>
+            </div>
+            <p v-if="currentWorkflow?.description" class="text-xs text-slate-400">{{ currentWorkflow.description }}</p>
+          </div>
+
+
+          <!-- 1. 动态提示词列表 -->
+          <div v-if="dynamicPrompts.length > 0" class="space-y-4">
+            <div v-for="(pNode, idx) in dynamicPrompts" :key="pNode.nodeId" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2">
+              <div class="flex items-center justify-between">
+                <label class="text-xs font-semibold text-slate-200 flex items-center gap-2">
+                  <span class="w-2 h-2 rounded-full" :class="pNode.role === 'positive' ? 'bg-indigo-500' : (pNode.role === 'negative' ? 'bg-amber-500' : 'bg-purple-500')"></span>
+                  <span>{{ pNode.label }}</span>
+                  <span class="text-[10px] font-mono text-indigo-400 bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-800/40">Node #{{ pNode.nodeId }}</span>
+                </label>
+                <div v-if="pNode.role === 'positive'" class="flex gap-1.5">
+                  <button @click="pNode.currentValue += ', masterpiece, 8k resolution, cinematic lighting'" class="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded">电影质感</button>
+                  <button @click="pNode.currentValue += ', photorealistic, intricate details, natural motion'" class="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded">真实细节</button>
+                </div>
+              </div>
+              <textarea 
+                v-model="pNode.currentValue" 
+                rows="3" 
+                :placeholder="'请输入 Node #' + pNode.nodeId + ' 对应提示词内容...'"
+                class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition"></textarea>
+            </div>
+          </div>
+
+          <!-- 2. 动态多媒体输入: 参考图输入 (LoadImage) -->
+          <div v-if="dynamicImages.length > 0" class="space-y-3">
+            <div v-for="imgNode in dynamicImages" :key="imgNode.nodeId" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div class="flex items-center justify-between">
+                <label class="text-xs font-semibold text-slate-300 flex items-center gap-2">
+                  <span>🖼 参考图/输入图</span>
+                  <span class="text-[10px] font-mono text-indigo-400 bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-800/40">Node #{{ imgNode.nodeId }}</span>
+                </label>
+                <span v-if="imgNode.uploadedFileName" class="text-xs text-emerald-400 flex items-center gap-1">
+                  <span>✓ 已上传云端:</span>
+                  <span class="font-mono text-[10px] max-w-[140px] truncate" :title="imgNode.uploadedFileName">{{ imgNode.uploadedFileName }}</span>
+                </span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="cursor-pointer flex-1 border border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-3 text-center transition bg-slate-950">
+                  <input type="file" accept="image/*" @change="e => handleNodeImageUpload(e, imgNode)" class="hidden">
+                  <div class="text-xs text-slate-400">
+                    <span v-if="!imgNode.isUploading">📁 点击选择或拖入本地图片（自动上传至 RunningHub OpenAPI）</span>
+                    <span v-else class="text-indigo-400 animate-pulse">正在极速上传至 RunningHub...</span>
+                  </div>
+                </label>
+                <div v-if="imgNode.previewUrl" class="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-700 bg-black flex-shrink-0">
+                  <img :src="imgNode.previewUrl" class="w-full h-full object-cover">
+                  <button @click="imgNode.previewUrl = null; imgNode.uploadedFileName = ''" class="absolute top-0 right-0 bg-red-600 text-white text-[10px] w-4 h-4 rounded-bl flex items-center justify-center">✕</button>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <span class="text-slate-500 whitespace-nowrap">当前文件名:</span>
+                <input 
+                  type="text" 
+                  :value="imgNode.uploadedFileName || imgNode.defaultValue"
+                  @input="e => { imgNode.uploadedFileName = e.target.value; if (nodeOverrides[imgNode.nodeId]) nodeOverrides[imgNode.nodeId][imgNode.fieldName] = e.target.value; }" 
+                  placeholder="留空则使用工作流默认图片"
+                  class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-300 font-mono text-xs focus:outline-none focus:border-indigo-500">
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. 动态多媒体输入: 参考视频输入 (VHS_LoadVideo) -->
+          <div v-if="dynamicVideos.length > 0" class="space-y-3">
+            <div v-for="vidNode in dynamicVideos" :key="vidNode.nodeId" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+              <div class="flex items-center justify-between">
+                <label class="text-xs font-semibold text-slate-300 flex items-center gap-2">
+                  <span>🎬 参考视频/输入视频</span>
+                  <span class="text-[10px] font-mono text-indigo-400 bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-800/40">Node #{{ vidNode.nodeId }} (VHS_LoadVideo)</span>
+                </label>
+                <span v-if="vidNode.uploadedFileName" class="text-xs text-emerald-400 flex items-center gap-1">
+                  <span>✓ 视频已就绪:</span>
+                  <span class="font-mono text-[10px] max-w-[140px] truncate" :title="vidNode.uploadedFileName">{{ vidNode.uploadedFileName }}</span>
+                </span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="cursor-pointer flex-1 border border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-3 text-center transition bg-slate-950">
+                  <input type="file" accept="video/*" @change="e => handleNodeVideoUpload(e, vidNode)" class="hidden">
+                  <div class="text-xs text-slate-400">
+                    <span v-if="!vidNode.isUploading">🎞️ 点击选择或拖入参考视频 (MP4/WebM，自动上传云端)</span>
+                    <span v-else class="text-indigo-400 animate-pulse">正在上传视频至 RunningHub...</span>
+                  </div>
+                </label>
+                <div v-if="vidNode.previewUrl" class="relative w-16 h-14 rounded-lg overflow-hidden border border-slate-700 bg-black flex-shrink-0">
+                  <video :src="vidNode.previewUrl" class="w-full h-full object-cover" muted autoplay loop></video>
+                  <button @click="vidNode.previewUrl = null; vidNode.uploadedFileName = ''" class="absolute top-0 right-0 bg-red-600 text-white text-[10px] w-4 h-4 rounded-bl flex items-center justify-center">✕</button>
+                </div>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <span class="text-slate-500 whitespace-nowrap">当前视频名:</span>
+                <input 
+                  type="text" 
+                  :value="vidNode.uploadedFileName || vidNode.defaultValue"
+                  @input="e => { vidNode.uploadedFileName = e.target.value; if (nodeOverrides[vidNode.nodeId]) nodeOverrides[vidNode.nodeId][vidNode.fieldName] = e.target.value; }" 
+                  placeholder="留空则使用工作流默认参考视频"
+                  class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-300 font-mono text-xs focus:outline-none focus:border-indigo-500">
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. 画质与分辨率基准控制 (PrimitiveInt / Latent) -->
+          <div v-if="dynamicQuality.length > 0 || dynamicLatent" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
+            <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+              <span>📐 画面画质与分辨率规格</span>
+            </h3>
+
+            <!-- 独立 PrimitiveInt 画质 (如 Wan2.1 的 1280 边长) -->
+            <div v-for="q in dynamicQuality" :key="q.nodeId" class="space-y-2">
+              <div class="flex justify-between items-center text-xs text-slate-300">
+                <span class="flex items-center gap-1.5">
+                  <span>画质基准分辨率 (边长/像素)</span>
+                  <span class="text-[10px] font-mono text-indigo-400 bg-indigo-950 px-1 py-0.5 rounded border border-indigo-800/40">Node #{{ q.nodeId }}</span>
+                </span>
+                <span class="text-indigo-400 font-mono font-bold">{{ q.currentValue }}px</span>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button 
+                  v-for="preset in [720, 960, 1024, 1280, 1920]" 
+                  :key="preset"
+                  @click="q.currentValue = preset" 
+                  :class="q.currentValue === preset ? 'border-indigo-500 bg-indigo-950/60 text-indigo-300 font-bold' : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'" 
+                  class="flex-1 min-w-[55px] py-1.5 rounded-lg border text-xs font-mono transition">
+                  {{ preset }}p
+                </button>
+              </div>
+              <div class="flex items-center gap-2">
+                <input type="range" min="480" max="1920" step="16" v-model.number="q.currentValue" class="flex-1 accent-indigo-500">
+                <input type="number" v-model.number="q.currentValue" class="w-20 bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-center text-slate-200">
+              </div>
+            </div>
+
+            <!-- 空 Latent 尺寸调节 -->
+            <div v-if="dynamicLatent" class="space-y-1.5 pt-2">
+              <div class="flex justify-between text-xs text-slate-300">
+                <span>画面分辨率 (宽 x 高)</span>
+                <span class="text-indigo-400 font-mono">{{ dynamicLatent.fields.width }} x {{ dynamicLatent.fields.height }}</span>
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <button @click="dynamicLatent.fields.width = 512; dynamicLatent.fields.height = 512" :class="dynamicLatent.fields.width === 512 && dynamicLatent.fields.height === 512 ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300' : 'border-slate-800 bg-slate-950 text-slate-400'" class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono">512x512</button>
+                <button @click="dynamicLatent.fields.width = 768; dynamicLatent.fields.height = 1024" :class="dynamicLatent.fields.width === 768 && dynamicLatent.fields.height === 1024 ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300' : 'border-slate-800 bg-slate-950 text-slate-400'" class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono">768x1024</button>
+                <button @click="dynamicLatent.fields.width = 1088; dynamicLatent.fields.height = 1920" :class="dynamicLatent.fields.width === 1088 && dynamicLatent.fields.height === 1920 ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300' : 'border-slate-800 bg-slate-950 text-slate-400'" class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono">1088x1920</button>
+                <button @click="dynamicLatent.fields.width = 1024; dynamicLatent.fields.height = 1024" :class="dynamicLatent.fields.width === 1024 && dynamicLatent.fields.height === 1024 ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300' : 'border-slate-800 bg-slate-950 text-slate-400'" class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono">1024x1024</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. 采样器与步数控制 -->
+          <div v-if="dynamicSampler" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <span>⚙️ 采样算法与推理步数</span>
+                <span class="text-[10px] font-mono text-slate-400">Node #{{ dynamicSampler.nodeId }} ({{ dynamicSampler.class_type }})</span>
+              </h3>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              <div v-if="dynamicSampler.fields.steps !== undefined" class="space-y-1">
+                <div class="flex justify-between text-xs text-slate-300">
+                  <span>采样步数 (Steps)</span>
+                  <span class="text-indigo-400 font-mono">{{ dynamicSampler.fields.steps }}</span>
+                </div>
+                <input type="range" min="1" max="50" v-model.number="dynamicSampler.fields.steps" class="w-full accent-indigo-500">
+              </div>
+              <div v-if="dynamicSampler.fields.cfg !== undefined" class="space-y-1">
+                <div class="flex justify-between text-xs text-slate-300">
+                  <span>相关度 (CFG)</span>
+                  <span class="text-indigo-400 font-mono">{{ dynamicSampler.fields.cfg }}</span>
+                </div>
+                <input type="range" min="1" max="15" step="0.5" v-model.number="dynamicSampler.fields.cfg" class="w-full accent-indigo-500">
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+              <div v-if="dynamicSampler.fields.sampler_name !== undefined" class="space-y-1">
+                <label class="text-xs text-slate-300">采样算法 (Sampler)</label>
+                <input type="text" v-model="dynamicSampler.fields.sampler_name" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+              </div>
+
+              <div v-if="dynamicSampler.fields.seed !== undefined" class="space-y-1">
+                <div class="flex justify-between text-xs text-slate-300">
+                  <span>随机种子 (Seed)</span>
+                  <button @click="randomizeDynamicSeed" class="text-indigo-400 hover:text-indigo-300">🎲 随机</button>
+                </div>
+                <input type="number" v-model.number="dynamicSampler.fields.seed" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs font-mono text-slate-200 focus:outline-none focus:border-indigo-500">
+              </div>
+            </div>
+          </div>
+
+          <!-- 6. ✨ 全节点参数完整树 (全量暴露 · 自由修改 · 绝不强加未修改项) -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-sm">
+            <div 
+              @click="showAllNodes = !showAllNodes" 
+              class="p-4 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 select-none transition border-b border-slate-800/50">
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-bold text-white flex items-center gap-1.5">
+                  <span>🛠️</span> <span>全部节点底层参数</span>
+                </span>
+                <span v-if="modifiedParamsCount > 0" class="text-[11px] bg-indigo-950 text-indigo-300 border border-indigo-700/60 px-2 py-0.5 rounded-full font-mono font-semibold">
+                  已调整 {{ modifiedParamsCount }} 项
+                </span>
+                <span v-else class="text-[11px] text-slate-500 bg-slate-950 px-2 py-0.5 rounded border border-slate-800">
+                  共 {{ allEditableNodes.length }} 个节点
+                </span>
+              </div>
+              <div class="flex items-center gap-2 text-xs font-medium text-indigo-400">
+                <span>{{ showAllNodes ? '收起面板 ▲' : '展开自由定制 ▼' }}</span>
+              </div>
+            </div>
+
+            <!-- 折叠展开内容 -->
+            <div v-show="showAllNodes" class="p-4 space-y-4 bg-slate-950/40">
+              <div class="flex items-center justify-between gap-3 bg-indigo-950/30 border border-indigo-800/40 p-2.5 rounded-xl text-xs text-indigo-300">
+                <div class="flex items-center gap-2">
+                  <span>💡</span>
+                  <span><strong>零注入铁律</strong>：未修改的参数严格保留云端原样运行，仅提交您在此处调整或输入的字段！</span>
+                </div>
+                <div class="w-48 flex-shrink-0">
+                  <input 
+                    type="text" 
+                    v-model="allNodesSearch" 
+                    placeholder="🔍 搜索节点ID或参数名..." 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                </div>
+              </div>
+
+              <div class="space-y-3 max-h-[500px] overflow-y-auto pr-1">
+                <div 
+                  v-for="node in filteredAllNodes" 
+                  :key="node.nodeId" 
+                  class="bg-slate-900/90 border border-slate-800 rounded-xl p-3.5 space-y-2.5">
+                  
+                  <div class="flex items-center justify-between border-b border-slate-800/60 pb-2">
+                    <div class="flex items-center gap-2">
+                      <span class="text-xs font-mono font-bold text-indigo-400 bg-indigo-950/80 px-2 py-0.5 rounded border border-indigo-800/50">#{{ node.nodeId }}</span>
+                      <span class="text-xs font-semibold text-slate-200">{{ node.class_type }}</span>
+                    </div>
+                    <button 
+                      @click="resetNode(node.nodeId)" 
+                      class="text-[10px] text-slate-500 hover:text-slate-300 transition">
+                      ↺ 恢复该节点默认
+                    </button>
+                  </div>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                    <div 
+                      v-for="meta in node.fieldMeta" 
+                      :key="meta.name" 
+                      :class="isFieldModified(node.nodeId, meta.name) ? 'border-indigo-500/80 bg-indigo-950/20' : 'border-slate-800 bg-slate-950'"
+                      class="p-2 rounded-lg border space-y-1 transition">
+                      
+                      <div class="flex items-center justify-between text-[11px]">
+                        <span class="font-mono text-slate-300 truncate" :title="meta.name">{{ meta.name }}</span>
+                        <div class="flex items-center gap-1">
+                          <span v-if="isFieldModified(node.nodeId, meta.name)" class="text-[9px] text-indigo-300 bg-indigo-900/80 px-1 rounded font-bold">已修改</span>
+                          <button 
+                            v-if="isFieldModified(node.nodeId, meta.name)" 
+                            @click="resetField(node.nodeId, meta.name)" 
+                            title="恢复为默认值"
+                            class="text-slate-400 hover:text-white text-[10px]">✕</button>
+                        </div>
+                      </div>
+
+                      <!-- 布尔类型 -->
+                      <div v-if="meta.type === 'bool'" class="flex items-center justify-between pt-1">
+                        <span class="text-[10px] text-slate-500 font-mono">{{ nodeOverrides[node.nodeId]?.[meta.name] ? 'TRUE' : 'FALSE' }}</span>
+                        <input 
+                          type="checkbox" 
+                          v-model="nodeOverrides[node.nodeId][meta.name]" 
+                          class="w-4 h-4 rounded accent-indigo-500 cursor-pointer">
+                      </div>
+
+                      <!-- 数值类型 (int/float) -->
+                      <div v-else-if="meta.type === 'int' || meta.type === 'float'" class="pt-0.5">
+                        <input 
+                          type="number" 
+                          :step="meta.type === 'float' ? '0.01' : '1'"
+                          v-model.number="nodeOverrides[node.nodeId][meta.name]" 
+                          class="w-full bg-slate-900 border border-slate-700/80 rounded px-2 py-1 text-xs font-mono text-slate-100 focus:outline-none focus:border-indigo-500">
+                      </div>
+
+                      <!-- 文本类型 (str) -->
+                      <div v-else class="pt-0.5">
+                        <textarea 
+                          v-if="String(meta.value).length > 40"
+                          v-model="nodeOverrides[node.nodeId][meta.name]" 
+                          rows="2"
+                          class="w-full bg-slate-900 border border-slate-700/80 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-mono"></textarea>
+                        <input 
+                          v-else
+                          type="text" 
+                          v-model="nodeOverrides[node.nodeId][meta.name]" 
+                          class="w-full bg-slate-900 border border-slate-700/80 rounded px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 font-mono">
+                      </div>
+
+                      <div class="text-[10px] text-slate-600 truncate font-mono" :title="'默认: ' + meta.value">
+                        默认: {{ meta.value }}
+                      </div>
+                    </div>
+                  </div>
+
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 运行算力档位与队列通道选择卡片 -->
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2.5 shadow-sm">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5">
+              <span class="text-xs font-bold text-white flex items-center gap-1.5">
+                <span>⚡</span> <span>任务运行规格与算力通道</span>
+              </span>
+              <span class="text-[11px] font-mono text-indigo-400">
+                {{ selectedTaskType === 'Standard' ? 'Standard 标准独享 · 极速出图 (约0.2币/秒)' : 'Lite 经济共享 · 慢速排队 (约0.02币/秒)' }}
+              </span>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <!-- Standard 档位 (推荐) -->
+              <div 
+                @click="selectedTaskType = 'Standard'"
+                class="cursor-pointer p-3 rounded-xl border transition relative flex flex-col justify-between"
+                :class="selectedTaskType === 'Standard' ? 'bg-indigo-950/70 border-indigo-500 shadow-lg shadow-indigo-950/50 ring-1 ring-indigo-500' : 'bg-slate-950/80 border-slate-800 hover:border-slate-700 text-slate-400'">
+                <div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold flex items-center gap-1" :class="selectedTaskType === 'Standard' ? 'text-indigo-300' : 'text-slate-300'">
+                      <span>🚀</span> <span>Standard 任务</span>
+                    </span>
+                    <span class="text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-1.5 py-0.2 rounded font-semibold">
+                      推荐 · 极速75秒
+                    </span>
+                  </div>
+                  <p class="text-[11px] mt-1 text-slate-400 leading-snug">
+                    独立 GPU 算力通道，秒级调度运行，显存充足不爆内存，解决漫长排队问题。
+                  </p>
+                </div>
+                <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
+                  <span class="text-slate-500">消耗速率:</span>
+                  <span class="font-bold text-indigo-400">0.2 RH币 / 秒</span>
+                </div>
+              </div>
+
+              <!-- Lite 档位 (经济版) -->
+              <div 
+                @click="selectedTaskType = 'Lite'"
+                class="cursor-pointer p-3 rounded-xl border transition relative flex flex-col justify-between"
+                :class="selectedTaskType === 'Lite' ? 'bg-indigo-950/70 border-indigo-500 shadow-lg shadow-indigo-950/50 ring-1 ring-indigo-500' : 'bg-slate-950/80 border-slate-800 hover:border-slate-700 text-slate-400'">
+                <div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold flex items-center gap-1" :class="selectedTaskType === 'Lite' ? 'text-indigo-300' : 'text-slate-300'">
+                      <span>🌱</span> <span>Lite 任务</span>
+                    </span>
+                    <span class="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.2 rounded font-semibold">
+                      经济实惠
+                    </span>
+                  </div>
+                  <p class="text-[11px] mt-1 text-slate-400 leading-snug">
+                    共享低速排队队列，显存较小，消耗极少，高峰期需等待数百秒以上。
+                  </p>
+                </div>
+                <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
+                  <span class="text-slate-500">消耗速率:</span>
+                  <span class="font-bold text-emerald-400">0.02 RH币 / 秒</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 立即生成大按钮 -->
+          <button 
+            @click="submitDynamicGeneration" 
+            :disabled="isGenerating || isLoadingSchema"
+            class="w-full py-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-base shadow-lg shadow-indigo-600/30 active:scale-[0.99] transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+            <span v-if="!isGenerating">
+              🚀 立即以 [{{ selectedTaskType }} 任务] 模式运行云端生成 
+              <span v-if="modifiedParamsCount > 0" class="text-xs font-normal opacity-90">
+                (已定制 {{ modifiedParamsCount }} 项参数)
+              </span>
+            </span>
+            <span v-else class="flex items-center gap-2">
+              <svg class="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+              </svg>
+              <span>云端任务提交中 / 排队中...</span>
+            </span>
+          </button>
+        </div>
+
+        <!-- 右侧实时成果预览与最新输出 (5 cols) -->
+        <div class="lg:col-span-5 space-y-5">
+          <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 min-h-[520px] flex flex-col justify-between shadow-sm sticky top-20">
+            <div>
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                  <span>🖥</span> <span>实时输出监视 (支持视频/图片直出)</span>
+                </h3>
+                <div class="flex items-center gap-2">
+                  <button 
+                    v-if="latestTask && (latestTask.status === 'RUNNING' || latestTask.status === 'QUEUED')"
+                    @click="cancelTask(latestTask.taskId)"
+                    class="text-[11px] px-2.5 py-0.5 rounded-full font-medium bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 transition flex items-center gap-1 shadow-sm">
+                    <span>🚫</span> <span>取消任务</span>
+                  </button>
+                  <span v-if="latestTask" :class="statusBadgeClass(latestTask.status)" class="text-[11px] px-2 py-0.5 rounded-full font-medium">
+                    {{ latestTask.status }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- 成果展示区 (视频与图片无缝双轨渲染) -->
+              <div class="bg-slate-950 border border-slate-800/80 rounded-xl overflow-hidden aspect-square flex items-center justify-center relative group">
+                <template v-if="currentDisplayOutput">
+                  <!-- 视频输出渲染 -->
+                  <video 
+                    v-if="isVideoOutput(currentDisplayOutput)" 
+                    :src="currentDisplayOutput.url" 
+                    controls 
+                    autoplay 
+                    loop 
+                    playsinline 
+                    class="w-full h-full object-contain bg-black"></video>
+                  
+                  <!-- 图像输出渲染 -->
+                  <img 
+                    v-else 
+                    :src="currentDisplayOutput.url" 
+                    class="w-full h-full object-contain cursor-pointer" 
+                    @click="openLightbox(currentDisplayOutput.url)">
+                  
+                  <!-- 悬浮操作栏 -->
+                  <div class="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-3 pointer-events-none">
+                    <a 
+                      :href="currentDisplayOutput.url" 
+                      target="_blank"
+                      :download="currentDisplayOutput.filename || (isVideoOutput(currentDisplayOutput) ? 'output.mp4' : 'output.png')"
+                      @click.prevent="downloadMedia(currentDisplayOutput.url, currentDisplayOutput.filename)"
+                      class="pointer-events-auto px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium shadow flex items-center gap-1 cursor-pointer">
+                      <span>⬇</span> <span>{{ isVideoOutput(currentDisplayOutput) ? '下载视频' : '下载原图' }}</span>
+                    </a>
+                    <button 
+                      @click="openLightbox(currentDisplayOutput.url)" 
+                      class="pointer-events-auto px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-medium">
+                      全屏放大
+                    </button>
+                  </div>
+                </template>
+
+                <div v-else-if="latestTask && (latestTask.status === 'RUNNING' || latestTask.status === 'QUEUED')" class="text-center p-6 space-y-3 max-w-sm mx-auto">
+                  <div class="relative w-16 h-16 mx-auto">
+                    <div class="w-16 h-16 rounded-full border-4 border-indigo-500/20 border-t-indigo-500 animate-spin"></div>
+                    <span class="absolute inset-0 flex items-center justify-center text-xs font-bold font-mono text-indigo-300">
+                      {{ latestTask.progressPercent ? (latestTask.progressPercent + '%') : (latestTask.status === 'QUEUED' ? '排队' : '运行') }}
+                    </span>
+                  </div>
+
+                  <!-- 实时状态胶囊与提示 (无重复文字，清爽直观) -->
+                  <div class="space-y-2">
+                    <!-- 排队状态胶囊 -->
+                    <div v-if="latestTask.status === 'QUEUED'" 
+                         class="inline-flex items-center gap-2 px-3.5 py-1.5 bg-amber-950/80 border border-amber-700/80 text-amber-300 rounded-full text-xs font-semibold animate-pulse shadow-md shadow-amber-950/40">
+                      <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                      <span>云端排队调度中 (已等待 {{ latestTask.duration || latestTask.queueDuration || 0 }}s)</span>
+                    </div>
+
+                    <!-- 运行状态胶囊 -->
+                    <div v-else class="inline-flex items-center gap-2 px-3.5 py-1.5 bg-indigo-950/80 border border-indigo-700/80 text-indigo-300 rounded-full text-xs font-semibold shadow-md shadow-indigo-950/40">
+                      <span class="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                      <span>{{ latestTask.progressPercent ? ('采样计算中 ' + latestTask.progressPercent + '% · ' + latestTask.currentStep + '步') : (latestTask.statusText || 'GPU 正在渲染计算中...') }}</span>
+                    </div>
+
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                      {{ latestTask.status === 'QUEUED' ? '正在等待 RunningHub 云端分配 GPU 实例，算力就绪后将全速渲染' : '已接入 WebSocket 实时截流管道，中间预览或成片即时直出' }}
+                    </p>
+                  </div>
+
+                  <!-- 采样步数进度条 -->
+                  <div v-if="latestTask.progressPercent" class="w-full bg-slate-900 rounded-full h-2 overflow-hidden border border-slate-800 mt-2">
+                    <div class="bg-gradient-to-r from-indigo-500 to-purple-500 h-full transition-all duration-300 rounded-full" :style="{ width: latestTask.progressPercent + '%' }"></div>
+                  </div>
+
+                  <button 
+                    @click="cancelTask(latestTask.taskId)" 
+                    class="mt-2 px-4 py-1.5 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-xl text-xs font-semibold shadow transition inline-flex items-center gap-1.5">
+                    <span>🚫</span> <span>中途取消任务</span>
+                  </button>
+                </div>
+                
+                <div v-else-if="latestTask && latestTask.status === 'CANCELLED'" class="text-center p-6 text-slate-400 space-y-2">
+                  <span class="text-3xl">🚫</span>
+                  <p class="text-xs font-medium text-slate-300">任务已由用户主动取消</p>
+                  <p class="text-[11px] text-slate-500">云端与本地后台已停止计算</p>
+                </div>
+
+                <div v-else-if="latestTask && latestTask.status === 'FAILED'" class="text-center p-6 text-red-400 space-y-2">
+                  <span class="text-2xl">⚠️</span>
+                  <p class="text-xs">{{ latestTask.error || '任务执行失败' }}</p>
+                </div>
+                
+                <div v-else class="text-center p-6 text-slate-600 space-y-2">
+                  <span class="text-3xl opacity-40">🎞️</span>
+                  <p class="text-xs">点击左侧生成后，生成的视频/图像将在此处即时播放或显示</p>
+                </div>
+              </div>
+
+              <!-- 节点多图/多视频切换标签条 -->
+              <div v-if="latestTask && latestTask.outputs && latestTask.outputs.length > 1" class="mt-2.5 flex flex-wrap gap-1.5">
+                <button 
+                  v-for="(out, idx) in latestTask.outputs" 
+                  :key="idx" 
+                  @click="activeOutputIndex = idx"
+                  :class="activeOutputIndex === idx ? 'bg-indigo-600 text-white shadow' : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200'"
+                  class="text-[11px] px-2.5 py-1 rounded-lg font-mono transition flex items-center gap-1">
+                  <span>{{ isVideoOutput(out) ? '🎬' : '🖼' }}</span>
+                  <span>{{ out.isRealtime ? '⚡ 截流预览' : ('Node #' + (out.nodeId || idx)) }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 任务详情小卡片 -->
+            <div v-if="latestTask" class="mt-4 p-3 bg-slate-950/60 border border-slate-800 rounded-xl text-xs space-y-1.5 text-slate-400">
+              <div class="flex justify-between">
+                <span>任务 ID:</span>
+                <span class="font-mono text-slate-200">{{ latestTask.taskId }}</span>
+              </div>
+              <div class="flex justify-between">
+                <span>运行状态:</span>
+                <span :class="latestTask.status === 'QUEUED' ? 'text-amber-300 font-semibold' : (latestTask.status === 'RUNNING' ? 'text-indigo-300 font-semibold' : 'text-slate-200')">
+                  {{ latestTask.status === 'QUEUED' ? ('云端排队中 · 已等 ' + (latestTask.duration || 0) + 's') : (latestTask.currentStep ? ('采样进度 ' + latestTask.currentStep + ' 步 (' + latestTask.progressPercent + '%)') : latestTask.status) }}
+                </span>
+              </div>
+              <div class="flex justify-between">
+                <span>算力通道 / 耗时:</span>
+                <span class="font-mono text-slate-200">[{{ latestTask.taskType || 'Standard' }}] · {{ latestTask.duration || 0 }} 秒</span>
+              </div>
+              <div class="flex justify-between">
+                <span>消耗费用:</span>
+                <span class="text-emerald-400 font-semibold">{{ latestTask.consumeCoins || 0 }} RH币</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ================= TAB 2: 工作流管理库 ================= -->
+      <div v-show="activeTab === 'workflows'" class="space-y-6">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold">工作流模板库</h2>
+            <p class="text-xs text-slate-400">在此添加你的 RunningHub 工作流 ID，系统将自适应读取其真实节点结构</p>
+          </div>
+          <button @click="showAddWorkflowModal = true" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow flex items-center gap-1.5">
+            <span>+</span> <span>添加新工作流</span>
+          </button>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div v-for="wf in workflows" :key="wf.id" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 relative group hover:border-slate-700 transition">
+            <div class="flex items-start justify-between">
+              <div>
+                <span class="text-[10px] font-semibold text-indigo-400 bg-indigo-950/80 px-2 py-0.5 rounded-full border border-indigo-800/40">{{ wf.category || '视频生成' }}</span>
+                <h3 class="text-sm font-bold text-white mt-1">{{ wf.name }}</h3>
+              </div>
+              <button @click="deleteWorkflow(wf.id)" class="text-slate-600 hover:text-red-400 text-xs transition">删除</button>
+            </div>
+            <p class="text-xs text-slate-400 line-clamp-2">{{ wf.description || '暂无描述' }}</p>
+            <div class="text-[11px] font-mono text-slate-500">ID: {{ wf.id }}</div>
+            <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between">
+              <button @click="selectAndGoToStudio(wf.id)" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">使用此工作流 ➔</button>
+              <button @click="inspectWorkflow(wf.id)" class="text-xs text-slate-400 hover:text-slate-200">🔍 深度探测节点</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= TAB 3: 任务列表 ================= -->
+      <div v-show="activeTab === 'tasks'" class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold">任务执行记录</h2>
+            <p class="text-xs text-slate-400">记录每一次运行的 TaskId、RH币消耗、状态及本地下载的视频与图像</p>
+          </div>
+          <button @click="refreshTasks" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700">刷新列表</button>
+        </div>
+
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow">
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-slate-950/60 border-b border-slate-800 text-slate-400">
+                <tr>
+                  <th class="p-3">任务 ID</th>
+                  <th class="p-3">工作流</th>
+                  <th class="p-3">主提示词</th>
+                  <th class="p-3">状态</th>
+                  <th class="p-3">耗时</th>
+                  <th class="p-3">RH币消耗</th>
+                  <th class="p-3">产出媒体</th>
+                  <th class="p-3 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/60 text-slate-300">
+                <tr v-for="t in tasks" :key="t.taskId" class="hover:bg-slate-800/30 transition">
+                  <td class="p-3 font-mono text-slate-400">{{ t.taskId }}</td>
+                  <td class="p-3 font-medium text-white">{{ t.workflowName || t.workflowId }}</td>
+                  <td class="p-3 max-w-[200px] truncate text-slate-400" :title="t.positivePrompt">{{ t.positivePrompt || '-' }}</td>
+                  <td class="p-3">
+                    <div class="flex flex-col gap-1 items-start">
+                      <span :class="statusBadgeClass(t.status)" class="px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                        {{ t.status }}
+                      </span>
+                      <!-- 状态补充标签 -->
+                      <span v-if="t.status === 'QUEUED'" class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-800">
+                        排队中 · 已等 {{ t.duration || 0 }}s
+                      </span>
+                      <span v-else-if="t.currentStep && t.status === 'RUNNING'" class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800">
+                        进度 {{ t.currentStep }} ({{ t.progressPercent }}%)
+                      </span>
+                      <span v-if="t.taskType" class="text-[9px] font-mono px-1.5 py-0.2 rounded" :class="t.taskType === 'Standard' ? 'bg-indigo-950 text-indigo-400 border border-indigo-900/60' : 'bg-slate-900 text-slate-400 border border-slate-800'">
+                        {{ t.taskType }}
+                      </span>
+                    </div>
+                  </td>
+                  <td class="p-3">{{ t.duration || 0 }}s</td>
+                  <td class="p-3 font-semibold text-emerald-400">{{ t.consumeCoins || 0 }} 币</td>
+                  <td class="p-3">
+                    <div v-if="t.outputs && t.outputs.length" class="flex gap-2">
+                      <a 
+                        v-for="(out, i) in t.outputs" 
+                        :key="i" 
+                        :href="out.url" 
+                        target="_blank" 
+                        class="w-8 h-8 rounded border border-slate-700 overflow-hidden bg-black flex-shrink-0 relative group block">
+                        <video v-if="isVideoOutput(out)" :src="out.url" class="w-full h-full object-cover"></video>
+                        <img v-else :src="out.url" class="w-full h-full object-cover">
+                        <span v-if="isVideoOutput(out)" class="absolute bottom-0 right-0 bg-indigo-600/90 text-[8px] text-white px-0.5 font-bold">▶</span>
+                      </a>
+                    </div>
+                    <span v-else class="text-slate-600">-</span>
+                  </td>
+                  <td class="p-3 text-right">
+                    <button 
+                      v-if="t.status === 'RUNNING' || t.status === 'QUEUED'" 
+                      @click="cancelTask(t.taskId)" 
+                      class="px-2.5 py-1 bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-[11px] font-semibold transition inline-flex items-center gap-1 shadow-sm">
+                      <span>🚫</span> <span>取消</span>
+                    </button>
+                    <span v-else class="text-slate-600 text-xs">-</span>
+                  </td>
+                </tr>
+                <tr v-if="tasks.length === 0">
+                  <td colspan="8" class="p-8 text-center text-slate-500">暂无任务记录，快去工作台生成吧！</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= TAB 4: 本地画廊 ================= -->
+      <div v-show="activeTab === 'gallery'" class="space-y-4">
+        <div class="flex items-center justify-between">
+          <div>
+            <h2 class="text-lg font-bold">生成作品画廊</h2>
+            <p class="text-xs text-slate-400">纯远端直链 · 零服务器落盘 · 零中转隐私防护</p>
+          </div>
+          <button @click="refreshGallery" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700">刷新画廊</button>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div v-for="item in gallery" :key="item.filename" class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group relative aspect-square">
+            <!-- 视频项 -->
+            <video 
+              v-if="item.fileType === 'video' || isVideoUrl(item.url)" 
+              :src="item.url" 
+              class="w-full h-full object-cover cursor-pointer" 
+              @click="openLightbox(item.url)" 
+              muted 
+              loop 
+              onmouseover="this.play()" 
+              onmouseout="this.pause()"></video>
+            <!-- 图片项 -->
+            <img 
+              v-else 
+              :src="item.url" 
+              class="w-full h-full object-cover cursor-pointer" 
+              @click="openLightbox(item.url)">
+            
+            <span v-if="item.fileType === 'video' || isVideoUrl(item.url)" class="absolute top-2 left-2 bg-indigo-600/80 text-white text-[10px] px-1.5 py-0.5 rounded font-semibold pointer-events-none">视频</span>
+
+            <div class="absolute inset-0 bg-slate-950/70 opacity-0 group-hover:opacity-100 transition p-2 flex flex-col justify-between pointer-events-none">
+              <div class="flex justify-end">
+                <button @click="deleteGalleryItem(item.filename)" class="pointer-events-auto text-red-400 hover:text-red-300 text-xs bg-red-950/80 px-1.5 py-0.5 rounded">删除</button>
+              </div>
+              <div class="flex justify-between items-center text-[10px] text-slate-300">
+                <span v-if="item.size > 0">{{ (item.size / 1024).toFixed(1) }} KB</span>
+                <span v-else class="text-slate-400">远端直链</span>
+                <a :href="item.url" target="_blank" @click.prevent="downloadMedia(item.url, item.filename)" class="pointer-events-auto text-indigo-400 hover:underline cursor-pointer">下载</a>
+              </div>
+            </div>
+          </div>
+          <div v-if="gallery.length === 0" class="col-span-full p-12 text-center text-slate-500">
+            暂无生成作品，快去工作台生成吧！
+          </div>
+        </div>
+      </div>
+
+      <!-- ================= TAB 5: 密钥保险箱与安全设置 ================= -->
+      <div v-show="activeTab === 'settings'" class="max-w-4xl mx-auto space-y-6">
+        
+        <!-- 密钥保险箱卡片 -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+            <div>
+              <h2 class="text-base font-bold text-white flex items-center gap-2">
+                <span>🛡️</span> <span>RunningHub API Key 密钥保险箱 (多 Key 管理)</span>
+              </h2>
+              <p class="text-xs text-slate-400 mt-1">支持配置多个密钥池，一键切换生效账号，采用 AES-256 / Fernet 工业级落盘加密，Web 全程脱敏传输。</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-[11px] bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 px-2.5 py-1 rounded-full flex items-center gap-1">
+                <span>🔒</span> <span>落盘 AES-256 加密</span>
+              </span>
+              <span class="text-[11px] bg-indigo-950/80 text-indigo-400 border border-indigo-800/60 px-2.5 py-1 rounded-full flex items-center gap-1">
+                <span>👁️‍🗨️</span> <span>传输全脱敏</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- 已有 Key 列表 -->
+          <div class="space-y-3">
+            <div class="flex items-center justify-between text-xs text-slate-400">
+              <span class="font-semibold text-slate-300">已保存的密钥 ({{ keys.length }})</span>
+              <span>点击即可实时切换生效账号</span>
+            </div>
+
+            <div v-if="keys.length === 0" class="p-8 text-center bg-slate-950/50 border border-dashed border-slate-800 rounded-xl text-slate-500 text-xs">
+              尚未添加任何 RunningHub API Key，请在下方表单中录入
+            </div>
+
+            <div 
+              v-for="k in keys" 
+              :key="k.id" 
+              class="bg-slate-950 border rounded-xl p-4 transition flex flex-col md:flex-row md:items-center justify-between gap-4"
+              :class="k.isActive ? 'border-emerald-500/50 bg-emerald-950/10 shadow-lg shadow-emerald-950/20' : 'border-slate-800 hover:border-slate-700'">
+              
+              <div class="space-y-1.5 flex-1">
+                <div class="flex items-center gap-2.5">
+                  <span class="font-bold text-sm" :class="k.isActive ? 'text-emerald-400' : 'text-slate-200'">{{ k.name }}</span>
+                  <span v-if="k.isActive" class="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>当前生效</span>
+                  </span>
+                  <span v-else class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">备用</span>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-3 text-xs text-slate-400 font-mono">
+                  <div class="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800">
+                    <span class="text-slate-500">Key:</span>
+                    <span class="text-slate-200 font-semibold tracking-wider">{{ k.maskedKey }}</span>
+                    <button @click="copyMasked(k.maskedKey)" title="复制脱敏Key" class="text-slate-500 hover:text-slate-300 text-xs ml-1">📋</button>
+                  </div>
+                  <span v-if="k.createdAt" class="text-[11px] text-slate-500">添加时间: {{ formatTime(k.createdAt) }}</span>
+                </div>
+
+                <p v-if="k.note" class="text-xs text-slate-400 italic">备注: {{ k.note }}</p>
+
+                <!-- 测试反馈 -->
+                <div v-if="keyTestResult[k.id]" class="text-xs mt-1">
+                  <span v-if="keyTestResult[k.id].valid" class="text-emerald-400 flex items-center gap-1 font-medium">
+                    <span>✅</span> <span>{{ keyTestResult[k.id].message }}</span>
+                  </span>
+                  <span v-else class="text-rose-400 flex items-center gap-1 font-medium">
+                    <span>❌</span> <span>{{ keyTestResult[k.id].message }}</span>
+                  </span>
+                </div>
+              </div>
+
+              <!-- 操作按钮 -->
+              <div class="flex items-center gap-2 self-end md:self-center">
+                <button 
+                  v-if="!k.isActive" 
+                  @click="switchKey(k.id)" 
+                  class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold transition">
+                  立即启用
+                </button>
+                <button 
+                  @click="testKey(k.id)" 
+                  :disabled="testingKeyId === k.id"
+                  class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs transition flex items-center gap-1">
+                  <span v-if="testingKeyId === k.id" class="animate-spin">⏳</span>
+                  <span>连通测试</span>
+                </button>
+                <button 
+                  @click="deleteKey(k.id, k.name)" 
+                  class="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800/50 rounded-lg text-xs transition">
+                  删除
+                </button>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- 添加新 Key 卡片 -->
+          <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-5 space-y-4">
+            <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+              <span>➕</span> <span>添加新的 RunningHub API Key</span>
+            </h3>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="space-y-1">
+                <label class="text-xs text-slate-300 font-medium">密钥别名 / 账号名称</label>
+                <input 
+                  type="text" 
+                  v-model="newKeyForm.name" 
+                  placeholder="例如：主账号 / Wan2.1专用 / 备用测试号" 
+                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500">
+              </div>
+
+              <div class="space-y-1">
+                <label class="text-xs text-slate-300 font-medium">RunningHub API Key 明文</label>
+                <div class="relative">
+                  <input 
+                    :type="showKeyPlainText ? 'text' : 'password'" 
+                    v-model="newKeyForm.apiKey" 
+                    placeholder="粘贴在 RunningHub 控制台复制的 API Key" 
+                    class="w-full bg-slate-900 border border-slate-800 rounded-xl pl-3 pr-10 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500">
+                  <button 
+                    type="button" 
+                    @click="showKeyPlainText = !showKeyPlainText" 
+                    class="absolute right-3 top-2 text-slate-400 hover:text-slate-200 text-xs">
+                    {{ showKeyPlainText ? '🙈' : '👁️' }}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="space-y-1">
+              <label class="text-xs text-slate-300 font-medium">备注说明（可选）</label>
+              <input 
+                type="text" 
+                v-model="newKeyForm.note" 
+                placeholder="例如：团队共享Key，每日额度 500 RH币" 
+                class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <div class="flex items-center justify-between pt-2">
+              <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
+                <input type="checkbox" v-model="newKeyForm.setActive" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
+                <span>添加后立即设为当前生效密钥</span>
+              </label>
+
+              <button 
+                @click="addNewKey" 
+                :disabled="isAddingKey || !newKeyForm.apiKey"
+                class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow transition flex items-center gap-1.5">
+                <span v-if="isAddingKey" class="animate-spin">⏳</span>
+                <span>加密保存并入库</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 云端安全部署提示 -->
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-3 text-xs text-slate-400">
+          <h3 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <span>🌐</span> <span>云端部署与安全隔离规范</span>
+          </h3>
+          <ul class="list-disc pl-5 space-y-1.5">
+            <li><strong>零明文落盘 (Zero Plaintext at Rest)</strong>：所有 API Key 均采用 AES-256 加密存储在 <code class="text-indigo-400">data/config.json</code>，即使服务器磁盘备份被拷贝也无法直接读取明文。</li>
+            <li><strong>环境变量隔离</strong>：若需最高安全级别，可在云服务器设置环境变量 <code class="text-indigo-400">RUNNINGHUB_MASTER_SECRET="你的高强随机串"</code>，系统将自动使用该环境主密钥进行派生加解密。</li>
+            <li><strong>Git 仓库自动防泄露</strong>：程序已配置 <code class="text-indigo-400">.gitignore</code>，主加密密钥 <code class="text-indigo-400">data/.secret.key</code> 绝不会被推送至公开或私有 Git 仓库。</li>
+            <li><strong>局域网与外网反代</strong>：部署在云服务器或 VPS 时，推荐使用 Nginx 配置 HTTPS 证书并设置 Basic Auth 或反向代理端口，实现端到端传输加密。</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ================= TAB 6: 开发者后台管理 (Admin) ================= -->
+      <div v-show="activeTab === 'admin' && currentUser && currentUser.role === 'admin'" class="max-w-6xl mx-auto space-y-6">
+        <!-- 顶部管理员专属 Banner 与子导航 -->
+        <div class="bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-900/50 rounded-2xl p-4 sm:p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="text-xl">🛡️</span>
+              <h2 class="text-base sm:text-xl font-bold bg-gradient-to-r from-white via-indigo-200 to-indigo-400 bg-clip-text text-transparent">开发者系统后台管理</h2>
+              <span class="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded-full font-mono font-bold">超级管理员</span>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">全局调度监控 · 用户权限与算力分配 · Cloudflare Turnstile 密钥防御中枢</p>
+          </div>
+          <!-- 子标签切换 -->
+          <div class="flex bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs self-start sm:self-auto">
+            <button @click="adminTab = 'overview'" :class="adminTab === 'overview' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg transition">📊 概览</button>
+            <button @click="adminTab = 'users'" :class="adminTab === 'users' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg transition">👥 用户 ({{ adminUsers.length }})</button>
+            <button @click="adminTab = 'system'" :class="adminTab === 'system' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg transition">⚙️ 安全设置</button>
+            <button @click="adminTab = 'tasks'" :class="adminTab === 'tasks' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg transition">📜 全局任务</button>
+          </div>
+        </div>
+
+        <!-- 1. 概览卡片 -->
+        <div v-show="adminTab === 'overview'" class="space-y-6">
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
+              <div class="text-xs text-slate-400 flex items-center justify-between"><span>总注册用户</span><span>👥</span></div>
+              <div class="text-2xl font-bold font-mono text-white">{{ adminOverview.totalUsers || 0 }}</div>
+              <div class="text-[11px] text-emerald-400">活跃账户: {{ adminOverview.activeUsers || 0 }} 人</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
+              <div class="text-xs text-slate-400 flex items-center justify-between"><span>全平台生成任务</span><span>⚡</span></div>
+              <div class="text-2xl font-bold font-mono text-indigo-400">{{ adminOverview.totalTasks || 0 }}</div>
+              <div class="text-[11px] text-slate-400">今日新增: {{ adminOverview.todayTasks || 0 }} 次</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
+              <div class="text-xs text-slate-400 flex items-center justify-between"><span>累计消耗 RH 币</span><span>🪙</span></div>
+              <div class="text-2xl font-bold font-mono text-amber-400">{{ adminOverview.totalCoinsUsed || 0 }}</div>
+              <div class="text-[11px] text-slate-400">成功完成: {{ adminOverview.successTasks || 0 }} 笔</div>
+            </div>
+            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
+              <div class="text-xs text-slate-400 flex items-center justify-between"><span>Turnstile 人机防御</span><span>🛡️</span></div>
+              <div class="text-sm font-bold mt-1">
+                <span v-if="adminOverview.turnstileConfigured && adminOverview.turnstileEnabled" class="text-emerald-400 flex items-center gap-1">
+                  <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> 正常防御中
+                </span>
+                <span v-else-if="adminOverview.turnstileConfigured" class="text-amber-400 flex items-center gap-1">
+                  <span class="w-2 h-2 rounded-full bg-amber-400"></span> 已配置 (未开启)
+                </span>
+                <span v-else class="text-slate-500 flex items-center gap-1">
+                  <span class="w-2 h-2 rounded-full bg-slate-600"></span> 未配置
+                </span>
+              </div>
+              <div class="text-[11px] text-slate-500 font-mono truncate" :title="adminOverview.turnstileSiteKey">
+                {{ adminOverview.turnstileSiteKey || '点击安全设置绑定' }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. 用户列表 -->
+        <div v-show="adminTab === 'users'" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>👥 全体注册用户档案</span><span class="text-xs text-slate-500 font-normal">({{ adminUsers.length }} 人)</span></h3>
+            <button @click="fetchAdminUsers" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 self-start sm:self-auto">刷新列表</button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-slate-300">
+              <thead class="bg-slate-950/80 text-slate-400 uppercase text-[10px] font-mono border-b border-slate-800">
+                <tr>
+                  <th class="p-3">用户</th>
+                  <th class="p-3">邮箱</th>
+                  <th class="p-3">身份角色</th>
+                  <th class="p-3">算力币额度</th>
+                  <th class="p-3">生成次数</th>
+                  <th class="p-3">状态</th>
+                  <th class="p-3">注册时间</th>
+                  <th class="p-3 text-right">管理操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/60">
+                <tr v-for="u in adminUsers" :key="u.id" class="hover:bg-slate-800/40">
+                  <td class="p-3 font-semibold text-white flex items-center gap-2">
+                    <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-bold">{{ u.username[0].toUpperCase() }}</span>
+                    <span>{{ u.username }}</span>
+                  </td>
+                  <td class="p-3 text-slate-400 font-mono">{{ u.email || '-' }}</td>
+                  <td class="p-3">
+                    <span :class="u.role === 'admin' ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60' : 'bg-slate-800 text-slate-300'" class="px-2 py-0.5 rounded text-[10px] font-bold">
+                      {{ u.role === 'admin' ? '👑 超级管理员' : '👤 普通用户' }}
+                    </span>
+                  </td>
+                  <td class="p-3 font-mono font-bold text-indigo-400">🪙 {{ u.points }}</td>
+                  <td class="p-3 font-mono text-slate-300">{{ u.taskCount || 0 }} 次</td>
+                  <td class="p-3">
+                    <span :class="u.isActive ? 'text-emerald-400' : 'text-red-400'" class="text-[11px] font-semibold">
+                      {{ u.isActive ? '● 正常' : '✕ 封禁中' }}
+                    </span>
+                  </td>
+                  <td class="p-3 text-slate-500 font-mono text-[11px]">{{ formatTime(u.createdAt) }}</td>
+                  <td class="p-3 text-right space-x-2">
+                    <button @click="openEditUserModal(u)" class="text-indigo-400 hover:text-indigo-300 text-xs font-semibold">编辑</button>
+                    <button v-if="u.id !== currentUser.id" @click="deleteUser(u.id, u.username)" class="text-rose-400 hover:text-rose-300 text-xs font-semibold">删除</button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 3. 系统与安全设置 -->
+        <div v-show="adminTab === 'system'" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-6">
+          <div class="border-b border-slate-800 pb-4">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>⚙️ 系统全局安全与 Cloudflare Turnstile 验证配置</span></h3>
+            <p class="text-xs text-slate-400 mt-1">面向开发者的安全中枢，密钥经由 Fernet AES-256 工业级加密后安全落盘，前端杜绝泄漏。</p>
+          </div>
+
+          <div class="space-y-4 max-w-2xl">
+            <!-- 站点标题 -->
+            <div class="space-y-1.5">
+              <label class="text-xs font-semibold text-slate-300">站点自定义标题</label>
+              <input type="text" v-model="adminSystem.siteTitle" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <!-- Cloudflare Turnstile 启用开关 -->
+            <div class="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+              <div>
+                <div class="text-xs font-semibold text-white flex items-center gap-2">
+                  <span>🛡️ 强制启用 Cloudflare Turnstile 人机验证</span>
+                  <span v-if="adminSystem.turnstileEnabled" class="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 rounded">防御开启中</span>
+                </div>
+                <div class="text-[11px] text-slate-400 mt-0.5">开启后，登录与注册界面将自动加载 Turnstile 防御插件，彻底阻断撞库爬虫与恶意机器人注册</div>
+              </div>
+              <input type="checkbox" v-model="adminSystem.turnstileEnabled" class="w-4 h-4 accent-indigo-500 cursor-pointer">
+            </div>
+
+            <!-- Turnstile Site Key -->
+            <div class="space-y-1.5">
+              <label class="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span>Cloudflare Turnstile 站点密钥 (Site Key)</span>
+                <span class="text-[10px] text-slate-500 font-mono">公开参数，用于前端挂载</span>
+              </label>
+              <input type="text" v-model="adminSystem.turnstileSiteKey" placeholder="例如: 0x4AAAAAAAx..." class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <!-- Turnstile Secret Key -->
+            <div class="space-y-1.5">
+              <label class="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span>Cloudflare Turnstile 通信密钥 (Secret Key)</span>
+                <span class="text-[10px] text-emerald-400 font-mono">{{ adminSystem.hasTurnstileSecret ? '✓ 已安全加密存储' : '未设置' }}</span>
+              </label>
+              <input type="password" v-model="adminSystem.turnstileSecretKey" :placeholder="adminSystem.turnstileSecretKeyMasked ? ('当前存储: ' + adminSystem.turnstileSecretKeyMasked + ' (如无需修改请留空)') : '输入 0x4AAAAAA... 私钥'" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <!-- 注册开放开关 -->
+            <div class="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+              <div>
+                <div class="text-xs font-semibold text-white">允许新用户自由注册</div>
+                <div class="text-[11px] text-slate-400 mt-0.5">关闭后，外部访客无法点击注册新账号，仅由管理员在后台添加</div>
+              </div>
+              <input type="checkbox" v-model="adminSystem.allowRegistration" class="w-4 h-4 accent-indigo-500 cursor-pointer">
+            </div>
+
+            <!-- 强制登录生成开关 -->
+            <div class="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
+              <div>
+                <div class="text-xs font-semibold text-white">强制要求登录后方可生成</div>
+                <div class="text-[11px] text-slate-400 mt-0.5">开启后，未登录访客点击生图将自动弹出登录注册窗口</div>
+              </div>
+              <input type="checkbox" v-model="adminSystem.requireLoginToGenerate" class="w-4 h-4 accent-indigo-500 cursor-pointer">
+            </div>
+
+            <!-- 注册赠送额度 -->
+            <div class="space-y-1.5">
+              <label class="text-xs font-semibold text-slate-300">新用户注册默认赠送算力币 (Points)</label>
+              <input type="number" v-model.number="adminSystem.defaultUserPoints" class="w-40 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <button @click="saveAdminSystem" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 transition">保存安全配置</button>
+          </div>
+        </div>
+
+        <!-- 4. 全局任务审计 -->
+        <div v-show="adminTab === 'tasks'" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>📜 全平台任务执行审计流水</span><span class="text-xs text-slate-500 font-normal">({{ tasks.length }} 笔记录)</span></h3>
+            <button @click="refreshTasks" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700">刷新任务</button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs text-slate-300">
+              <thead class="bg-slate-950/80 text-slate-400 uppercase text-[10px] font-mono border-b border-slate-800">
+                <tr>
+                  <th class="p-3">任务 ID</th>
+                  <th class="p-3">提交用户</th>
+                  <th class="p-3">工作流</th>
+                  <th class="p-3">规格</th>
+                  <th class="p-3">状态</th>
+                  <th class="p-3">耗时</th>
+                  <th class="p-3">消耗</th>
+                  <th class="p-3">提交时间</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-800/60">
+                <tr v-for="t in tasks" :key="t.taskId" class="hover:bg-slate-800/40">
+                  <td class="p-3 font-mono text-indigo-400">{{ t.taskId }}</td>
+                  <td class="p-3 text-white font-medium">{{ t.username || '匿名访客' }}</td>
+                  <td class="p-3 text-slate-300 max-w-[140px] truncate" :title="t.workflowName">{{ t.workflowName }}</td>
+                  <td class="p-3"><span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{{ t.taskType || 'Standard' }}</span></td>
+                  <td class="p-3"><span :class="statusBadgeClass(t.status)" class="px-2 py-0.5 rounded text-[10px] font-bold">{{ t.status }}</span></td>
+                  <td class="p-3 font-mono">{{ t.duration || 0 }}s</td>
+                  <td class="p-3 font-mono text-amber-400">{{ t.consumeCoins || 0 }} 币</td>
+                  <td class="p-3 text-slate-500 font-mono text-[10px]">{{ formatTime(t.createdAt) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- ================= Moyuu 风格: 用户登录与注册弹窗 (支持 Cloudflare Turnstile) ================= -->
+    <div v-if="showAuthModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+      <div class="fixed inset-0" @click="closeAuthModal"></div>
+      
+      <div class="bg-slate-900/95 border border-slate-700/80 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative z-10 backdrop-blur-2xl space-y-5">
+        <button @click="closeAuthModal" class="absolute top-5 right-5 text-slate-400 hover:text-white text-sm w-7 h-7 rounded-full bg-slate-800/60 flex items-center justify-center transition">✕</button>
+
+        <div class="text-center space-y-1.5">
+          <div class="w-12 h-12 mx-auto rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/30 text-white font-bold text-xl">
+            RH
+          </div>
+          <h3 class="text-lg font-bold text-white tracking-tight">
+            {{ authTab === 'signin' ? '登录您的创作账户' : '注册全新创作账户' }}
+          </h3>
+          <p class="text-xs text-slate-400">
+            {{ authTab === 'signin' ? '登录后可跨端同步历史生成、自定义参数与算力额度' : '开启极速 ComfyUI 云端工作流创作之旅' }}
+          </p>
+        </div>
+
+        <div v-if="publicConfig.isFirstUser && authTab === 'signup'" class="p-3 bg-amber-950/60 border border-amber-600/60 rounded-xl text-xs text-amber-300 flex items-center gap-2">
+          <span class="text-base">👑</span>
+          <div>
+            <strong class="font-bold">系统首位注册者特权</strong>：首个注册账号将自动晋升为超级管理员！
+          </div>
+        </div>
+
+        <div class="flex p-1 bg-slate-950 rounded-xl border border-slate-800 text-xs font-semibold">
+          <button 
+            @click="authTab = 'signin'; authError = ''; authSuccessMsg = ''; renderTurnstileWidget()"
+            :class="authTab === 'signin' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'"
+            class="flex-1 py-2 rounded-lg transition text-center">
+            账户登录
+          </button>
+          <button 
+            v-if="publicConfig.allowRegistration"
+            @click="authTab = 'signup'; authError = ''; authSuccessMsg = ''; renderTurnstileWidget()"
+            :class="authTab === 'signup' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-white'"
+            class="flex-1 py-2 rounded-lg transition text-center">
+            注册新用户
+          </button>
+        </div>
+
+        <div v-if="authError" class="p-3 bg-rose-950/70 border border-rose-800/80 rounded-xl text-xs text-rose-300 flex items-center gap-2">
+          <span>⚠️</span> <span>{{ authError }}</span>
+        </div>
+        <div v-if="authSuccessMsg" class="p-3 bg-emerald-950/70 border border-emerald-800/80 rounded-xl text-xs text-emerald-300 flex items-center gap-2">
+          <span>✓</span> <span>{{ authSuccessMsg }}</span>
+        </div>
+
+        <form @submit.prevent="submitAuth" class="space-y-3.5">
+          <template v-if="authTab === 'signin'">
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-slate-300">用户名 / 邮箱</label>
+              <input 
+                type="text" 
+                v-model="authForm.identifier" 
+                placeholder="请输入用户名或已绑定邮箱" 
+                required
+                class="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none transition">
+            </div>
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-slate-300">账户密码</label>
+              <input 
+                type="password" 
+                v-model="authForm.password" 
+                placeholder="请输入密码" 
+                required
+                class="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none transition">
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-slate-300">用户名 (3-30 个字符)</label>
+              <input 
+                type="text" 
+                v-model="authForm.username" 
+                placeholder="例如: creator_alex" 
+                required
+                class="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none transition">
+            </div>
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-slate-300 flex items-center justify-between">
+                <span>电子邮箱</span>
+                <span class="text-[10px] text-slate-500">(选填，用于接收通知)</span>
+              </label>
+              <input 
+                type="email" 
+                v-model="authForm.email" 
+                placeholder="name@example.com" 
+                class="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none transition">
+            </div>
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-slate-300">设置密码 (至少 6 位)</label>
+              <input 
+                type="password" 
+                v-model="authForm.password" 
+                placeholder="设置安全密码" 
+                required
+                class="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none transition">
+            </div>
+            <div class="space-y-1">
+              <label class="text-xs font-semibold text-slate-300">确认密码</label>
+              <input 
+                type="password" 
+                v-model="authForm.confirmPassword" 
+                placeholder="再次输入刚才设置的密码" 
+                required
+                class="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none transition">
+            </div>
+          </template>
+
+          <!-- Cloudflare Turnstile 挂载容器 -->
+          <div class="pt-1">
+            <div v-show="publicConfig.turnstileEnabled && publicConfig.turnstileSiteKey" class="flex justify-center my-2">
+              <div id="turnstile-container"></div>
+            </div>
+            <div v-if="!publicConfig.turnstileEnabled || !publicConfig.turnstileSiteKey" class="text-[11px] text-center text-slate-500 py-1.5 bg-slate-950/60 rounded-xl border border-slate-800/80">
+              🛡️ 免人机验证模式 (开发测试环境)
+            </div>
+          </div>
+
+          <button 
+            type="submit" 
+            :disabled="authLoading"
+            class="w-full py-3 bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold rounded-xl text-xs shadow-lg shadow-indigo-600/30 transition active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2">
+            <span v-if="authLoading" class="w-4 h-4 rounded-full border-2 border-white/20 border-t-white animate-spin"></span>
+            <span>{{ authTab === 'signin' ? '立 即 登 录' : '创 建 新 账 户' }}</span>
+          </button>
+        </form>
+
+        <div class="text-center text-xs text-slate-400 pt-2 border-t border-slate-800/80">
+          <span v-if="authTab === 'signin'">
+            还没有账号？ 
+            <a href="javascript:void(0)" @click="authTab = 'signup'; authError = ''; renderTurnstileWidget()" class="text-indigo-400 font-semibold hover:underline">立即注册新账户</a>
+          </span>
+          <span v-else>
+            已有账户？ 
+            <a href="javascript:void(0)" @click="authTab = 'signin'; authError = ''; renderTurnstileWidget()" class="text-indigo-400 font-semibold hover:underline">点击直接登录</a>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 修改密码 Modal ================= -->
+    <div v-if="showChangePwdModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+      <div class="fixed inset-0" @click="showChangePwdModal = false"></div>
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-7 max-w-sm w-full relative z-10 shadow-2xl space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>🔑</span><span>修改登录密码</span></h3>
+          <button @click="showChangePwdModal = false" class="text-slate-400 hover:text-white text-xs">✕</button>
+        </div>
+
+        <div v-if="pwdError" class="p-2.5 bg-rose-950/70 border border-rose-800 text-xs text-rose-300 rounded-xl">{{ pwdError }}</div>
+        <div v-if="pwdSuccessMsg" class="p-2.5 bg-emerald-950/70 border border-emerald-800 text-xs text-emerald-300 rounded-xl">{{ pwdSuccessMsg }}</div>
+
+        <form @submit.prevent="submitChangePassword" class="space-y-3">
+          <div class="space-y-1">
+            <label class="text-xs text-slate-300">当前原密码</label>
+            <input type="password" v-model="pwdForm.oldPassword" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+          </div>
+          <div class="space-y-1">
+            <label class="text-xs text-slate-300">新密码 (至少 6 位)</label>
+            <input type="password" v-model="pwdForm.newPassword" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+          </div>
+          <div class="space-y-1">
+            <label class="text-xs text-slate-300">确认新密码</label>
+            <input type="password" v-model="pwdForm.confirmPassword" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+          </div>
+          <div class="pt-2 flex justify-end gap-2">
+            <button type="button" @click="showChangePwdModal = false" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs">取消</button>
+            <button type="submit" :disabled="pwdLoading" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow">确认修改</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ================= 管理员编辑用户 Modal ================= -->
+    <div v-if="editingUser" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md">
+      <div class="fixed inset-0" @click="editingUser = null"></div>
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full relative z-10 shadow-2xl space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>👤 编辑用户:</span><span class="text-indigo-400 font-mono">{{ editingUser.username }}</span></h3>
+          <button @click="editingUser = null" class="text-slate-400 hover:text-white text-xs">✕</button>
+        </div>
+
+        <form @submit.prevent="submitEditUser" class="space-y-3">
+          <div class="space-y-1">
+            <label class="text-xs text-slate-300">身份角色</label>
+            <select v-model="editUserForm.role" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+              <option value="user">普通用户 (user)</option>
+              <option value="admin">超级管理员 (admin)</option>
+            </select>
+          </div>
+          <div class="space-y-1">
+            <label class="text-xs text-slate-300">算力币余额 (Points)</label>
+            <input type="number" v-model.number="editUserForm.points" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+          </div>
+          <div class="space-y-1">
+            <label class="text-xs text-slate-300">重置密码 (留空则不修改)</label>
+            <input type="password" v-model="editUserForm.newPassword" placeholder="输入新密码重置" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+          </div>
+          <div class="flex items-center justify-between p-2 bg-slate-950 rounded-xl border border-slate-800">
+            <span class="text-xs text-slate-300">账号可用状态</span>
+            <label class="flex items-center gap-2 cursor-pointer text-xs">
+              <input type="checkbox" v-model="editUserForm.isActive" class="accent-indigo-500">
+              <span :class="editUserForm.isActive ? 'text-emerald-400' : 'text-red-400'">{{ editUserForm.isActive ? '正常使用' : '封禁停用' }}</span>
+            </label>
+          </div>
+          <div class="pt-2 flex justify-end gap-2">
+            <button type="button" @click="editingUser = null" class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs">取消</button>
+            <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow">保存修改</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- 灯箱 (Lightbox) 放大弹窗 (双轨支持视频播放与图像放大) -->
+    <div v-if="lightboxUrl" class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" @click.self="lightboxUrl = null">
+      <video 
+        v-if="isVideoUrl(lightboxUrl)" 
+        :src="lightboxUrl" 
+        controls 
+        autoplay 
+        loop 
+        playsinline 
+        class="max-w-full max-h-full rounded-lg shadow-2xl bg-black"></video>
+      <img 
+        v-else 
+        :src="lightboxUrl" 
+        class="max-w-full max-h-full object-contain rounded-lg shadow-2xl">
+      <button class="absolute top-4 right-4 text-white text-2xl font-bold p-2 hover:text-slate-300" @click="lightboxUrl = null">✕</button>
+    </div>
+
+    <!-- 添加工作流 Modal 弹窗 -->
+    <div v-if="showAddWorkflowModal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between">
+          <h3 class="text-sm font-bold text-white flex items-center gap-2">
+            <span>+</span> <span>添加并导入 RunningHub 工作流</span>
+          </h3>
+          <button @click="showAddWorkflowModal = false" class="text-slate-500 hover:text-slate-300">✕</button>
+        </div>
+
+        <div class="space-y-3 text-xs">
+          <div>
+            <label class="text-slate-300 block mb-1 font-medium">工作流 ID (从网页 URL 尾部复制)</label>
+            <div class="flex gap-2">
+              <input type="text" v-model="newWf.id" placeholder="例如: 2105612272424034306" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 font-mono focus:outline-none focus:border-indigo-500">
+              <button @click="autoDetectWorkflow" :disabled="isDetecting" class="px-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold whitespace-nowrap flex items-center gap-1 shadow">
+                <span v-if="!isDetecting">🔍 探测云端节点</span>
+                <span v-else class="animate-pulse">探测中...</span>
+              </button>
+            </div>
+          </div>
+          <div>
+            <label class="text-slate-300 block mb-1 font-medium">自定义名称</label>
+            <input type="text" v-model="newWf.name" placeholder="例如: Wan2.1 视频生成" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-indigo-500">
+          </div>
+          <div>
+            <label class="text-slate-300 block mb-1 font-medium">分类</label>
+            <select v-model="newWf.category" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-indigo-500">
+              <option value="视频生成">视频生成</option>
+              <option value="文生图">文生图</option>
+              <option value="图生图">图生图</option>
+              <option value="高清放大">高清放大</option>
+              <option value="人物换脸">人物换脸</option>
+              <option value="其他">其他</option>
+            </select>
+          </div>
+          <div>
+            <label class="text-slate-300 block mb-1 font-medium">简要描述（可选）</label>
+            <textarea v-model="newWf.description" rows="2" placeholder="填写该工作流的特点或用途..." class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-indigo-500"></textarea>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-800/80">
+          <button @click="showAddWorkflowModal = false" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs">取消</button>
+          <button @click="saveNewWorkflow" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow">确认添加并保存</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1446 @@
+const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+
+createApp({
+  setup() {
+    // 基础请求包装器（自动附加 JWT Bearer Header）
+    const authFetch = (url, options = {}) => {
+      const token = localStorage.getItem('rh_auth_token');
+      const headers = options.headers ? { ...options.headers } : {};
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+      return fetch(url, { ...options, headers });
+    };
+
+    // ================= 用户鉴权与 Turnstile 状态 =================
+    const currentUser = ref(null);
+    const publicConfig = ref({
+      siteTitle: 'RunningHub 智能创作平台',
+      turnstileEnabled: false,
+      turnstileSiteKey: '',
+      allowRegistration: true,
+      requireLoginToGenerate: false,
+      isFirstUser: false
+    });
+    const showAuthModal = ref(false);
+    const authTab = ref('signin'); // 'signin' | 'signup'
+    const authForm = ref({
+      identifier: '',
+      username: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+      turnstileToken: ''
+    });
+    const authLoading = ref(false);
+    const authError = ref('');
+    const authSuccessMsg = ref('');
+    const showUserDropdown = ref(false);
+    const turnstileWidgetId = ref(null);
+
+    // 修改密码弹窗状态
+    const showChangePwdModal = ref(false);
+    const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' });
+    const pwdLoading = ref(false);
+    const pwdError = ref('');
+    const pwdSuccessMsg = ref('');
+
+    // ================= 开发者后台管理 (Admin) 状态 =================
+    const adminTab = ref('overview'); // 'overview' | 'users' | 'system' | 'tasks'
+    const adminOverview = ref({});
+    const adminUsers = ref([]);
+    const adminTasks = ref([]);
+    const adminSystem = ref({
+      siteTitle: 'RunningHub 智能调度中心',
+      turnstileEnabled: false,
+      turnstileSiteKey: '',
+      turnstileSecretKey: '',
+      turnstileSecretKeyMasked: '',
+      hasTurnstileSecret: false,
+      allowRegistration: true,
+      defaultUserPoints: 100,
+      requireLoginToGenerate: false
+    });
+    const adminLoading = ref(false);
+    const adminSearchUser = ref('');
+    const editingUser = ref(null);
+    const editUserForm = ref({ role: 'user', points: 100, isActive: true, newPassword: '' });
+
+    const activeTab = ref('studio');
+    const config = ref({ hasKey: false, activeKeyId: '', activeKeyName: '', activeMaskedKey: '', workflows: [] });
+    const keys = ref([]);
+    const activeKeyId = ref('');
+    const activeKeyName = ref('');
+    const activeMaskedKey = ref('');
+    const showKeyDropdown = ref(false);
+    const showKeyPlainText = ref(false);
+    const isAddingKey = ref(false);
+    const testingKeyId = ref(null);
+    const keyTestResult = ref({});
+    const newKeyForm = ref({ name: '', apiKey: '', note: '', setActive: true });
+    const selectedTaskType = ref('Standard'); // 'Standard' (极速推荐) 或 'Lite' (经济排队)
+
+    const workflows = ref([]);
+    const selectedWorkflowId = ref('');
+    const tasks = ref([]);
+    const gallery = ref([]);
+    const isGenerating = ref(false);
+    const isDetecting = ref(false);
+    const isLoadingSchema = ref(false);
+    const lightboxUrl = ref(null);
+    const showAddWorkflowModal = ref(false);
+    const activeOutputIndex = ref(0);
+
+    // 动态解析得到的 Schema 与绑定的响应式参数
+    const dynamicSchema = ref(null);
+    const dynamicSchemaTotalNodes = ref(0);
+    const dynamicPrompts = ref([]);
+    const dynamicSampler = ref(null);
+    const dynamicLatent = ref(null);
+    const dynamicImages = ref([]);
+    const dynamicVideos = ref([]);
+    const dynamicQuality = ref([]);
+    const allEditableNodes = ref([]);
+
+    // 全节点覆盖字典与原始默认字典（严格只提交用户修改过的字段）
+    const nodeOverrides = ref({});
+    const originalDefaults = ref({});
+    const showAllNodes = ref(false);
+    const allNodesSearch = ref('');
+
+    const newWf = ref({
+      id: '',
+      name: '',
+      category: '视频生成',
+      description: ''
+    });
+
+    let pollingTimer = null;
+
+    // 当前选中的工作流元数据
+    const currentWorkflow = computed(() => {
+      return workflows.value.find(w => w.id === selectedWorkflowId.value);
+    });
+
+    // 正在运行中的任务数量
+    const runningTasksCount = computed(() => {
+      return tasks.value.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED').length;
+    });
+
+    // 最近的一个任务
+    const latestTask = computed(() => {
+      return tasks.value.length > 0 ? tasks.value[0] : null;
+    });
+
+    // 当前在监视面板中展示的输出媒体
+    const currentDisplayOutput = computed(() => {
+      if (!latestTask.value || !latestTask.value.outputs || latestTask.value.outputs.length === 0) {
+        return null;
+      }
+      const idx = activeOutputIndex.value;
+      if (idx >= 0 && idx < latestTask.value.outputs.length) {
+        return latestTask.value.outputs[idx];
+      }
+      return latestTask.value.outputs[0];
+    });
+
+    // 判断是否为视频文件/URL
+    const isVideoUrl = (url) => {
+      if (!url) return false;
+      const clean = String(url).split('?')[0].toLowerCase();
+      return ['.mp4', '.webm', '.mov', '.gif'].some(ext => clean.endsWith(ext));
+    };
+
+    // 判断当前输出对象是否为视频
+    const isVideoOutput = (out) => {
+      if (!out) return false;
+      if (out.fileType === 'video' || out.fileType === 'mp4' || out.fileType === 'webm') return true;
+      return isVideoUrl(out.url) || isVideoUrl(out.filename);
+    };
+
+    // 统计用户修改过的参数总数
+    const modifiedParamsCount = computed(() => {
+      let count = 0;
+      for (const nid in nodeOverrides.value) {
+        for (const fname in nodeOverrides.value[nid]) {
+          const cur = nodeOverrides.value[nid][fname];
+          const def = originalDefaults.value[nid]?.[fname];
+          if (String(cur) !== String(def)) {
+            count++;
+          }
+        }
+      }
+      return count;
+    });
+
+    // 判断具体某个字段是否被修改过
+    const isFieldModified = (nodeId, fieldName) => {
+      const cur = nodeOverrides.value[nodeId]?.[fieldName];
+      const def = originalDefaults.value[nodeId]?.[fieldName];
+      return cur !== undefined && def !== undefined && String(cur) !== String(def);
+    };
+
+    // 恢复单个字段为原始默认值
+    const resetField = (nodeId, fieldName) => {
+      if (originalDefaults.value[nodeId] && originalDefaults.value[nodeId][fieldName] !== undefined) {
+        nodeOverrides.value[nodeId][fieldName] = originalDefaults.value[nodeId][fieldName];
+      }
+    };
+
+    // 恢复整个节点为原始默认值
+    const resetNode = (nodeId) => {
+      if (originalDefaults.value[nodeId]) {
+        nodeOverrides.value[nodeId] = { ...originalDefaults.value[nodeId] };
+      }
+    };
+
+    // 智能诊断当前工作流是否存在云端缺陷（如音频崩端或未开启保存视频）
+    const workflowIssues = computed(() => {
+      const issues = [];
+      if (nodeOverrides.value['137'] && Number(nodeOverrides.value['137'].duration) === 0) {
+        issues.push({
+          id: 'audio_duration',
+          title: 'Node #137 (EmptyAudio) duration 为 0',
+          desc: '会导致后方 Node #138 在云端 PyAV 编码时报 [Errno 12] Cannot allocate memory 崩溃，建议修正为 1 秒。'
+        });
+      }
+      if (nodeOverrides.value['141'] && nodeOverrides.value['141'].save_output === false) {
+        issues.push({
+          id: 'video_save_output',
+          title: 'Node #141 (VHS_VideoCombine) save_output 为 false',
+          desc: '默认未开启最终成果保存，会导致云端 OpenAPI 无法提供最终 MP4 视频下载，建议开启。'
+        });
+      }
+      return issues;
+    });
+
+    // 一键应用推荐修复
+    const applyRecommendedFixes = () => {
+      if (nodeOverrides.value['137'] && originalDefaults.value['137']?.duration !== undefined) {
+        nodeOverrides.value['137']['duration'] = 1;
+      }
+      if (nodeOverrides.value['141'] && originalDefaults.value['141']?.save_output !== undefined) {
+        nodeOverrides.value['141']['save_output'] = true;
+      }
+    };
+
+    // 过滤后的全量节点列表
+    const filteredAllNodes = computed(() => {
+      const q = allNodesSearch.value.trim().toLowerCase();
+      if (!q) return allEditableNodes.value;
+      return allEditableNodes.value.filter(n => {
+        const matchId = String(n.nodeId).includes(q);
+        const matchType = String(n.class_type).toLowerCase().includes(q);
+        const matchField = Object.keys(n.fields || {}).some(k => k.toLowerCase().includes(q));
+        return matchId || matchType || matchField;
+      });
+    });
+
+    // 获取配置与工作流列表
+    const fetchConfig = async () => {
+      try {
+        const res = await authFetch('/api/config');
+        const data = await res.json();
+        config.value = data;
+        workflows.value = data.workflows || [];
+        keys.value = data.keys || [];
+        activeKeyId.value = data.activeKeyId || '';
+        activeKeyName.value = data.activeKeyName || '';
+        activeMaskedKey.value = data.activeMaskedKey || '';
+
+        if (workflows.value.length > 0 && !selectedWorkflowId.value) {
+          selectedWorkflowId.value = workflows.value[0].id;
+          await loadWorkflowSchema(selectedWorkflowId.value);
+        }
+      } catch (err) {
+        console.error('Failed to load config:', err);
+      }
+    };
+
+    // 动态拉取指定工作流在云端的真实节点拓扑
+    const loadWorkflowSchema = async (wfId) => {
+      if (!wfId) return;
+      isLoadingSchema.value = true;
+      try {
+        const res = await authFetch('/api/workflows/inspect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workflowId: wfId })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          dynamicSchema.value = data.dynamicSchema;
+          dynamicSchemaTotalNodes.value = data.totalNodes;
+
+          // 初始化全量字段字典
+          const overrides = {};
+          const defaults = {};
+          (data.dynamicSchema.allEditableNodes || []).forEach(node => {
+            overrides[node.nodeId] = { ...node.fields };
+            defaults[node.nodeId] = { ...node.fields };
+          });
+          nodeOverrides.value = overrides;
+          originalDefaults.value = defaults;
+          allEditableNodes.value = data.dynamicSchema.allEditableNodes || [];
+
+          // 1. 动态生成提示词绑定表单
+          dynamicPrompts.value = (data.dynamicSchema.promptNodes || []).map(p => ({
+            nodeId: p.nodeId,
+            role: p.role,
+            label: p.label,
+            fieldName: p.fieldName || 'text',
+            currentValue: p.defaultValue || ''
+          }));
+
+          // 2. 动态采样器/步数调度绑定 (严格只包含该节点实际存在的字段)
+          if (data.dynamicSchema.samplerNode) {
+            const sn = data.dynamicSchema.samplerNode;
+            dynamicSampler.value = {
+              nodeId: sn.nodeId,
+              class_type: sn.class_type,
+              fields: { ...sn.fields }
+            };
+          } else {
+            dynamicSampler.value = null;
+          }
+
+          // 3. 动态尺寸绑定 (EmptyLatentImage)
+          if (data.dynamicSchema.latentNode) {
+            const ln = data.dynamicSchema.latentNode;
+            dynamicLatent.value = {
+              nodeId: ln.nodeId,
+              class_type: ln.class_type,
+              fields: {
+                width: ln.fields.width || 512,
+                height: ln.fields.height || 512,
+                batch_size: ln.fields.batch_size || 1
+              }
+            };
+          } else {
+            dynamicLatent.value = null;
+          }
+
+          // 4. 动态参考图输入 (LoadImage)
+          dynamicImages.value = (data.dynamicSchema.imageNodes || []).map(im => ({
+            nodeId: im.nodeId,
+            fieldName: im.fieldName || 'image',
+            defaultValue: im.defaultValue || '',
+            uploadedFileName: '',
+            previewUrl: null,
+            isUploading: false
+          }));
+
+          // 5. 动态参考视频输入 (VHS_LoadVideo)
+          dynamicVideos.value = (data.dynamicSchema.videoNodes || []).map(vm => ({
+            nodeId: vm.nodeId,
+            fieldName: vm.fieldName || 'video',
+            defaultValue: vm.defaultValue || '',
+            uploadedFileName: '',
+            previewUrl: null,
+            isUploading: false
+          }));
+
+          // 6. 动态画质基准参数 (PrimitiveInt 等)
+          dynamicQuality.value = (data.dynamicSchema.qualityNodes || []).map(qm => ({
+            nodeId: qm.nodeId,
+            fieldName: qm.fieldName || 'value',
+            defaultValue: qm.defaultValue,
+            currentValue: qm.defaultValue
+          }));
+
+        } else {
+          console.warn('获取工作流节点结构失败:', data);
+        }
+      } catch (err) {
+        console.error('拉取工作流节点失败:', err);
+      } finally {
+        isLoadingSchema.value = false;
+      }
+    };
+
+    // 切换工作流时重新动态解析
+    const onWorkflowChange = async () => {
+      await loadWorkflowSchema(selectedWorkflowId.value);
+    };
+
+    // 获取任务列表
+    const refreshTasks = async () => {
+      try {
+        const res = await authFetch('/api/tasks');
+        const data = await res.json();
+        tasks.value = data;
+
+        const hasActive = data.some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
+        if (!hasActive) {
+          isGenerating.value = false;
+        }
+      } catch (err) {
+        console.error('Failed to fetch tasks:', err);
+      }
+    };
+
+    // 获取本地画廊
+    const refreshGallery = async () => {
+      try {
+        const res = await authFetch('/api/gallery');
+        const data = await res.json();
+        gallery.value = data;
+      } catch (err) {
+        console.error('Failed to fetch gallery:', err);
+      }
+    };
+
+    // 随机种子
+    const randomizeDynamicSeed = () => {
+      if (dynamicSampler.value && dynamicSampler.value.fields) {
+        dynamicSampler.value.fields.seed = Math.floor(Math.random() * 9999999999);
+      }
+    };
+
+    // 参考图上传处理 (自动上传至 RunningHub OpenAPI 并关联对应节点)
+    const handleNodeImageUpload = async (event, imgNode) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      imgNode.previewUrl = URL.createObjectURL(file);
+      imgNode.isUploading = true;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await authFetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          imgNode.uploadedFileName = data.fileName;
+          // 同步写入全节点覆盖字典
+          if (!nodeOverrides.value[imgNode.nodeId]) {
+            nodeOverrides.value[imgNode.nodeId] = {};
+          }
+          nodeOverrides.value[imgNode.nodeId][imgNode.fieldName] = data.fileName;
+        } else {
+          alert('图片上传失败: ' + (data.detail || '未知原因'));
+          imgNode.previewUrl = null;
+          imgNode.uploadedFileName = '';
+        }
+      } catch (err) {
+        alert('图片上传发生异常: ' + err.message);
+        imgNode.previewUrl = null;
+        imgNode.uploadedFileName = '';
+      } finally {
+        imgNode.isUploading = false;
+      }
+    };
+
+    // 参考视频上传处理 (自动上传至 RunningHub OpenAPI 并关联对应节点)
+    const handleNodeVideoUpload = async (event, vidNode) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      vidNode.previewUrl = URL.createObjectURL(file);
+      vidNode.isUploading = true;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await authFetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          vidNode.uploadedFileName = data.fileName;
+          // 同步写入全节点覆盖字典
+          if (!nodeOverrides.value[vidNode.nodeId]) {
+            nodeOverrides.value[vidNode.nodeId] = {};
+          }
+          nodeOverrides.value[vidNode.nodeId][vidNode.fieldName] = data.fileName;
+        } else {
+          alert('视频上传失败: ' + (data.detail || '未知原因'));
+          vidNode.previewUrl = null;
+          vidNode.uploadedFileName = '';
+        }
+      } catch (err) {
+        alert('视频上传发生异常: ' + err.message);
+        vidNode.previewUrl = null;
+        vidNode.uploadedFileName = '';
+      } finally {
+        vidNode.isUploading = false;
+      }
+    };
+
+    // 提交运行生成任务：严格遵循“未修改不注入”铁律，只提交用户确实更改过的参数！
+    const submitDynamicGeneration = async () => {
+      if (!config.value.hasKey && (!keys.value || keys.value.length === 0)) {
+        alert('请先在顶部导航或“设置”中配置并启用你的 RunningHub API Key');
+        activeTab.value = 'settings';
+        return;
+      }
+
+      if (!selectedWorkflowId.value) {
+        alert('请先选择一个工作流');
+        return;
+      }
+
+      isGenerating.value = true;
+
+      // 1. 同步上层快捷组件中的修改到 nodeOverrides
+      // 提示词
+      dynamicPrompts.value.forEach(p => {
+        if (!nodeOverrides.value[p.nodeId]) nodeOverrides.value[p.nodeId] = {};
+        if (p.currentValue !== undefined && p.currentValue !== null) {
+          nodeOverrides.value[p.nodeId][p.fieldName] = p.currentValue;
+        }
+      });
+
+      // 采样器与步数同步 (严格检查字段是否存在)
+      if (dynamicSampler.value) {
+        const snId = String(dynamicSampler.value.nodeId);
+        if (nodeOverrides.value[snId]) {
+          const f = dynamicSampler.value.fields;
+          for (const k in f) {
+            if (originalDefaults.value[snId] && originalDefaults.value[snId][k] !== undefined) {
+              const val = f[k];
+              nodeOverrides.value[snId][k] = typeof originalDefaults.value[snId][k] === 'number' ? Number(val) : val;
+            }
+          }
+        }
+      }
+
+      // 尺寸
+      if (dynamicLatent.value) {
+        const lnId = String(dynamicLatent.value.nodeId);
+        if (nodeOverrides.value[lnId]) {
+          const f = dynamicLatent.value.fields;
+          if (f.width !== undefined && originalDefaults.value[lnId]?.width !== undefined) nodeOverrides.value[lnId]['width'] = Number(f.width);
+          if (f.height !== undefined && originalDefaults.value[lnId]?.height !== undefined) nodeOverrides.value[lnId]['height'] = Number(f.height);
+        }
+      }
+
+      // 画质/分辨率
+      dynamicQuality.value.forEach(q => {
+        const qId = String(q.nodeId);
+        if (nodeOverrides.value[qId] && originalDefaults.value[qId]?.[q.fieldName] !== undefined) {
+          nodeOverrides.value[qId][q.fieldName] = Number(q.currentValue);
+        }
+      });
+
+      // 参考图
+      dynamicImages.value.forEach(im => {
+        if (im.uploadedFileName) {
+          const imId = String(im.nodeId);
+          if (nodeOverrides.value[imId] && originalDefaults.value[imId]?.[im.fieldName] !== undefined) {
+            nodeOverrides.value[imId][im.fieldName] = im.uploadedFileName;
+          }
+        }
+      });
+
+      // 参考视频
+      dynamicVideos.value.forEach(vm => {
+        if (vm.uploadedFileName) {
+          const vmId = String(vm.nodeId);
+          if (nodeOverrides.value[vmId] && originalDefaults.value[vmId]?.[vm.fieldName] !== undefined) {
+            nodeOverrides.value[vmId][vm.fieldName] = vm.uploadedFileName;
+          }
+        }
+      });
+
+      // 2. 严格比对：仅将确实与原始默认不同的字段加入 nodeInfoList
+      const nodeInfoList = [];
+      const submittedKeys = new Set();
+
+      for (const nid in nodeOverrides.value) {
+        const fields = nodeOverrides.value[nid];
+        const defaults = originalDefaults.value[nid] || {};
+        for (const fname in fields) {
+          // 门禁 1：如果该字段在云端节点的原始 inputs 中根本不存在，绝对禁止提交！
+          if (defaults[fname] === undefined) {
+            continue;
+          }
+
+          const curVal = fields[fname];
+          const defVal = defaults[fname];
+          const key = `${nid}_${fname}`;
+
+          // 门禁 2：只有与默认值不同（或被显式修改）才提交
+          if (String(curVal) !== String(defVal) && !submittedKeys.has(key)) {
+            submittedKeys.add(key);
+            let finalVal = curVal;
+            // 保持数值类型的纯净
+            if (typeof defVal === 'number') {
+              finalVal = Number(curVal);
+            } else if (typeof defVal === 'boolean') {
+              finalVal = Boolean(curVal);
+            }
+            nodeInfoList.push({
+              nodeId: String(nid),
+              fieldName: fname,
+              fieldValue: finalVal
+            });
+          }
+        }
+      }
+
+      // 提取核心正向提示词用于任务展示记录
+      const mainPrompt = dynamicPrompts.value.length > 0 ? dynamicPrompts.value[0].currentValue : '';
+
+      const payload = {
+        workflowId: selectedWorkflowId.value,
+        workflowName: currentWorkflow.value ? currentWorkflow.value.name : null,
+        positivePrompt: mainPrompt,
+        negativePrompt: dynamicPrompts.value.length > 1 ? dynamicPrompts.value[1].currentValue : '',
+        nodeInfoList: nodeInfoList,
+        taskType: selectedTaskType.value || 'Standard'
+      };
+
+      if (publicConfig.value.requireLoginToGenerate && !currentUser.value) {
+        alert('当前系统已开启强制登录，请先登录或注册账号后再生成');
+        openAuthModal('signin');
+        isGenerating.value = false;
+        return;
+      }
+
+      try {
+        const res = await authFetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          activeOutputIndex.value = 0;
+          await refreshTasks();
+        } else {
+          alert('任务创建失败: ' + (data.detail || JSON.stringify(data)));
+          isGenerating.value = false;
+        }
+      } catch (err) {
+        alert('提交任务请求异常: ' + err.message);
+        isGenerating.value = false;
+      }
+    };
+
+    const formatTime = (ts) => {
+      if (!ts) return '';
+      const d = new Date(ts * 1000);
+      return d.toLocaleString('zh-CN', { hour12: false });
+    };
+
+    const switchKey = async (keyId) => {
+      try {
+        const res = await authFetch(`/api/keys/${keyId}/activate`, { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          keys.value = data.keys || [];
+          activeKeyId.value = data.activeKeyId || '';
+          const activeItem = keys.value.find(k => k.id === activeKeyId.value);
+          if (activeItem) {
+            activeKeyName.value = activeItem.name;
+            activeMaskedKey.value = activeItem.maskedKey;
+          }
+          showKeyDropdown.value = false;
+        }
+      } catch (err) {
+        alert('切换密钥失败: ' + err.message);
+      }
+    };
+
+    const addNewKey = async () => {
+      if (!newKeyForm.value.apiKey || !newKeyForm.value.apiKey.trim()) {
+        alert('请填入有效的 RunningHub API Key');
+        return;
+      }
+      isAddingKey.value = true;
+      try {
+        const res = await authFetch('/api/keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newKeyForm.value)
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          newKeyForm.value = { name: '', apiKey: '', note: '', setActive: true };
+          showKeyPlainText.value = false;
+          await fetchConfig();
+          alert('✅ API Key 已安全落盘加密入库！');
+        } else {
+          alert('添加失败: ' + (data.detail || '未知错误'));
+        }
+      } catch (err) {
+        alert('添加密钥异常: ' + err.message);
+      } finally {
+        isAddingKey.value = false;
+      }
+    };
+
+    const deleteKey = async (keyId, keyName) => {
+      if (!confirm(`确定要删除密钥【${keyName || keyId}】吗？删除后不可恢复。`)) {
+        return;
+      }
+      try {
+        const res = await authFetch(`/api/keys/${keyId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          await fetchConfig();
+        }
+      } catch (err) {
+        alert('删除失败: ' + err.message);
+      }
+    };
+
+    const testKey = async (keyId) => {
+      testingKeyId.value = keyId;
+      try {
+        const res = await authFetch(`/api/keys/${keyId}/test`, { method: 'POST' });
+        const data = await res.json();
+        keyTestResult.value[keyId] = {
+          valid: data.valid,
+          message: data.message
+        };
+      } catch (err) {
+        keyTestResult.value[keyId] = {
+          valid: false,
+          message: '请求异常: ' + err.message
+        };
+      } finally {
+        testingKeyId.value = null;
+      }
+    };
+
+    const copyMasked = (text) => {
+      if (!text) return;
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text);
+        alert('已复制脱敏 Key: ' + text);
+      } else {
+        alert('脱敏 Key: ' + text);
+      }
+    };
+
+    // 保存旧版设置兼容
+    const saveSettings = async () => {
+      try {
+        const res = await authFetch('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey: config.value.apiKey })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          await fetchConfig();
+          alert('API Key 保存成功！');
+        }
+      } catch (err) {
+        alert('保存失败: ' + err.message);
+      }
+    };
+
+    // 自动探测新填入的工作流
+    const autoDetectWorkflow = async () => {
+      if (!newWf.value.id) {
+        alert('请先输入工作流 ID');
+        return;
+      }
+      isDetecting.value = true;
+      try {
+        const res = await authFetch('/api/workflows/inspect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ workflowId: newWf.value.id })
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          if (!newWf.value.name) {
+            newWf.value.name = `工作流 ${newWf.value.id}`;
+          }
+          if (!newWf.value.description) {
+            newWf.value.description = `共解析 ${data.totalNodes} 个节点，包含自适应提示词与全量可调参数。`;
+          }
+          alert(`✅ 探测成功！\n成功识别到该工作流的真实拓扑架构（共 ${data.totalNodes} 个节点）。点击保存即可在工作台中自适应调参！`);
+        } else {
+          alert('云端探测失败: ' + (data.detail || '请确认工作流 ID 是否正确或已公开'));
+        }
+      } catch (err) {
+        alert('探测请求发生错误: ' + err.message);
+      } finally {
+        isDetecting.value = false;
+      }
+    };
+
+    // 保存新工作流
+    const saveNewWorkflow = async () => {
+      if (!newWf.value.id || !newWf.value.name) {
+        alert('请填写工作流 ID 与名称');
+        return;
+      }
+
+      try {
+        const res = await authFetch('/api/workflows', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newWf.value)
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          await fetchConfig();
+          showAddWorkflowModal.value = false;
+          const addedId = newWf.value.id;
+          newWf.value = { id: '', name: '', category: '视频生成', description: '' };
+          selectedWorkflowId.value = addedId;
+          await loadWorkflowSchema(addedId);
+          activeTab.value = 'studio';
+        }
+      } catch (err) {
+        alert('添加失败: ' + err.message);
+      }
+    };
+
+    // 删除工作流
+    const deleteWorkflow = async (id) => {
+      if (!confirm(`确定要移除工作流 ${id} 吗？`)) return;
+      try {
+        await authFetch(`/api/workflows/${id}`, { method: 'DELETE' });
+        await fetchConfig();
+      } catch (err) {
+        alert('删除失败: ' + err.message);
+      }
+    };
+
+    const inspectWorkflow = async (wfId) => {
+      await loadWorkflowSchema(wfId);
+      selectedWorkflowId.value = wfId;
+      activeTab.value = 'studio';
+    };
+
+    const selectAndGoToStudio = async (id) => {
+      selectedWorkflowId.value = id;
+      await loadWorkflowSchema(id);
+      activeTab.value = 'studio';
+    };
+
+    // 删除本地画廊文件
+    const deleteGalleryItem = async (filename) => {
+      if (!confirm('确定删除这个生成成果吗？')) return;
+      try {
+        await authFetch(`/api/gallery/${filename}`, { method: 'DELETE' });
+        await refreshGallery();
+      } catch (err) {
+        console.error(err);
+      }
+    };
+
+    const openLightbox = (url) => {
+      lightboxUrl.value = url;
+    };
+
+    // 浏览器端纯前端直链下载 (零经过服务器，由浏览器直接请求 RunningHub CDN)
+    const downloadMedia = async (url, defaultFilename) => {
+      if (!url) return;
+      if (url.startsWith('data:')) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = defaultFilename || 'preview.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        return;
+      }
+
+      const isVideo = isVideoUrl(url) || (defaultFilename && isVideoUrl(defaultFilename));
+      const fallbackName = defaultFilename || (isVideo ? 'output.mp4' : 'output.png');
+
+      try {
+        const resp = await fetch(url, { mode: 'cors' });
+        if (!resp.ok) throw new Error("direct fetch failed");
+        const blob = await resp.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = fallbackName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      } catch (err) {
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.download = fallbackName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      }
+    };
+
+    const cancelTask = async (taskId) => {
+      if (!taskId) return;
+      if (!confirm('确定要中途取消该任务吗？云端正在渲染的计算也将被终止。')) {
+        return;
+      }
+      try {
+        const res = await authFetch(`/api/tasks/${taskId}/cancel`, { method: 'POST' });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          isGenerating.value = false;
+          await refreshTasks();
+        } else {
+          alert('取消失败: ' + (data.detail || data.message || '未知错误'));
+        }
+      } catch (err) {
+        alert('取消请求异常: ' + err.message);
+      }
+    };
+
+    // ================= 认证与用户操作方法 =================
+    const fetchPublicConfig = async () => {
+      try {
+        const res = await fetch('/api/auth/public-config');
+        if (res.ok) {
+          publicConfig.value = await res.json();
+        }
+      } catch (err) {
+        console.error('Failed to fetch public auth config:', err);
+      }
+    };
+
+    const fetchCurrentUser = async () => {
+      const token = localStorage.getItem('rh_auth_token');
+      if (!token) {
+        currentUser.value = null;
+        return;
+      }
+      try {
+        const res = await authFetch('/api/auth/me');
+        if (res.ok) {
+          currentUser.value = await res.json();
+        } else if (res.status === 401) {
+          localStorage.removeItem('rh_auth_token');
+          currentUser.value = null;
+        }
+      } catch (err) {
+        console.error('Failed to fetch current user:', err);
+      }
+    };
+
+    const openAuthModal = (tab = 'signin') => {
+      authTab.value = tab;
+      authError.value = '';
+      authSuccessMsg.value = '';
+      authForm.value.turnstileToken = '';
+      showAuthModal.value = true;
+      renderTurnstileWidget();
+    };
+
+    const closeAuthModal = () => {
+      showAuthModal.value = false;
+      authError.value = '';
+      authSuccessMsg.value = '';
+      if (turnstileWidgetId.value !== null && window.turnstile) {
+        try { window.turnstile.remove(turnstileWidgetId.value); } catch(e){}
+        turnstileWidgetId.value = null;
+      }
+    };
+
+    const renderTurnstileWidget = () => {
+      if (!publicConfig.value.turnstileEnabled || !publicConfig.value.turnstileSiteKey) {
+        return;
+      }
+      setTimeout(() => {
+        const container = document.getElementById('turnstile-container');
+        if (!container || !window.turnstile) return;
+        if (turnstileWidgetId.value !== null) {
+          try { window.turnstile.remove(turnstileWidgetId.value); } catch(e){}
+          turnstileWidgetId.value = null;
+        }
+        try {
+          turnstileWidgetId.value = window.turnstile.render('#turnstile-container', {
+            sitekey: publicConfig.value.turnstileSiteKey,
+            theme: 'dark',
+            callback: (token) => {
+              authForm.value.turnstileToken = token;
+            },
+            'expired-callback': () => {
+              authForm.value.turnstileToken = '';
+            },
+            'error-callback': () => {
+              authForm.value.turnstileToken = '';
+            }
+          });
+        } catch(e) {
+          console.warn('Turnstile render warning:', e);
+        }
+      }, 250);
+    };
+
+    const submitAuth = async () => {
+      authError.value = '';
+      authSuccessMsg.value = '';
+
+      if (authTab.value === 'signup') {
+        if (!authForm.value.username || authForm.value.username.trim().length < 3) {
+          authError.value = '用户名长度不能少于 3 个字符';
+          return;
+        }
+        if (!authForm.value.password || authForm.value.password.length < 6) {
+          authError.value = '密码长度不能少于 6 位';
+          return;
+        }
+        if (authForm.value.password !== authForm.value.confirmPassword) {
+          authError.value = '两次输入的密码不一致，请仔细核对';
+          return;
+        }
+        if (publicConfig.value.turnstileEnabled && publicConfig.value.turnstileSiteKey && !authForm.value.turnstileToken) {
+          authError.value = '请先勾选并完成 Cloudflare 人机安全验证';
+          return;
+        }
+
+        authLoading.value = true;
+        try {
+          const res = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: authForm.value.username.trim(),
+              email: authForm.value.email.trim(),
+              password: authForm.value.password,
+              turnstileToken: authForm.value.turnstileToken
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.status === 'ok') {
+            localStorage.setItem('rh_auth_token', data.token);
+            currentUser.value = data.user;
+            authSuccessMsg.value = data.message || '注册成功！';
+            await fetchPublicConfig();
+            await refreshTasks();
+            await refreshGallery();
+            setTimeout(() => {
+              closeAuthModal();
+            }, 1200);
+          } else {
+            authError.value = data.detail || data.message || '注册失败';
+            if (window.turnstile && turnstileWidgetId.value !== null) {
+              window.turnstile.reset(turnstileWidgetId.value);
+            }
+          }
+        } catch(err) {
+          authError.value = '网络请求失败: ' + err.message;
+        } finally {
+          authLoading.value = false;
+        }
+      } else {
+        // 登录模式
+        if (!authForm.value.identifier) {
+          authError.value = '请输入用户名或邮箱地址';
+          return;
+        }
+        if (!authForm.value.password) {
+          authError.value = '请输入登录密码';
+          return;
+        }
+        if (publicConfig.value.turnstileEnabled && publicConfig.value.turnstileSiteKey && !authForm.value.turnstileToken) {
+          authError.value = '请先完成 Cloudflare 人机安全验证';
+          return;
+        }
+
+        authLoading.value = true;
+        try {
+          const res = await fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              identifier: authForm.value.identifier.trim(),
+              password: authForm.value.password,
+              turnstileToken: authForm.value.turnstileToken
+            })
+          });
+          const data = await res.json();
+          if (res.ok && data.status === 'ok') {
+            localStorage.setItem('rh_auth_token', data.token);
+            currentUser.value = data.user;
+            authSuccessMsg.value = '登录成功，欢迎回来！';
+            await refreshTasks();
+            await refreshGallery();
+            setTimeout(() => {
+              closeAuthModal();
+            }, 800);
+          } else {
+            authError.value = data.detail || data.message || '登录失败';
+            if (window.turnstile && turnstileWidgetId.value !== null) {
+              window.turnstile.reset(turnstileWidgetId.value);
+            }
+          }
+        } catch(err) {
+          authError.value = '网络请求失败: ' + err.message;
+        } finally {
+          authLoading.value = false;
+        }
+      }
+    };
+
+    const logout = async () => {
+      try {
+        await authFetch('/api/auth/logout', { method: 'POST' });
+      } catch(e){}
+      localStorage.removeItem('rh_auth_token');
+      currentUser.value = null;
+      showUserDropdown.value = false;
+      if (activeTab.value === 'admin') {
+        activeTab.value = 'studio';
+      }
+      await refreshTasks();
+      await refreshGallery();
+    };
+
+    const openChangePwdModal = () => {
+      pwdForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' };
+      pwdError.value = '';
+      pwdSuccessMsg.value = '';
+      showChangePwdModal.value = true;
+      showUserDropdown.value = false;
+    };
+
+    const submitChangePassword = async () => {
+      pwdError.value = '';
+      pwdSuccessMsg.value = '';
+      if (!pwdForm.value.oldPassword) {
+        pwdError.value = '请输入当前原密码';
+        return;
+      }
+      if (!pwdForm.value.newPassword || pwdForm.value.newPassword.length < 6) {
+        pwdError.value = '新密码长度不能少于 6 位';
+        return;
+      }
+      if (pwdForm.value.newPassword !== pwdForm.value.confirmPassword) {
+        pwdError.value = '两次输入的新密码不一致';
+        return;
+      }
+      pwdLoading.value = true;
+      try {
+        const res = await authFetch('/api/auth/change-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            oldPassword: pwdForm.value.oldPassword,
+            newPassword: pwdForm.value.newPassword
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          pwdSuccessMsg.value = '密码修改成功！';
+          setTimeout(() => {
+            showChangePwdModal.value = false;
+          }, 1200);
+        } else {
+          pwdError.value = data.detail || '修改失败';
+        }
+      } catch(err) {
+        pwdError.value = '请求异常: ' + err.message;
+      } finally {
+        pwdLoading.value = false;
+      }
+    };
+
+    // ================= 开发者管理后台操作 =================
+    const switchTab = (tab) => {
+      activeTab.value = tab;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (tab === 'admin') {
+        fetchAdminOverview();
+        fetchAdminUsers();
+        fetchAdminSystem();
+      }
+    };
+
+    const fetchAdminOverview = async () => {
+      try {
+        const res = await authFetch('/api/admin/overview');
+        if (res.ok) {
+          adminOverview.value = await res.json();
+        }
+      } catch(e){}
+    };
+
+    const fetchAdminUsers = async () => {
+      adminLoading.value = true;
+      try {
+        const res = await authFetch('/api/admin/users');
+        if (res.ok) {
+          adminUsers.value = await res.json();
+        }
+      } catch(e){}
+      finally {
+        adminLoading.value = false;
+      }
+    };
+
+    const fetchAdminSystem = async () => {
+      try {
+        const res = await authFetch('/api/admin/system');
+        if (res.ok) {
+          const sys = await res.json();
+          adminSystem.value = {
+            ...sys,
+            turnstileSecretKey: ''
+          };
+        }
+      } catch(e){}
+    };
+
+    const saveAdminSystem = async () => {
+      try {
+        const payload = {
+          siteTitle: adminSystem.value.siteTitle,
+          turnstileEnabled: adminSystem.value.turnstileEnabled,
+          turnstileSiteKey: adminSystem.value.turnstileSiteKey,
+          allowRegistration: adminSystem.value.allowRegistration,
+          defaultUserPoints: adminSystem.value.defaultUserPoints,
+          requireLoginToGenerate: adminSystem.value.requireLoginToGenerate
+        };
+        if (adminSystem.value.turnstileSecretKey && adminSystem.value.turnstileSecretKey.trim()) {
+          payload.turnstileSecretKey = adminSystem.value.turnstileSecretKey.trim();
+        }
+        const res = await authFetch('/api/admin/system', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          alert('系统与安全设置已成功保存！');
+          await fetchAdminSystem();
+          await fetchPublicConfig();
+        } else {
+          const err = await res.json();
+          alert('保存失败: ' + (err.detail || '未知错误'));
+        }
+      } catch(err) {
+        alert('请求异常: ' + err.message);
+      }
+    };
+
+    const fetchAdminTasks = async () => {
+      adminLoading.value = true;
+      try {
+        const res = await authFetch('/api/admin/tasks');
+        if (res.ok) {
+          adminTasks.value = await res.json();
+        }
+      } catch(e){}
+      finally {
+        adminLoading.value = false;
+      }
+    };
+
+    const openEditUserModal = (user) => {
+      editingUser.value = user;
+      editUserForm.value = {
+        role: user.role,
+        points: user.points,
+        isActive: user.isActive !== false,
+        newPassword: ''
+      };
+    };
+
+    const submitEditUser = async () => {
+      if (!editingUser.value) return;
+      try {
+        const payload = {
+          role: editUserForm.value.role,
+          points: editUserForm.value.points,
+          isActive: editUserForm.value.isActive
+        };
+        if (editUserForm.value.newPassword && editUserForm.value.newPassword.trim().length >= 6) {
+          payload.newPassword = editUserForm.value.newPassword.trim();
+        }
+        const res = await authFetch(`/api/admin/users/${editingUser.value.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          editingUser.value = null;
+          await fetchAdminUsers();
+        } else {
+          const err = await res.json();
+          alert('修改失败: ' + (err.detail || '未知错误'));
+        }
+      } catch(err) {
+        alert('修改失败: ' + err.message);
+      }
+    };
+
+    const deleteUser = async (userId, username) => {
+      if (!confirm(`确定要彻底删除用户【${username}】吗？此操作无法撤销！`)) return;
+      try {
+        const res = await authFetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+        if (res.ok) {
+          await fetchAdminUsers();
+        } else {
+          const err = await res.json();
+          alert('删除失败: ' + (err.detail || '未知错误'));
+        }
+      } catch(err) {
+        alert('删除失败: ' + err.message);
+      }
+    };
+
+    const statusBadgeClass = (status) => {
+      switch (status) {
+        case 'SUCCESS':
+          return 'bg-emerald-950 text-emerald-400 border border-emerald-800';
+        case 'RUNNING':
+        case 'QUEUED':
+          return 'bg-amber-950 text-amber-400 border border-amber-800 animate-pulse';
+        case 'FAILED':
+        case 'TIMEOUT':
+          return 'bg-red-950 text-red-400 border border-red-800';
+        case 'CANCELLED':
+          return 'bg-slate-800/80 text-slate-400 border border-slate-700';
+        default:
+          return 'bg-slate-800 text-slate-400';
+      }
+    };
+
+    onMounted(async () => {
+      await fetchPublicConfig();
+      await fetchCurrentUser();
+      await fetchConfig();
+      await refreshTasks();
+      await refreshGallery();
+
+      // 定时轮询任务状态与画廊（每 2.5 秒）
+      pollingTimer = setInterval(() => {
+        refreshTasks();
+        refreshGallery();
+      }, 2500);
+    });
+
+    onUnmounted(() => {
+      if (pollingTimer) clearInterval(pollingTimer);
+    });
+
+    return {
+      activeTab,
+      switchTab,
+      config,
+      keys,
+      activeKeyId,
+      activeKeyName,
+      activeMaskedKey,
+      showKeyDropdown,
+      showKeyPlainText,
+      isAddingKey,
+      testingKeyId,
+      keyTestResult,
+      newKeyForm,
+      formatTime,
+      switchKey,
+      addNewKey,
+      deleteKey,
+      testKey,
+      copyMasked,
+      workflows,
+      selectedWorkflowId,
+      currentWorkflow,
+      tasks,
+      gallery,
+      latestTask,
+      activeOutputIndex,
+      currentDisplayOutput,
+      runningTasksCount,
+      isGenerating,
+      isDetecting,
+      isLoadingSchema,
+      lightboxUrl,
+      showAddWorkflowModal,
+      dynamicSchema,
+      dynamicSchemaTotalNodes,
+      dynamicPrompts,
+      dynamicSampler,
+      dynamicLatent,
+      dynamicImages,
+      dynamicVideos,
+      dynamicQuality,
+      allEditableNodes,
+      nodeOverrides,
+      originalDefaults,
+      showAllNodes,
+      allNodesSearch,
+      filteredAllNodes,
+      modifiedParamsCount,
+      workflowIssues,
+      applyRecommendedFixes,
+      newWf,
+      isVideoUrl,
+      isVideoOutput,
+      isFieldModified,
+      resetField,
+      resetNode,
+      fetchConfig,
+      refreshTasks,
+      refreshGallery,
+      onWorkflowChange,
+      loadWorkflowSchema,
+      randomizeDynamicSeed,
+      handleNodeImageUpload,
+      handleNodeVideoUpload,
+      submitDynamicGeneration,
+      saveSettings,
+      saveNewWorkflow,
+      autoDetectWorkflow,
+      deleteWorkflow,
+      inspectWorkflow,
+      selectAndGoToStudio,
+      deleteGalleryItem,
+      downloadMedia,
+      openLightbox,
+      cancelTask,
+      selectedTaskType,
+      statusBadgeClass,
+      // 用户鉴权与管理
+      currentUser,
+      publicConfig,
+      showAuthModal,
+      authTab,
+      authForm,
+      authLoading,
+      authError,
+      authSuccessMsg,
+      showUserDropdown,
+      turnstileWidgetId,
+      showChangePwdModal,
+      pwdForm,
+      pwdLoading,
+      pwdError,
+      pwdSuccessMsg,
+      openAuthModal,
+      closeAuthModal,
+      submitAuth,
+      logout,
+      openChangePwdModal,
+      submitChangePassword,
+      // 开发者后台
+      adminTab,
+      adminOverview,
+      adminUsers,
+      adminTasks,
+      adminSystem,
+      adminLoading,
+      adminSearchUser,
+      editingUser,
+      editUserForm,
+      fetchAdminOverview,
+      fetchAdminUsers,
+      fetchAdminSystem,
+      saveAdminSystem,
+      fetchAdminTasks,
+      openEditUserModal,
+      submitEditUser,
+      deleteUser
+    };
+  }
+}).mount('#app');

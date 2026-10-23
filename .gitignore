@@ -1,0 +1,39 @@
+# Python & Virtual Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+env/
+venv/
+ENV/
+
+# Sensitive Keys & Credentials (绝对防泄露)
+.secret.key
+data/.secret.key
+data/config.json
+data/users.json
+data/tasks.json
+.env
+*.env
+*.key
+
+# Media Outputs & Temporary Caches
+outputs/*
+!outputs/.gitkeep
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.webm
+*.mov
+*.gif
+prompt_*.txt
+scratch_*.py
+
+# System & IDE files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.log
