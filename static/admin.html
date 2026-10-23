@@ -375,6 +375,17 @@
                       <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
                     </label>
                   </div>
+
+                  <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <div>
+                      <div class="text-xs font-bold text-white">隐藏静音音频辅助链路节点</div>
+                      <div class="text-[11px] text-slate-400">检测到 GetImageSize → Calculator → EmptyAudio → SaveAudio 拓扑链时在用户端隐藏，单节点正常显示</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" v-model="systemConfig.hideAuxiliaryAudioChain" @change="saveSystemSettingsQuick" class="sr-only peer">
+                      <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
                 </div>
 
               </div>
@@ -873,7 +884,9 @@
           turnstileSiteKey: '',
           turnstileSecretKey: '',
           hasTurnstileSecret: false,
-          turnstileSecretKeyMasked: ''
+          turnstileSecretKeyMasked: '',
+          defaultUserPoints: 100,
+          hideAuxiliaryAudioChain: true
         });
 
         // 弹窗状态
@@ -1107,7 +1120,7 @@
           }
         };
 
-        const saveSystemSettings = async () => {
+        const saveSystemSettings = async (silent = false) => {
           savingSettings.value = true;
           try {
             const res = await authFetch('/api/admin/system', {
@@ -1119,7 +1132,9 @@
               const saved = await res.json();
               const newCfg = saved.system || saved;
               systemConfig.value = { ...systemConfig.value, ...newCfg };
-              alert('✓ 系统与 Turnstile 安全配置已成功更新并落盘！');
+              if (!silent) {
+                alert('✓ 系统与安全配置已成功更新并落盘！');
+              }
             } else {
               const err = await res.json().catch(() => ({}));
               alert('配置更新失败: ' + (err.detail || res.statusText || ''));
@@ -1132,7 +1147,7 @@
         };
 
         const saveSystemSettingsQuick = () => {
-          saveSystemSettings();
+          saveSystemSettings(true);
         };
 
         // 用户管理操作
