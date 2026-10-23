@@ -819,6 +819,7 @@ def admin_delete_user(user_id: str, admin: Dict[str, Any] = Depends(get_current_
 def admin_get_system_config(_: Dict[str, Any] = Depends(get_current_admin)):
     return get_system_config_safe()
 
+@app.post("/api/admin/system")
 @app.put("/api/admin/system")
 def admin_update_system_config(req: AdminSystemConfigRequest, _: Dict[str, Any] = Depends(get_current_admin)):
     cfg = load_config()
@@ -842,7 +843,9 @@ def admin_update_system_config(req: AdminSystemConfigRequest, _: Dict[str, Any] 
         sys_cfg["requireLoginToGenerate"] = bool(req.requireLoginToGenerate)
     
     save_config(cfg)
-    return {"status": "ok", "system": get_system_config_safe(cfg)}
+    safe_data = get_system_config_safe(cfg)
+    safe_data["status"] = "ok"
+    return safe_data
 
 # ----------------- API 路由: 基础配置与密钥池 -----------------
 
