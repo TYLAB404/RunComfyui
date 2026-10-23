@@ -830,9 +830,18 @@ def admin_update_system_config(req: AdminSystemConfigRequest, _: Dict[str, Any] 
     if req.turnstileEnabled is not None:
         sys_cfg["turnstileEnabled"] = bool(req.turnstileEnabled)
     if req.turnstileSiteKey is not None:
-        sys_cfg["turnstileSiteKey"] = req.turnstileSiteKey.strip()
+        raw_site = req.turnstileSiteKey.strip()
+        if raw_site.count("0x") >= 2 and len(raw_site) > 60:
+            parts = raw_site.split("0x")
+            if len(parts) >= 3 and parts[1] == parts[2]:
+                raw_site = "0x" + parts[1]
+        sys_cfg["turnstileSiteKey"] = raw_site
     if req.turnstileSecretKey is not None and req.turnstileSecretKey.strip():
         raw_secret = req.turnstileSecretKey.strip()
+        if raw_secret.count("0x") >= 2 and len(raw_secret) > 60:
+            parts = raw_secret.split("0x")
+            if len(parts) >= 3 and parts[1] == parts[2]:
+                raw_secret = "0x" + parts[1]
         if not raw_secret.startswith("****") and "****" not in raw_secret:
             sys_cfg["turnstileSecretKeyEncrypted"] = encrypt_key(raw_secret)
     if req.allowRegistration is not None:
