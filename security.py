@@ -63,7 +63,7 @@ def encrypt_key(plain_key: str) -> str:
         return token.decode("utf-8")
     except Exception as e:
         print(f"[Security Error] Encryption failed: {e}")
-        return plain_key
+        raise RuntimeError(f"Data encryption failed securely: {e}")
 
 def decrypt_key(encrypted_key: str) -> str:
     """将 Fernet 密文解密为明文 API Key"""
