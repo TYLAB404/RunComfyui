@@ -92,6 +92,35 @@ def init_database():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (created_at DESC);")
 
+        # 3. 公告表 (Announcements) - 平台官方公告与活动通知
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS announcements (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            tag TEXT DEFAULT '官方公告',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_announcements_created_at ON announcements (created_at DESC);")
+
+        # 预设一条初始欢迎公告
+        cursor.execute("SELECT COUNT(*) FROM announcements;")
+        if cursor.fetchone()[0] == 0:
+            cursor.execute("""
+            INSERT INTO announcements (id, title, content, tag, is_active, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, ?);
+            """, (
+                "anno_welcome",
+                "🎉 欢迎加入全新一代 ComfyUI 云端创作平台！",
+                "欢迎体验新升级的 AI 创作中枢！系统全面接入高并发工作流渲染流水线，支持毫秒级流式预览、历史成果画廊与跨设备同步。祝您创作愉快！",
+                "新手引导",
+                int(time.time()),
+                int(time.time())
+            ))
+
         conn.commit()
 
         # 3. 自动迁移 tasks.json 历史任务至 SQLite
@@ -255,6 +284,79 @@ def db_delete_task(task_id: str):
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM tasks WHERE task_id = ?;", (str(task_id),))
+        conn.commit()
+
+# ----------------- 公告表 (Announcements) 封装操作 -----------------
+
+def db_get_announcements(active_only: bool = True) -> List[Dict[str, Any]]:
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if active_only:
+            cursor.execute("SELECT * FROM announcements WHERE is_active = 1 ORDER BY created_at DESC;")
+        else:
+            cursor.execute("SELECT * FROM announcements ORDER BY created_at DESC;")
+        rows = cursor.fetchall()
+        return [
+            {
+                "id": r["id"],
+                "title": r["title"],
+                "content": r["content"],
+                "tag": r["tag"],
+                "isActive": bool(r["is_active"]),
+                "createdAt": r["created_at"],
+                "updatedAt": r["updated_at"]
+            }
+            for r in rows
+        ]
+
+def db_save_announcement(title: str, content: str, tag: str = "官方公告", is_active: bool = True) -> Dict[str, Any]:
+    anno_id = f"anno_{int(time.time())}_{os.urandom(3).hex()}"
+    now = int(time.time())
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT INTO announcements (id, title, content, tag, is_active, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, (anno_id, title.strip(), content.strip(), tag.strip(), 1 if is_active else 0, now, now))
+        conn.commit()
+    return {
+        "id": anno_id,
+        "title": title.strip(),
+        "content": content.strip(),
+        "tag": tag.strip(),
+        "isActive": is_active,
+        "createdAt": now,
+        "updatedAt": now
+    }
+
+def db_update_announcement(anno_id: str, updates: Dict[str, Any]):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cols = []
+        vals = []
+        mapping = {
+            "title": "title",
+            "content": "content",
+            "tag": "tag",
+            "isActive": "is_active"
+        }
+        for k, v in updates.items():
+            if k in mapping:
+                cols.append(f"{mapping[k]} = ?")
+                vals.append(1 if v else 0 if k == "isActive" else v)
+        if not cols:
+            return
+        cols.append("updated_at = ?")
+        vals.append(int(time.time()))
+        vals.append(str(anno_id))
+        sql = f"UPDATE announcements SET {', '.join(cols)} WHERE id = ?;"
+        cursor.execute(sql, tuple(vals))
+        conn.commit()
+
+def db_delete_announcement(anno_id: str):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM announcements WHERE id = ?;", (str(anno_id),))
         conn.commit()
 
 # 执行数据库自动初始化

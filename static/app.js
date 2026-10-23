@@ -907,6 +907,28 @@ createApp({
       }
     };
 
+    // ================= 官方公告与资讯状态 =================
+    const announcements = ref([]);
+    const selectedAnnoTag = ref('全部');
+
+    const filteredAnnouncements = computed(() => {
+      if (selectedAnnoTag.value === '全部') {
+        return announcements.value;
+      }
+      return announcements.value.filter(a => a.tag === selectedAnnoTag.value);
+    });
+
+    const fetchAnnouncements = async () => {
+      try {
+        const res = await fetch('/api/announcements');
+        if (res.ok) {
+          announcements.value = await res.json();
+        }
+      } catch (err) {
+        console.error('Failed to fetch announcements:', err);
+      }
+    };
+
     const fetchCurrentUser = async () => {
       const token = localStorage.getItem('rh_auth_token');
       if (!token) {
@@ -1307,6 +1329,7 @@ createApp({
     onMounted(async () => {
       await fetchPublicConfig();
       await fetchCurrentUser();
+      await fetchAnnouncements();
       await fetchConfig();
       await refreshTasks();
       await refreshGallery();
@@ -1422,6 +1445,11 @@ createApp({
       logout,
       openChangePwdModal,
       submitChangePassword,
+      // 官方公告与动态
+      announcements,
+      selectedAnnoTag,
+      filteredAnnouncements,
+      fetchAnnouncements,
       // 开发者后台
       adminTab,
       adminOverview,

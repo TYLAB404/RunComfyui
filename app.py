@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from security import encrypt_key, decrypt_key, mask_key, verify_key_with_runninghub
 from database import (
     db_save_task, db_update_task, db_load_tasks, db_get_task, db_delete_task,
+    db_get_announcements, db_save_announcement, db_update_announcement, db_delete_announcement,
     is_rate_limited, record_failed_attempt, clear_failed_attempts
 )
 from auth import (
@@ -855,6 +856,101 @@ def admin_update_system_config(req: AdminSystemConfigRequest, _: Dict[str, Any] 
     safe_data = get_system_config_safe(cfg)
     safe_data["status"] = "ok"
     return safe_data
+
+# ----------------- API 路由: 公告与通知系统 -----------------
+
+class AnnouncementCreateRequest(BaseModel):
+    title: str
+    content: str
+    tag: Optional[str] = "官方公告"
+    isActive: Optional[bool] = True
+
+class AnnouncementUpdateRequest(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+    tag: Optional[str] = None
+    isActive: Optional[bool] = None
+
+@app.get("/api/announcements")
+def get_public_announcements():
+    """面向前台普通用户的活跃公告列表"""
+    return db_get_announcements(active_only=True)
+
+@app.get("/api/admin/announcements")
+def get_admin_announcements(_: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员全量公告列表（包括停用的）"""
+    return db_get_announcements(active_only=False)
+
+@app.post("/api/admin/announcements")
+def create_admin_announcement(req: AnnouncementCreateRequest, _: Dict[str, Any] = Depends(get_current_admin)):
+    if not req.title.strip():
+        raise HTTPException(status_code=400, detail="公告标题不能为空")
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="公告内容不能为空")
+    return db_save_announcement(
+        title=req.title,
+        content=req.content,
+        tag=req.tag or "官方公告",
+        is_active=True if req.isActive is None else bool(req.isActive)
+    )
+
+@app.put("/api/admin/announcements/{anno_id}")
+def update_admin_announcement(anno_id: str, req: AnnouncementUpdateRequest, _: Dict[str, Any] = Depends(get_current_admin)):
+    updates = {}
+    if req.title is not None:
+        updates["title"] = req.title.strip()
+    if req.content is not None:
+        updates["content"] = req.content.strip()
+    if req.tag is not None:
+        updates["tag"] = req.tag.strip()
+    if req.isActive is not None:
+        updates["isActive"] = bool(req.isActive)
+    db_update_announcement(anno_id, updates)
+    return {"status": "ok"}
+
+@app.delete("/api/admin/announcements/{anno_id}")
+def delete_admin_announcement(anno_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    db_delete_announcement(anno_id)
+    return {"status": "ok"}
+
+@app.post("/api/admin/auth/login")
+async def admin_portal_login(req: LoginRequest, request: Request, response: Response):
+    """管理员独立后台专属登录接口（严格鉴权：仅允许具有 admin 角色的账号通过）"""
+    client_ip = request.client.host if request.client else "unknown"
+    rate_key = f"admin_gate:{client_ip}:{req.identifier.strip().lower()}"
+    if is_rate_limited(rate_key, max_attempts=5, window_seconds=900):
+        raise HTTPException(status_code=429, detail="管理员登录失败过多，入口已锁定 15 分钟")
+    
+    user = get_user_by_identifier(req.identifier)
+    if not user:
+        record_failed_attempt(rate_key)
+        raise HTTPException(status_code=400, detail="管理员账号或密码错误")
+    
+    if user.get("role") != "admin":
+        record_failed_attempt(rate_key)
+        raise HTTPException(status_code=403, detail="拒绝访问：该账号非系统超级管理员")
+        
+    if not user.get("isActive", True):
+        raise HTTPException(status_code=403, detail="该管理员账号已被禁用")
+        
+    if not verify_password(req.password, user.get("passwordHash", ""), user.get("salt", "")):
+        record_failed_attempt(rate_key)
+        raise HTTPException(status_code=400, detail="管理员账号或密码错误")
+        
+    clear_failed_attempts(rate_key)
+    update_user_fields(user["id"], {"lastLogin": int(time.time())})
+    
+    token = create_jwt_token({
+        "sub": user["id"],
+        "username": user["username"],
+        "role": "admin"
+    })
+    response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax")
+    return {
+        "status": "ok",
+        "token": token,
+        "user": sanitize_user(user)
+    }
 
 # ----------------- API 路由: 基础配置与密钥池 -----------------
 

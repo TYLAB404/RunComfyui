@@ -64,18 +64,11 @@
           <span>🖼</span> <span>成果画廊</span>
         </button>
         <button 
-          @click="switchTab('settings')"
-          :class="activeTab === 'settings' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+          @click="switchTab('announcements')"
+          :class="activeTab === 'announcements' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
           class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
-          <span>⚙️</span> <span>密钥设置</span>
+          <span>📢</span> <span>平台公告</span>
         </button>
-        <!-- 管理员直达独立后台系统入口 -->
-        <a 
-          v-if="currentUser && currentUser.role === 'admin'"
-          href="/admin"
-          class="px-3 sm:px-3.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 transition font-semibold flex items-center gap-1.5 shadow-sm">
-          <span>👑</span> <span>管理后台</span>
-        </a>
       </nav>
 
       <!-- 右侧 用户登录状态 + 密钥状态 -->
@@ -111,10 +104,7 @@
             <div class="px-3.5 py-2 border-b border-slate-800">
               <div class="font-bold text-xs text-white truncate flex items-center gap-1.5">
                 <span>{{ currentUser.username }}</span>
-                <span :class="currentUser.role === 'admin' ? 'bg-amber-950 text-amber-300 border-amber-800' : 'bg-slate-800 text-slate-400 border-slate-700'" class="text-[9px] border px-1 rounded">
-                  {{ currentUser.role === 'admin' ? '👑 超级管理' : '👤 普通用户' }}
-                </span>
-              </div>
+                </div>
               <div class="text-[10px] text-slate-400 truncate mt-0.5">{{ currentUser.email || '未绑定邮箱' }}</div>
               <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
                 <span class="text-slate-400">算力余额:</span>
@@ -123,12 +113,7 @@
             </div>
 
             <div class="py-1">
-              <a 
-                v-if="currentUser.role === 'admin'"
-                href="/admin"
-                class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-amber-300 flex items-center gap-2 transition font-medium">
-                <span>👑</span> <span>开发者后台管理</span>
-              </a>
+              
               <button 
                 @click="openChangePwdModal" 
                 class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-slate-300 flex items-center gap-2 transition">
@@ -234,20 +219,12 @@
         <span class="text-base">🖼</span>
         <span>画廊</span>
       </button>
-      <a 
-        v-if="currentUser && currentUser.role === 'admin'"
-        href="/admin" 
-        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 text-amber-400 font-bold transition active:scale-95">
-        <span class="text-base">👑</span>
-        <span>后台</span>
-      </a>
       <button 
-        v-else
-        @click="switchTab('settings')" 
-        :class="activeTab === 'settings' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
+        @click="switchTab('announcements')" 
+        :class="activeTab === 'announcements' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
         class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
-        <span class="text-base">⚙️</span>
-        <span>设置</span>
+        <span class="text-base">📢</span>
+        <span>公告</span>
       </button>
     </nav>
 
@@ -991,174 +968,55 @@
         </div>
       </div>
 
-      <!-- ================= TAB 5: 密钥保险箱与安全设置 ================= -->
-      <div v-show="activeTab === 'settings'" class="max-w-4xl mx-auto space-y-6">
+            <!-- ================= TAB 5: 平台官方公告与动态资讯 ================= -->
+      <div v-show="activeTab === 'announcements'" class="max-w-4xl mx-auto space-y-6">
         
-        <!-- 密钥保险箱卡片 -->
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6 shadow-xl">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-            <div>
-              <h2 class="text-base font-bold text-white flex items-center gap-2">
-                <span>🛡️</span> <span>RunningHub API Key 密钥保险箱 (多 Key 管理)</span>
-              </h2>
-              <p class="text-xs text-slate-400 mt-1">支持配置多个密钥池，一键切换生效账号，采用 AES-256 / Fernet 工业级落盘加密，Web 全程脱敏传输。</p>
+        <div class="bg-gradient-to-r from-slate-900 via-indigo-950/30 to-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-2.5">
+              <span class="text-2xl">📢</span>
+              <h2 class="text-lg sm:text-2xl font-bold bg-gradient-to-r from-white via-indigo-100 to-slate-300 bg-clip-text text-transparent">平台官方公告与动态</h2>
             </div>
-            <div class="flex items-center gap-2">
-              <span class="text-[11px] bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 px-2.5 py-1 rounded-full flex items-center gap-1">
-                <span>🔒</span> <span>落盘 AES-256 加密</span>
-              </span>
-              <span class="text-[11px] bg-indigo-950/80 text-indigo-400 border border-indigo-800/60 px-2.5 py-1 rounded-full flex items-center gap-1">
-                <span>👁️‍🗨️</span> <span>传输全脱敏</span>
-              </span>
-            </div>
+            <p class="text-xs text-slate-400 mt-1.5">掌握最新上架的 ComfyUI 工作流、算力赠送活动、维护更新与使用技巧</p>
           </div>
-
-          <!-- 已有 Key 列表 -->
-          <div class="space-y-3">
-            <div class="flex items-center justify-between text-xs text-slate-400">
-              <span class="font-semibold text-slate-300">已保存的密钥 ({{ keys.length }})</span>
-              <span>点击即可实时切换生效账号</span>
-            </div>
-
-            <div v-if="keys.length === 0" class="p-8 text-center bg-slate-950/50 border border-dashed border-slate-800 rounded-xl text-slate-500 text-xs">
-              尚未添加任何 RunningHub API Key，请在下方表单中录入
-            </div>
-
-            <div 
-              v-for="k in keys" 
-              :key="k.id" 
-              class="bg-slate-950 border rounded-xl p-4 transition flex flex-col md:flex-row md:items-center justify-between gap-4"
-              :class="k.isActive ? 'border-emerald-500/50 bg-emerald-950/10 shadow-lg shadow-emerald-950/20' : 'border-slate-800 hover:border-slate-700'">
-              
-              <div class="space-y-1.5 flex-1">
-                <div class="flex items-center gap-2.5">
-                  <span class="font-bold text-sm" :class="k.isActive ? 'text-emerald-400' : 'text-slate-200'">{{ k.name }}</span>
-                  <span v-if="k.isActive" class="text-[10px] bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 px-2 py-0.5 rounded-full font-semibold flex items-center gap-1">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span>当前生效</span>
-                  </span>
-                  <span v-else class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">备用</span>
-                </div>
-
-                <div class="flex flex-wrap items-center gap-3 text-xs text-slate-400 font-mono">
-                  <div class="flex items-center gap-1.5 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800">
-                    <span class="text-slate-500">Key:</span>
-                    <span class="text-slate-200 font-semibold tracking-wider">{{ k.maskedKey }}</span>
-                    <button @click="copyMasked(k.maskedKey)" title="复制脱敏Key" class="text-slate-500 hover:text-slate-300 text-xs ml-1">📋</button>
-                  </div>
-                  <span v-if="k.createdAt" class="text-[11px] text-slate-500">添加时间: {{ formatTime(k.createdAt) }}</span>
-                </div>
-
-                <p v-if="k.note" class="text-xs text-slate-400 italic">备注: {{ k.note }}</p>
-
-                <!-- 测试反馈 -->
-                <div v-if="keyTestResult[k.id]" class="text-xs mt-1">
-                  <span v-if="keyTestResult[k.id].valid" class="text-emerald-400 flex items-center gap-1 font-medium">
-                    <span>✅</span> <span>{{ keyTestResult[k.id].message }}</span>
-                  </span>
-                  <span v-else class="text-rose-400 flex items-center gap-1 font-medium">
-                    <span>❌</span> <span>{{ keyTestResult[k.id].message }}</span>
-                  </span>
-                </div>
-              </div>
-
-              <!-- 操作按钮 -->
-              <div class="flex items-center gap-2 self-end md:self-center">
-                <button 
-                  v-if="!k.isActive" 
-                  @click="switchKey(k.id)" 
-                  class="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-semibold transition">
-                  立即启用
-                </button>
-                <button 
-                  @click="testKey(k.id)" 
-                  :disabled="testingKeyId === k.id"
-                  class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs transition flex items-center gap-1">
-                  <span v-if="testingKeyId === k.id" class="animate-spin">⏳</span>
-                  <span>连通测试</span>
-                </button>
-                <button 
-                  @click="deleteKey(k.id, k.name)" 
-                  class="px-3 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-400 border border-rose-800/50 rounded-lg text-xs transition">
-                  删除
-                </button>
-              </div>
-
-            </div>
-          </div>
-
-          <!-- 添加新 Key 卡片 -->
-          <div class="bg-slate-950/80 border border-slate-800 rounded-xl p-5 space-y-4">
-            <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
-              <span>➕</span> <span>添加新的 RunningHub API Key</span>
-            </h3>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div class="space-y-1">
-                <label class="text-xs text-slate-300 font-medium">密钥别名 / 账号名称</label>
-                <input 
-                  type="text" 
-                  v-model="newKeyForm.name" 
-                  placeholder="例如：主账号 / Wan2.1专用 / 备用测试号" 
-                  class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500">
-              </div>
-
-              <div class="space-y-1">
-                <label class="text-xs text-slate-300 font-medium">RunningHub API Key 明文</label>
-                <div class="relative">
-                  <input 
-                    :type="showKeyPlainText ? 'text' : 'password'" 
-                    v-model="newKeyForm.apiKey" 
-                    placeholder="粘贴在 RunningHub 控制台复制的 API Key" 
-                    class="w-full bg-slate-900 border border-slate-800 rounded-xl pl-3 pr-10 py-2 text-xs text-slate-100 font-mono focus:outline-none focus:border-indigo-500">
-                  <button 
-                    type="button" 
-                    @click="showKeyPlainText = !showKeyPlainText" 
-                    class="absolute right-3 top-2 text-slate-400 hover:text-slate-200 text-xs">
-                    {{ showKeyPlainText ? '🙈' : '👁️' }}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div class="space-y-1">
-              <label class="text-xs text-slate-300 font-medium">备注说明（可选）</label>
-              <input 
-                type="text" 
-                v-model="newKeyForm.note" 
-                placeholder="例如：团队共享Key，每日额度 500 RH币" 
-                class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500">
-            </div>
-
-            <div class="flex items-center justify-between pt-2">
-              <label class="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input type="checkbox" v-model="newKeyForm.setActive" class="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0">
-                <span>添加后立即设为当前生效密钥</span>
-              </label>
-
-              <button 
-                @click="addNewKey" 
-                :disabled="isAddingKey || !newKeyForm.apiKey"
-                class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow transition flex items-center gap-1.5">
-                <span v-if="isAddingKey" class="animate-spin">⏳</span>
-                <span>加密保存并入库</span>
-              </button>
-            </div>
+          <!-- 标签筛选 -->
+          <div class="flex flex-wrap gap-1.5 bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs self-start sm:self-auto">
+            <button 
+              v-for="tag in ['全部', '官方公告', '新手引导', '功能更新', '活动通知']" 
+              :key="tag" 
+              @click="selectedAnnoTag = tag"
+              :class="selectedAnnoTag === tag ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'"
+              class="px-3 py-1.5 rounded-lg transition">
+              {{ tag }}
+            </button>
           </div>
         </div>
 
-        <!-- 云端安全部署提示 -->
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-3 text-xs text-slate-400">
-          <h3 class="text-sm font-semibold text-slate-200 flex items-center gap-2">
-            <span>🌐</span> <span>云端部署与安全隔离规范</span>
-          </h3>
-          <ul class="list-disc pl-5 space-y-1.5">
-            <li><strong>零明文落盘 (Zero Plaintext at Rest)</strong>：所有 API Key 均采用 AES-256 加密存储在 <code class="text-indigo-400">data/config.json</code>，即使服务器磁盘备份被拷贝也无法直接读取明文。</li>
-            <li><strong>环境变量隔离</strong>：若需最高安全级别，可在云服务器设置环境变量 <code class="text-indigo-400">RUNNINGHUB_MASTER_SECRET="你的高强随机串"</code>，系统将自动使用该环境主密钥进行派生加解密。</li>
-            <li><strong>Git 仓库自动防泄露</strong>：程序已配置 <code class="text-indigo-400">.gitignore</code>，主加密密钥 <code class="text-indigo-400">data/.secret.key</code> 绝不会被推送至公开或私有 Git 仓库。</li>
-            <li><strong>局域网与外网反代</strong>：部署在云服务器或 VPS 时，推荐使用 Nginx 配置 HTTPS 证书并设置 Basic Auth 或反向代理端口，实现端到端传输加密。</li>
-          </ul>
+        <!-- 公告卡片列表 -->
+        <div class="space-y-4">
+          <div 
+            v-for="anno in filteredAnnouncements" 
+            :key="anno.id" 
+            class="bg-slate-900/90 border border-slate-800/90 hover:border-slate-700/80 rounded-2xl p-6 transition duration-200 shadow-sm space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/60 pb-3">
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                  {{ anno.tag || '官方公告' }}
+                </span>
+                <h3 class="text-base font-bold text-white tracking-tight">{{ anno.title }}</h3>
+              </div>
+              <span class="text-[11px] font-mono text-slate-500">{{ formatTime(anno.createdAt) }}</span>
+            </div>
+            <div class="text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line">
+              {{ anno.content }}
+            </div>
+          </div>
+
+          <div v-if="filteredAnnouncements.length === 0" class="py-16 text-center bg-slate-900/40 border border-dashed border-slate-800 rounded-2xl text-slate-500 text-xs">
+            暂无该分类下的公告资讯
+          </div>
         </div>
+
       </div>
 
     </main>
