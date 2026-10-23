@@ -1473,13 +1473,12 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
                 ACTIVE_POLL_TASKS.add(tid)
                 asyncio.create_task(poll_task_status(tid, api_key))
     
-    # 权限隔离过滤：管理员看全部，普通用户看自己，未登录看公开历史
-    if current_user and current_user.get("role") == "admin":
-        return all_tasks
-    elif current_user:
-        return [t for t in all_tasks if str(t.get("userId")) == str(current_user["id"]) or not t.get("userId")]
+    # 严格多租户数据行级隔离：前台任务列表只展示属于当前登录用户自己提交的任务
+    if current_user:
+        user_id_str = str(current_user["id"])
+        return [t for t in all_tasks if str(t.get("userId")) == user_id_str]
     else:
-        return [t for t in all_tasks if not t.get("userId")]
+        return []
 
 @app.get("/api/admin/tasks")
 def admin_list_all_tasks(_: Dict[str, Any] = Depends(get_current_admin)):
@@ -1539,14 +1538,13 @@ async def cancel_task_endpoint(task_id: str):
 
 @app.get("/api/gallery")
 def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
-    """获取已生成媒体输出（优先直接读取任务远端直链，支持多用户与管理员隔离）"""
+    """获取当前登录用户的专属成果画廊（严格多租户隔离：每个人只能看到自己生成的图像/视频成果）"""
+    if not current_user:
+        return []
+    
+    user_id_str = str(current_user["id"])
     all_tasks = load_tasks()
-    if current_user and current_user.get("role") == "admin":
-        tasks = all_tasks
-    elif current_user:
-        tasks = [t for t in all_tasks if str(t.get("userId")) == str(current_user["id"]) or not t.get("userId")]
-    else:
-        tasks = [t for t in all_tasks if not t.get("userId")]
+    tasks = [t for t in all_tasks if str(t.get("userId")) == user_id_str]
 
     items = []
     seen = set()
