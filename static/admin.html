@@ -842,13 +842,15 @@
             });
             if (res.ok) {
               const saved = await res.json();
-              systemConfig.value = saved;
+              const newCfg = saved.system || saved;
+              systemConfig.value = { ...systemConfig.value, ...newCfg };
               alert('✓ 系统与 Turnstile 安全配置已成功更新并落盘！');
             } else {
-              alert('配置更新失败');
+              const err = await res.json().catch(() => ({}));
+              alert('配置更新失败: ' + (err.detail || res.statusText || ''));
             }
           } catch (e) {
-            alert('保存异常');
+            alert('保存异常: ' + e.message);
           } finally {
             savingSettings.value = false;
           }
