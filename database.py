@@ -1,0 +1,261 @@
+import os
+import sqlite3
+import json
+import time
+from typing import Optional, List, Dict, Any
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
+DB_PATH = os.path.join(DATA_DIR, "app.db")
+OLD_TASKS_PATH = os.path.join(DATA_DIR, "tasks.json")
+
+os.makedirs(DATA_DIR, exist_ok=True)
+
+# ----------------- 内存级防爆破与限流缓存 -----------------
+_LOGIN_ATTEMPTS: Dict[str, List[float]] = {}
+
+def is_rate_limited(key: str, max_attempts: int = 5, window_seconds: int = 900) -> bool:
+    """滑动窗口限流：15 分钟内连续失败超过 5 次则锁定"""
+    now = time.time()
+    attempts = [t for t in _LOGIN_ATTEMPTS.get(key, []) if now - t < window_seconds]
+    _LOGIN_ATTEMPTS[key] = attempts
+    return len(attempts) >= max_attempts
+
+def record_failed_attempt(key: str):
+    now = time.time()
+    attempts = _LOGIN_ATTEMPTS.setdefault(key, [])
+    _LOGIN_ATTEMPTS[key] = [t for t in attempts if now - t < 900] + [now]
+
+def clear_failed_attempts(key: str):
+    _LOGIN_ATTEMPTS.pop(key, None)
+
+# ----------------- SQLite 高并发连接池 (WAL模式) -----------------
+
+def get_db_connection() -> sqlite3.Connection:
+    """
+    获取 SQLite 数据库连接：
+    开启 WAL 预写日志模式，支持极高并发读写，彻底杜绝多用户同时注册/更新时的冲突问题
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=25.0)
+    conn.row_factory = sqlite3.Row
+    # 开启 WAL 模式（高并发核心）与异步落盘同步
+    conn.execute("PRAGMA journal_mode = WAL;")
+    conn.execute("PRAGMA synchronous = NORMAL;")
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn
+
+def init_database():
+    """初始化数据库表架构与自动迁移旧版数据"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        
+        # 1. 用户表 (Users)
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            email TEXT,
+            password_hash TEXT NOT NULL,
+            salt TEXT NOT NULL,
+            role TEXT NOT NULL DEFAULT 'user',
+            points INTEGER NOT NULL DEFAULT 100,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            last_login INTEGER NOT NULL,
+            task_count INTEGER NOT NULL DEFAULT 0
+        );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);")
+
+        # 2. 任务表 (Tasks) - 支持持久化与多租户审计
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS tasks (
+            task_id TEXT PRIMARY KEY,
+            user_id TEXT,
+            username TEXT,
+            workflow_id TEXT,
+            workflow_name TEXT,
+            task_type TEXT DEFAULT 'Standard',
+            positive_prompt TEXT,
+            negative_prompt TEXT,
+            status TEXT NOT NULL,
+            duration INTEGER DEFAULT 0,
+            consume_coins TEXT DEFAULT '0',
+            outputs_json TEXT DEFAULT '[]',
+            node_info_json TEXT DEFAULT '[]',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks (user_id);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (created_at DESC);")
+
+        conn.commit()
+
+        # 3. 自动迁移 tasks.json 历史任务至 SQLite
+        cursor.execute("SELECT COUNT(*) FROM tasks;")
+        count = cursor.fetchone()[0]
+        if count == 0 and os.path.exists(OLD_TASKS_PATH):
+            try:
+                with open(OLD_TASKS_PATH, "r", encoding="utf-8") as f:
+                    old_tasks = json.load(f)
+                if isinstance(old_tasks, list) and len(old_tasks) > 0:
+                    for t in old_tasks:
+                        tid = str(t.get("taskId", ""))
+                        if not tid:
+                            continue
+                        cursor.execute("""
+                        INSERT OR IGNORE INTO tasks (
+                            task_id, user_id, username, workflow_id, workflow_name, task_type,
+                            positive_prompt, negative_prompt, status, duration, consume_coins,
+                            outputs_json, node_info_json, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        """, (
+                            tid,
+                            t.get("userId") if t.get("userId") else None,
+                            t.get("username", "匿名访客"),
+                            str(t.get("workflowId", "")),
+                            t.get("workflowName", ""),
+                            t.get("taskType", "Standard"),
+                            t.get("positivePrompt", ""),
+                            t.get("negativePrompt", ""),
+                            t.get("status", "SUCCESS"),
+                            int(t.get("duration", 0) or 0),
+                            str(t.get("consumeCoins", "0")),
+                            json.dumps(t.get("outputs", []), ensure_ascii=False),
+                            json.dumps(t.get("nodeInfoList", []), ensure_ascii=False),
+                            int(t.get("createdAt", time.time())),
+                            int(t.get("updatedAt", time.time()))
+                        ))
+                    conn.commit()
+            except Exception as e:
+                print(f"[Database Warning] Auto-migration of tasks.json skipped: {e}")
+
+# ----------------- 任务表 (Tasks) 封装操作 -----------------
+
+def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
+    d = dict(row)
+    try:
+        outputs = json.loads(d.get("outputs_json") or "[]")
+    except Exception:
+        outputs = []
+    try:
+        node_info = json.loads(d.get("node_info_json") or "[]")
+    except Exception:
+        node_info = []
+
+    return {
+        "taskId": d.get("task_id"),
+        "userId": d.get("user_id") or "",
+        "username": d.get("username") or "匿名访客",
+        "workflowId": d.get("workflow_id"),
+        "workflowName": d.get("workflow_name"),
+        "taskType": d.get("task_type", "Standard"),
+        "positivePrompt": d.get("positive_prompt") or "",
+        "negativePrompt": d.get("negative_prompt") or "",
+        "status": d.get("status"),
+        "duration": d.get("duration", 0),
+        "consumeCoins": d.get("consume_coins", "0"),
+        "outputs": outputs,
+        "nodeInfoList": node_info,
+        "createdAt": d.get("created_at"),
+        "updatedAt": d.get("updated_at")
+    }
+
+def db_load_tasks(user_id: Optional[str] = None, is_admin: bool = False, limit: int = 100) -> List[Dict[str, Any]]:
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if is_admin:
+            cursor.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?;", (limit,))
+        elif user_id:
+            cursor.execute(
+                "SELECT * FROM tasks WHERE user_id = ? OR user_id = '' OR user_id IS NULL ORDER BY created_at DESC LIMIT ?;", 
+                (str(user_id), limit)
+            )
+        else:
+            cursor.execute("SELECT * FROM tasks WHERE user_id = '' OR user_id IS NULL ORDER BY created_at DESC LIMIT ?;", (limit,))
+        
+        rows = cursor.fetchall()
+        return [db_row_to_task(r) for r in rows]
+
+def db_get_task(task_id: str) -> Optional[Dict[str, Any]]:
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM tasks WHERE task_id = ?;", (str(task_id),))
+        row = cursor.fetchone()
+        return db_row_to_task(row) if row else None
+
+def db_save_task(task: Dict[str, Any]):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT INTO tasks (
+            task_id, user_id, username, workflow_id, workflow_name, task_type,
+            positive_prompt, negative_prompt, status, duration, consume_coins,
+            outputs_json, node_info_json, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(task_id) DO UPDATE SET
+            status = excluded.status,
+            duration = excluded.duration,
+            consume_coins = excluded.consume_coins,
+            outputs_json = excluded.outputs_json,
+            updated_at = excluded.updated_at;
+        """, (
+            str(task["taskId"]),
+            str(task["userId"]) if task.get("userId") else None,
+            str(task.get("username", "匿名访客")),
+            str(task.get("workflowId", "")),
+            str(task.get("workflowName", "")),
+            str(task.get("taskType", "Standard")),
+            str(task.get("positivePrompt", "")),
+            str(task.get("negativePrompt", "")),
+            str(task.get("status", "QUEUED")),
+            int(task.get("duration", 0) or 0),
+            str(task.get("consumeCoins", "0")),
+            json.dumps(task.get("outputs", []), ensure_ascii=False),
+            json.dumps(task.get("nodeInfoList", []), ensure_ascii=False),
+            int(task.get("createdAt", time.time())),
+            int(task.get("updatedAt", time.time()))
+        ))
+        conn.commit()
+
+def db_update_task(task_id: str, updates: Dict[str, Any]):
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        col_updates = []
+        vals = []
+        
+        mapping = {
+            "status": "status",
+            "duration": "duration",
+            "consumeCoins": "consume_coins",
+            "updatedAt": "updated_at",
+            "taskType": "task_type"
+        }
+        for k, v in updates.items():
+            if k in mapping:
+                col_updates.append(f"{mapping[k]} = ?")
+                vals.append(v)
+            elif k == "outputs":
+                col_updates.append("outputs_json = ?")
+                vals.append(json.dumps(v, ensure_ascii=False))
+        
+        if not col_updates:
+            return
+            
+        vals.append(str(task_id))
+        sql = f"UPDATE tasks SET {', '.join(col_updates)} WHERE task_id = ?;"
+        cursor.execute(sql, tuple(vals))
+        conn.commit()
+
+def db_delete_task(task_id: str):
+    """从数据库删除单条任务"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE task_id = ?;", (str(task_id),))
+        conn.commit()
+
+# 执行数据库自动初始化
+init_database()

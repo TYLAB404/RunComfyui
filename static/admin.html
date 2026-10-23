@@ -1,0 +1,1036 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>开发者管理中心 - RunningHub Admin</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            admin: {
+              50: '#f8fafc',
+              800: '#1e293b',
+              900: '#0f172a',
+              950: '#020617'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Vue 3 -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    [v-cloak] { display: none; }
+    /* 自定义滚动条 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 3px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+  </style>
+</head>
+<body class="bg-[#0b0f19] text-slate-100 min-h-screen font-sans antialiased flex flex-col md:flex-row overflow-x-hidden selection:bg-indigo-500 selection:text-white">
+
+  <div id="app" v-cloak class="flex-1 flex flex-col md:flex-row min-h-screen w-full">
+
+    <!-- 403 权限拒绝覆盖屏 (当非管理员或未登录时呈现) -->
+    <div v-if="authChecked && (!currentUser || currentUser.role !== 'admin')" class="fixed inset-0 z-50 bg-[#090d16] flex flex-col items-center justify-center p-6 text-center">
+      <div class="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 flex items-center justify-center mb-4">
+        <i data-lucide="shield-alert" class="w-8 h-8"></i>
+      </div>
+      <h1 class="text-2xl font-bold text-white mb-2">访问受限 (403 Forbidden)</h1>
+      <p class="text-sm text-slate-400 max-w-md mb-6">
+        开发者控制台仅向拥有【超级管理员 (Admin)】权限的用户开放。如果您是管理员，请使用对应管理员账号登录。
+      </p>
+      <div class="flex items-center gap-3">
+        <a href="/" class="px-5 py-2.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition">
+          返回创作工作台
+        </a>
+        <button @click="logout" class="px-5 py-2.5 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white transition">
+          切换账号重新登录
+        </button>
+      </div>
+    </div>
+
+    <!-- 主管理员界面 (仅在管理员鉴权通过后渲染) -->
+    <template v-if="authChecked && currentUser && currentUser.role === 'admin'">
+      
+      <!-- 侧边栏 (Sidebar) -->
+      <aside class="w-full md:w-64 bg-slate-950/90 border-r border-slate-800/80 flex flex-col justify-between shrink-0">
+        <div>
+          <!-- 侧边栏头部 -->
+          <div class="p-5 border-b border-slate-800/80 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                <i data-lucide="shield" class="w-5 h-5 text-white"></i>
+              </div>
+              <div>
+                <div class="text-sm font-bold text-white tracking-wide">开发者控制台</div>
+                <div class="text-[10px] text-indigo-400 font-mono">RunningHub Enterprise</div>
+              </div>
+            </div>
+            <span class="text-[9px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded font-mono font-bold">ADMIN</span>
+          </div>
+
+          <!-- 导航菜单 -->
+          <nav class="p-3 space-y-1">
+            <button 
+              @click="activeSection = 'overview'" 
+              :class="activeSection === 'overview' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
+              class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
+              <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
+              <span>系统运行概览</span>
+            </button>
+
+            <button 
+              @click="activeSection = 'users'" 
+              :class="activeSection === 'users' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
+              class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
+              <div class="flex items-center gap-3">
+                <i data-lucide="users" class="w-4 h-4"></i>
+                <span>用户中心与权限</span>
+              </div>
+              <span class="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full font-mono">{{ users.length }}</span>
+            </button>
+
+            <button 
+              @click="activeSection = 'security'" 
+              :class="activeSection === 'security' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
+              class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
+              <i data-lucide="shield-check" class="w-4 h-4"></i>
+              <span>安全防护 & Turnstile</span>
+            </button>
+
+            <button 
+              @click="activeSection = 'tasks'" 
+              :class="activeSection === 'tasks' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
+              class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
+              <i data-lucide="activity" class="w-4 h-4"></i>
+              <span>全局任务审计流</span>
+            </button>
+
+            <button 
+              @click="activeSection = 'keys'" 
+              :class="activeSection === 'keys' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
+              class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
+              <i data-lucide="key" class="w-4 h-4"></i>
+              <span>API 密钥池调度</span>
+            </button>
+          </nav>
+        </div>
+
+        <!-- 侧边栏底部信息 -->
+        <div class="p-4 border-t border-slate-800/80 bg-slate-950">
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2.5">
+              <div class="w-8 h-8 rounded-full bg-indigo-600/20 border border-indigo-500/40 text-indigo-300 font-bold flex items-center justify-center text-xs">
+                {{ currentUser.username.slice(0, 1).toUpperCase() }}
+              </div>
+              <div class="overflow-hidden">
+                <div class="text-xs font-bold text-white truncate">{{ currentUser.username }}</div>
+                <div class="text-[10px] text-emerald-400 flex items-center gap-1">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span>管理员在线</span>
+                </div>
+              </div>
+            </div>
+            <button @click="logout" title="退出登录" class="p-1.5 rounded-lg text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 transition">
+              <i data-lucide="log-out" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <a href="/" class="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 text-xs font-semibold text-slate-300 hover:text-white transition shadow-sm">
+            <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>
+            <span>返回前台创作台</span>
+          </a>
+        </div>
+      </aside>
+
+      <!-- 右侧主内容区 (Main Content) -->
+      <main class="flex-1 flex flex-col min-h-screen overflow-y-auto">
+        
+        <!-- 顶部状态栏 -->
+        <header class="h-16 border-b border-slate-800/80 bg-[#0d1322]/80 backdrop-blur-md px-6 flex items-center justify-between shrink-0 sticky top-0 z-20">
+          <div class="flex items-center gap-3">
+            <h1 class="text-base font-bold text-white flex items-center gap-2">
+              <span>{{ sectionTitles[activeSection] }}</span>
+            </h1>
+          </div>
+
+          <!-- 系统状态胶囊 & 刷新 -->
+          <div class="flex items-center gap-3">
+            <div class="hidden sm:flex items-center gap-2 px-3 py-1 rounded-full bg-slate-900 border border-slate-800 text-[11px] text-slate-400">
+              <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+              <span>SQLite WAL 模式 (事务并发防护)</span>
+            </div>
+            <button 
+              @click="refreshCurrentSection" 
+              :disabled="loading" 
+              class="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800 transition">
+              <i data-lucide="refresh-cw" :class="loading ? 'animate-spin' : ''" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </header>
+
+        <!-- 内容视窗容器 -->
+        <div class="p-6 max-w-7xl w-full mx-auto space-y-6">
+
+          <!-- 1. 系统概览视图 (Overview) -->
+          <section v-if="activeSection === 'overview'" class="space-y-6">
+            
+            <!-- KPI 核心指标卡 -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 shadow-sm">
+                <div class="flex items-center justify-between text-slate-400 mb-2">
+                  <span class="text-xs font-medium">总注册用户</span>
+                  <i data-lucide="users" class="w-4 h-4 text-indigo-400"></i>
+                </div>
+                <div class="text-2xl font-bold font-mono text-white">{{ overview.totalUsers || 0 }}</div>
+                <div class="mt-2 text-[11px] text-emerald-400 flex items-center gap-1">
+                  <i data-lucide="check" class="w-3 h-3"></i>
+                  <span>正常活跃: {{ overview.activeUsers || 0 }} 人</span>
+                </div>
+              </div>
+
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 shadow-sm">
+                <div class="flex items-center justify-between text-slate-400 mb-2">
+                  <span class="text-xs font-medium">累计渲染任务</span>
+                  <i data-lucide="cpu" class="w-4 h-4 text-purple-400"></i>
+                </div>
+                <div class="text-2xl font-bold font-mono text-white">{{ overview.totalTasks || 0 }}</div>
+                <div class="mt-2 text-[11px] text-slate-400">今日新增: {{ overview.todayTasks || 0 }} 次</div>
+              </div>
+
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 shadow-sm">
+                <div class="flex items-center justify-between text-slate-400 mb-2">
+                  <span class="text-xs font-medium">累计代币消耗</span>
+                  <i data-lucide="coins" class="w-4 h-4 text-amber-400"></i>
+                </div>
+                <div class="text-2xl font-bold font-mono text-amber-400">{{ overview.totalCoinsUsed || 0 }}</div>
+                <div class="mt-2 text-[11px] text-slate-400">成功完成: {{ overview.successTasks || 0 }} 笔</div>
+              </div>
+
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 shadow-sm">
+                <div class="flex items-center justify-between text-slate-400 mb-2">
+                  <span class="text-xs font-medium">Cloudflare 防御</span>
+                  <i data-lucide="shield" class="w-4 h-4 text-cyan-400"></i>
+                </div>
+                <div class="text-sm font-bold flex items-center gap-1.5 mt-1">
+                  <span v-if="overview.turnstileConfigured && overview.turnstileEnabled" class="text-emerald-400 flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span> 强效防护中
+                  </span>
+                  <span v-else-if="overview.turnstileConfigured" class="text-amber-400 flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-amber-400"></span> 已配置(未启用)
+                  </span>
+                  <span v-else class="text-slate-500 flex items-center gap-1">
+                    <span class="w-2 h-2 rounded-full bg-slate-600"></span> 未绑定
+                  </span>
+                </div>
+                <div class="mt-2 text-[11px] text-slate-500 font-mono truncate">
+                  {{ overview.turnstileSiteKey || '前往安全设置绑定' }}
+                </div>
+              </div>
+
+            </div>
+
+            <!-- 系统运行环境与存储架构详情 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              <!-- 存储与高并发保护状态 -->
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                  <i data-lucide="database" class="w-4 h-4 text-indigo-400"></i>
+                  <span>底层数据持久化架构 (SQLite WAL)</span>
+                </h3>
+                <div class="space-y-2 text-xs">
+                  <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span class="text-slate-400">数据库模式</span>
+                    <span class="font-mono text-emerald-400 font-semibold">SQLite 3 (PRAGMA journal_mode = WAL)</span>
+                  </div>
+                  <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span class="text-slate-400">并发保障</span>
+                    <span class="text-slate-300">预写日志并发读写，零锁冲突，ACID 事务落盘</span>
+                  </div>
+                  <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span class="text-slate-400">密码哈希算法</span>
+                    <span class="font-mono text-indigo-300">PBKDF2-HMAC-SHA256 (100,000 次高强度迭代)</span>
+                  </div>
+                  <div class="flex justify-between py-1.5 border-b border-slate-800">
+                    <span class="text-slate-400">暴力破解防御</span>
+                    <span class="text-slate-300">内存滑动窗口限流器 (15分钟 5 次连续失败即锁定)</span>
+                  </div>
+                  <div class="flex justify-between py-1.5">
+                    <span class="text-slate-400">敏感秘钥落盘</span>
+                    <span class="text-slate-300">Fernet AES-256 全文硬件级对称加密</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 快捷开关控制台 -->
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
+                <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                  <i data-lucide="sliders" class="w-4 h-4 text-purple-400"></i>
+                  <span>站点全局控制开关</span>
+                </h3>
+
+                <div class="space-y-3">
+                  <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <div>
+                      <div class="text-xs font-bold text-white">允许新用户注册</div>
+                      <div class="text-[11px] text-slate-400">关闭后仅现有用户或管理员可登录</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" v-model="systemConfig.allowRegistration" @change="saveSystemSettingsQuick" class="sr-only peer">
+                      <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+
+                  <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <div>
+                      <div class="text-xs font-bold text-white">生图操作强制登录</div>
+                      <div class="text-[11px] text-slate-400">开启后未登录用户无法提交工作流任务</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" v-model="systemConfig.requireLoginToGenerate" @change="saveSystemSettingsQuick" class="sr-only peer">
+                      <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+
+                  <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <div>
+                      <div class="text-xs font-bold text-white">Cloudflare Turnstile 验证盾</div>
+                      <div class="text-[11px] text-slate-400">登录与注册页面无感人机拦截</div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                      <input type="checkbox" v-model="systemConfig.turnstileEnabled" @change="saveSystemSettingsQuick" class="sr-only peer">
+                      <div class="w-9 h-5 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                    </label>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+
+          </section>
+
+          <!-- 2. 用户管理视图 (Users) -->
+          <section v-if="activeSection === 'users'" class="space-y-4">
+            
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
+              
+              <!-- 顶部工具栏 -->
+              <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                <div class="flex items-center gap-2">
+                  <h3 class="text-sm font-bold text-white">注册用户全景列表</h3>
+                  <span class="text-xs text-slate-500">共 {{ users.length }} 名用户</span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <div class="relative flex-1 sm:w-64">
+                    <input 
+                      type="text" 
+                      v-model="userSearchQuery" 
+                      placeholder="搜索用户名或邮箱..." 
+                      class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-1.5 pl-8 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                    <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5"></i>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 用户数据表格 -->
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead>
+                    <tr class="border-b border-slate-800 text-slate-400">
+                      <th class="py-3 px-3">用户档案</th>
+                      <th class="py-3 px-3">角色权限</th>
+                      <th class="py-3 px-3">剩余点数</th>
+                      <th class="py-3 px-3">任务总数</th>
+                      <th class="py-3 px-3">注册时间</th>
+                      <th class="py-3 px-3">账号状态</th>
+                      <th class="py-3 px-3 text-right">管理操作</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-800/60">
+                    <tr v-for="u in filteredUsers" :key="u.id" class="hover:bg-slate-800/30 transition">
+                      <td class="py-3 px-3">
+                        <div class="flex items-center gap-2.5">
+                          <div class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 font-bold flex items-center justify-center shrink-0">
+                            {{ u.username.slice(0, 1).toUpperCase() }}
+                          </div>
+                          <div>
+                            <div class="font-bold text-white">{{ u.username }}</div>
+                            <div class="text-[10px] text-slate-500">{{ u.email || '未绑定邮箱' }}</div>
+                          </div>
+                        </div>
+                      </td>
+                      <td class="py-3 px-3">
+                        <span :class="u.role === 'admin' ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60' : 'bg-slate-800 text-slate-300'" class="px-2 py-0.5 rounded text-[10px] font-bold">
+                          {{ u.role === 'admin' ? '👑 超级管理员' : '👤 普通用户' }}
+                        </span>
+                      </td>
+                      <td class="py-3 px-3 font-mono font-bold text-amber-400">{{ u.points }}</td>
+                      <td class="py-3 px-3 font-mono text-slate-300">{{ u.taskCount || 0 }}</td>
+                      <td class="py-3 px-3 text-slate-400">{{ formatTimestamp(u.createdAt) }}</td>
+                      <td class="py-3 px-3">
+                        <span :class="u.isActive ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' : 'text-rose-400 bg-rose-500/10 border-rose-500/20'" class="px-2 py-0.5 rounded text-[10px] border">
+                          {{ u.isActive ? '正常启用' : '已停用' }}
+                        </span>
+                      </td>
+                      <td class="py-3 px-3 text-right space-x-1">
+                        <button @click="openEditPoints(u)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]">点数</button>
+                        <button @click="toggleUserRole(u)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]">
+                          {{ u.role === 'admin' ? '降为用户' : '升为管理' }}
+                        </button>
+                        <button @click="toggleUserActive(u)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]">
+                          {{ u.isActive ? '停用' : '解封' }}
+                        </button>
+                        <button @click="openResetPassword(u)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]">改密</button>
+                      </td>
+                    </tr>
+                    <tr v-if="filteredUsers.length === 0">
+                      <td colspan="7" class="py-8 text-center text-slate-500">
+                        未匹配到符合条件的用户记录
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+
+          </section>
+
+          <!-- 3. 安全防御 & Cloudflare Turnstile 视图 (Security) -->
+          <section v-if="activeSection === 'security'" class="space-y-6">
+            
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-6 space-y-6">
+              
+              <div>
+                <h3 class="text-base font-bold text-white flex items-center gap-2">
+                  <i data-lucide="shield-check" class="w-5 h-5 text-indigo-400"></i>
+                  <span>Cloudflare Turnstile 智能人机防护配置</span>
+                </h3>
+                <p class="text-xs text-slate-400 mt-1">
+                  Turnstile 是 Cloudflare 提供的下一代人机无感验证（完美替代传统图片验证码）。保护您的登录和注册接口免受自动化机器人、暴力碰撞和恶意注册的攻击。
+                </p>
+              </div>
+
+              <!-- 主开关与 Key 配置 -->
+              <div class="space-y-4 max-w-2xl">
+                
+                <div class="flex items-center justify-between p-4 rounded-xl bg-slate-950 border border-slate-800">
+                  <div>
+                    <div class="text-xs font-bold text-white">Turnstile 防御总开关</div>
+                    <div class="text-[11px] text-slate-400">开启后登录与注册必须通过 Cloudflare 校验</div>
+                  </div>
+                  <input type="checkbox" v-model="systemConfig.turnstileEnabled" class="w-5 h-5 accent-indigo-500 cursor-pointer">
+                </div>
+
+                <div>
+                  <label class="block text-xs font-medium text-slate-300 mb-1.5">Cloudflare Site Key (前端站点公钥)</label>
+                  <input 
+                    type="text" 
+                    v-model="systemConfig.turnstileSiteKey" 
+                    placeholder="例如: 0x4AAAAAAAx..." 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+                </div>
+
+                <div>
+                  <div class="flex items-center justify-between mb-1.5">
+                    <label class="block text-xs font-medium text-slate-300">Cloudflare Secret Key (后端私钥)</label>
+                    <span v-if="systemConfig.hasTurnstileSecret" class="text-[10px] text-emerald-400 font-mono">
+                      ✓ 已 AES-256 安全加密存储 (留空表示不修改)
+                    </span>
+                  </div>
+                  <input 
+                    type="password" 
+                    v-model="systemConfig.turnstileSecretKey" 
+                    :placeholder="systemConfig.turnstileSecretKeyMasked ? ('当前密文: ' + systemConfig.turnstileSecretKeyMasked) : '输入 0x4AAAAAA... 私钥'" 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+                </div>
+
+                <div class="pt-2">
+                  <button 
+                    @click="saveSystemSettings" 
+                    :disabled="savingSettings" 
+                    class="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 disabled:opacity-50 transition flex items-center gap-2">
+                    <i v-if="savingSettings" data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+                    <span>保存并更新安全配置</span>
+                  </button>
+                </div>
+
+              </div>
+
+              <!-- 申请引导 -->
+              <div class="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 text-xs text-slate-400 space-y-2">
+                <div class="font-bold text-slate-200">📌 如何获取免费的 Cloudflare Turnstile Key？</div>
+                <ol class="list-decimal list-inside space-y-1 text-[11px] leading-relaxed text-slate-400">
+                  <li>登录 <a href="https://dash.cloudflare.com" target="_blank" class="text-indigo-400 underline">Cloudflare 控制台</a>，在左侧菜单点击 <strong>Turnstile</strong>。</li>
+                  <li>点击 <strong>Add Widget (添加小部件)</strong>，输入站点域名（本地测试支持填入 <code class="text-indigo-300 font-mono">localhost</code> 或服务器 IP）。</li>
+                  <li>验证模式选择 <strong>Managed (托管无感模式)</strong> 即可。</li>
+                  <li>创建完成后复制 <strong>Site Key</strong> 和 <strong>Secret Key</strong> 粘贴至上方输入框保存即可生效！</li>
+                </ol>
+              </div>
+
+            </div>
+
+          </section>
+
+          <!-- 4. 全局任务审计流视图 (Tasks) -->
+          <section v-if="activeSection === 'tasks'" class="space-y-4">
+            
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
+              
+              <div class="flex items-center justify-between">
+                <div>
+                  <h3 class="text-sm font-bold text-white">平台全量任务流水监控</h3>
+                  <p class="text-xs text-slate-500">审计所有用户的 ComfyUI 运行记录、耗费算力币及输出图片</p>
+                </div>
+                <button @click="loadTasks" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">
+                  刷新审计表
+                </button>
+              </div>
+
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead>
+                    <tr class="border-b border-slate-800 text-slate-400">
+                      <th class="py-3 px-3">任务 ID / 用户</th>
+                      <th class="py-3 px-3">工作流模型</th>
+                      <th class="py-3 px-3">状态</th>
+                      <th class="py-3 px-3">耗时 / 代币</th>
+                      <th class="py-3 px-3">产出预览</th>
+                      <th class="py-3 px-3">创建时间</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-800/60">
+                    <tr v-for="t in allTasks" :key="t.taskId" class="hover:bg-slate-800/30 transition">
+                      <td class="py-3 px-3">
+                        <div class="font-mono text-indigo-400 font-bold truncate max-w-[150px]">{{ t.taskId }}</div>
+                        <div class="text-[10px] text-slate-400">用户: <span class="text-slate-200">{{ t.username || '匿名' }}</span></div>
+                      </td>
+                      <td class="py-3 px-3">
+                        <div class="font-semibold text-white">{{ t.workflowName || '未命名工作流' }}</div>
+                        <div class="text-[10px] text-slate-500 font-mono">{{ t.workflowId }}</div>
+                      </td>
+                      <td class="py-3 px-3">
+                        <span :class="getStatusBadge(t.status)" class="px-2 py-0.5 rounded text-[10px] font-bold">
+                          {{ t.status }}
+                        </span>
+                      </td>
+                      <td class="py-3 px-3 font-mono">
+                        <div>{{ t.duration || 0 }}s</div>
+                        <div class="text-[10px] text-amber-400">{{ t.consumeCoins || '0' }} 币</div>
+                      </td>
+                      <td class="py-3 px-3">
+                        <div v-if="t.outputs && t.outputs.length" class="flex items-center gap-1">
+                          <img 
+                            v-for="(out, idx) in t.outputs.slice(0, 2)" 
+                            :key="idx" 
+                            :src="out.fileUrl || out.url" 
+                            class="w-8 h-8 rounded object-cover border border-slate-700">
+                          <span v-if="t.outputs.length > 2" class="text-[10px] text-slate-500">+{{ t.outputs.length - 2 }}</span>
+                        </div>
+                        <span v-else class="text-[10px] text-slate-600">无产出</span>
+                      </td>
+                      <td class="py-3 px-3 text-slate-400">
+                        {{ formatTimestamp(t.createdAt) }}
+                      </td>
+                    </tr>
+                    <tr v-if="allTasks.length === 0">
+                      <td colspan="6" class="py-8 text-center text-slate-500">
+                        暂无全量任务记录
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+
+          </section>
+
+          <!-- 5. 密钥池调度视图 (Keys) -->
+          <section v-if="activeSection === 'keys'" class="space-y-4">
+            
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
+              
+              <div class="flex items-center justify-between">
+                <div>
+                  <h3 class="text-sm font-bold text-white">RunningHub API 密钥池安全管理</h3>
+                  <p class="text-xs text-slate-400">所有密钥均经由 AES-256 高强度对称加密落盘，保护算力资产安全</p>
+                </div>
+                <button @click="showAddKeyModal = true" class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition flex items-center gap-1.5">
+                  <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                  <span>添加新密钥</span>
+                </button>
+              </div>
+
+              <!-- 密钥列表表格 -->
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead>
+                    <tr class="border-b border-slate-800 text-slate-400">
+                      <th class="py-3 px-3">密钥名称</th>
+                      <th class="py-3 px-3">安全掩码</th>
+                      <th class="py-3 px-3">当前状态</th>
+                      <th class="py-3 px-3">添加时间</th>
+                      <th class="py-3 px-3 text-right">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-800/60">
+                    <tr v-for="k in keys" :key="k.id" class="hover:bg-slate-800/30 transition">
+                      <td class="py-3 px-3 font-semibold text-white">{{ k.name }}</td>
+                      <td class="py-3 px-3 font-mono text-indigo-300">{{ k.maskedKey }}</td>
+                      <td class="py-3 px-3">
+                        <span v-if="k.isActive" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          正在生效调用
+                        </span>
+                        <span v-else class="text-[10px] text-slate-500">备用密钥</span>
+                      </td>
+                      <td class="py-3 px-3 text-slate-400">{{ formatTimestamp(k.createdAt) }}</td>
+                      <td class="py-3 px-3 text-right space-x-1">
+                        <button v-if="!k.isActive" @click="setActiveKey(k.id)" class="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px]">设为默认</button>
+                        <button @click="deleteKey(k.id)" class="px-2 py-1 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 text-[11px]">删除</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+
+          </section>
+
+        </div>
+
+      </main>
+
+      <!-- 弹窗 1: 编辑用户点数 -->
+      <div v-if="editPointsModal.show" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full space-y-4">
+          <h3 class="text-sm font-bold text-white">调整用户代币点数</h3>
+          <p class="text-xs text-slate-400">正在为用户 <strong class="text-indigo-400">{{ editPointsModal.username }}</strong> 修改点数：</p>
+          <input 
+            type="number" 
+            v-model.number="editPointsModal.points" 
+            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-indigo-500">
+          <div class="flex justify-end gap-2 pt-2">
+            <button @click="editPointsModal.show = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 text-slate-300">取消</button>
+            <button @click="submitEditPoints" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">确认保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 弹窗 2: 重置用户密码 -->
+      <div v-if="resetPwdModal.show" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full space-y-4">
+          <h3 class="text-sm font-bold text-white">重置用户登录密码</h3>
+          <p class="text-xs text-slate-400">为用户 <strong class="text-indigo-400">{{ resetPwdModal.username }}</strong> 设定全新登录密码：</p>
+          <input 
+            type="password" 
+            v-model="resetPwdModal.newPassword" 
+            placeholder="输入新密码 (至少 6 位)" 
+            class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-indigo-500">
+          <div class="flex justify-end gap-2 pt-2">
+            <button @click="resetPwdModal.show = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 text-slate-300">取消</button>
+            <button @click="submitResetPassword" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">确认重置</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 弹窗 3: 添加 API Key -->
+      <div v-if="showAddKeyModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-4">
+          <h3 class="text-sm font-bold text-white">添加 RunningHub API Key</h3>
+          <div class="space-y-3 text-xs">
+            <div>
+              <label class="block text-slate-300 mb-1">密钥标签名称</label>
+              <input type="text" v-model="newKeyForm.name" placeholder="例如: 生产主密钥" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+            </div>
+            <div>
+              <label class="block text-slate-300 mb-1">API 密钥明文 (提交后将立即进行 AES-256 加密)</label>
+              <input type="password" v-model="newKeyForm.apiKey" placeholder="输入 RunningHub Key" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 font-mono text-white">
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <button @click="showAddKeyModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 text-slate-300">取消</button>
+            <button @click="submitAddKey" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">加密保存</button>
+          </div>
+        </div>
+      </div>
+
+    </template>
+
+  </div>
+
+  <script>
+    const { createApp, ref, computed, onMounted, nextTick } = Vue;
+
+    createApp({
+      setup() {
+        const authChecked = ref(false);
+        const currentUser = ref(null);
+        const activeSection = ref('overview');
+        const loading = ref(false);
+        const savingSettings = ref(false);
+
+        const sectionTitles = {
+          overview: '系统运行概览',
+          users: '用户管理中心',
+          security: '云端防御 & Cloudflare Turnstile',
+          tasks: '全局任务流水审计',
+          keys: 'API 密钥池调度'
+        };
+
+        const overview = ref({});
+        const users = ref([]);
+        const userSearchQuery = ref('');
+        const allTasks = ref([]);
+        const keys = ref([]);
+
+        const systemConfig = ref({
+          siteTitle: 'RunningHub Cloud Studio',
+          allowRegistration: true,
+          requireLoginToGenerate: false,
+          turnstileEnabled: false,
+          turnstileSiteKey: '',
+          turnstileSecretKey: '',
+          hasTurnstileSecret: false,
+          turnstileSecretKeyMasked: ''
+        });
+
+        // 弹窗状态
+        const editPointsModal = ref({ show: false, userId: '', username: '', points: 0 });
+        const resetPwdModal = ref({ show: false, userId: '', username: '', newPassword: '' });
+        const showAddKeyModal = ref(false);
+        const newKeyForm = ref({ name: '', apiKey: '' });
+
+        const refreshIcons = () => {
+          nextTick(() => {
+            if (window.lucide) {
+              window.lucide.createIcons();
+            }
+          });
+        };
+
+        // 统一鉴权 Fetch
+        const authFetch = async (url, options = {}) => {
+          const token = localStorage.getItem('rh_auth_token');
+          options.headers = {
+            ...options.headers,
+            'Authorization': token ? `Bearer ${token}` : ''
+          };
+          const res = await fetch(url, options);
+          if (res.status === 401) {
+            localStorage.removeItem('rh_auth_token');
+            window.location.href = '/sign-in?redirect=/admin';
+            throw new Error('未授权');
+          }
+          return res;
+        };
+
+        // 检查管理员身份
+        const checkAdminAuth = async () => {
+          const token = localStorage.getItem('rh_auth_token');
+          if (!token) {
+            window.location.href = '/sign-in?redirect=/admin';
+            return;
+          }
+          try {
+            const res = await authFetch('/api/auth/me');
+            if (res.ok) {
+              const u = await res.json();
+              currentUser.value = u;
+              if (u.role !== 'admin') {
+                authChecked.value = true;
+                return;
+              }
+            } else {
+              window.location.href = '/sign-in?redirect=/admin';
+              return;
+            }
+          } catch (e) {
+            window.location.href = '/sign-in?redirect=/admin';
+            return;
+          }
+          authChecked.value = true;
+          loadAllData();
+        };
+
+        // 加载全部初始数据
+        const loadAllData = async () => {
+          loading.value = true;
+          try {
+            await Promise.all([
+              loadOverview(),
+              loadUsers(),
+              loadSystemSettings(),
+              loadTasks(),
+              loadKeys()
+            ]);
+          } finally {
+            loading.value = false;
+            refreshIcons();
+          }
+        };
+
+        const loadOverview = async () => {
+          const res = await authFetch('/api/admin/overview');
+          if (res.ok) overview.value = await res.json();
+        };
+
+        const loadUsers = async () => {
+          const res = await authFetch('/api/admin/users');
+          if (res.ok) users.value = await res.json();
+        };
+
+        const loadSystemSettings = async () => {
+          const res = await authFetch('/api/admin/system');
+          if (res.ok) systemConfig.value = await res.json();
+        };
+
+        const loadTasks = async () => {
+          const res = await authFetch('/api/admin/tasks');
+          if (res.ok) allTasks.value = await res.json();
+        };
+
+        const loadKeys = async () => {
+          const res = await authFetch('/api/keys');
+          if (res.ok) keys.value = await res.json();
+        };
+
+        const refreshCurrentSection = () => {
+          loadAllData();
+        };
+
+        const filteredUsers = computed(() => {
+          if (!userSearchQuery.value) return users.value;
+          const q = userSearchQuery.value.toLowerCase();
+          return users.value.filter(u => 
+            (u.username && u.username.toLowerCase().includes(q)) || 
+            (u.email && u.email.toLowerCase().includes(q))
+          );
+        });
+
+        const saveSystemSettings = async () => {
+          savingSettings.value = true;
+          try {
+            const res = await authFetch('/api/admin/system', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(systemConfig.value)
+            });
+            if (res.ok) {
+              const saved = await res.json();
+              systemConfig.value = saved;
+              alert('✓ 系统与 Turnstile 安全配置已成功更新并落盘！');
+            } else {
+              alert('配置更新失败');
+            }
+          } catch (e) {
+            alert('保存异常');
+          } finally {
+            savingSettings.value = false;
+          }
+        };
+
+        const saveSystemSettingsQuick = () => {
+          saveSystemSettings();
+        };
+
+        // 用户管理操作
+        const openEditPoints = (u) => {
+          editPointsModal.value = { show: true, userId: u.id, username: u.username, points: u.points };
+        };
+
+        const submitEditPoints = async () => {
+          try {
+            const res = await authFetch(`/api/admin/users/${editPointsModal.value.userId}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ points: editPointsModal.value.points })
+            });
+            if (res.ok) {
+              editPointsModal.value.show = false;
+              await loadUsers();
+            }
+          } catch (e) {
+            alert('点数修改失败');
+          }
+        };
+
+        const toggleUserRole = async (u) => {
+          const newRole = u.role === 'admin' ? 'user' : 'admin';
+          if (!confirm(`确定将用户 ${u.username} 的权限修改为【${newRole === 'admin' ? '超级管理员' : '普通用户'}】吗？`)) return;
+          try {
+            const res = await authFetch(`/api/admin/users/${u.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ role: newRole })
+            });
+            if (res.ok) await loadUsers();
+          } catch (e) {
+            alert('角色修改失败');
+          }
+        };
+
+        const toggleUserActive = async (u) => {
+          try {
+            const res = await authFetch(`/api/admin/users/${u.id}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ isActive: !u.isActive })
+            });
+            if (res.ok) await loadUsers();
+          } catch (e) {
+            alert('状态更新失败');
+          }
+        };
+
+        const openResetPassword = (u) => {
+          resetPwdModal.value = { show: true, userId: u.id, username: u.username, newPassword: '' };
+        };
+
+        const submitResetPassword = async () => {
+          if (!resetPwdModal.value.newPassword || resetPwdModal.value.newPassword.length < 6) {
+            alert('密码长度至少 6 位');
+            return;
+          }
+          try {
+            const res = await authFetch(`/api/admin/users/${resetPwdModal.value.userId}/reset-password`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ newPassword: resetPwdModal.value.newPassword })
+            });
+            if (res.ok) {
+              alert('✓ 密码已成功重置！');
+              resetPwdModal.value.show = false;
+            }
+          } catch (e) {
+            alert('重置密码失败');
+          }
+        };
+
+        // 密钥池操作
+        const submitAddKey = async () => {
+          if (!newKeyForm.value.apiKey.trim()) return;
+          try {
+            const res = await authFetch('/api/keys', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(newKeyForm.value)
+            });
+            if (res.ok) {
+              showAddKeyModal.value = false;
+              newKeyForm.value = { name: '', apiKey: '' };
+              await loadKeys();
+            }
+          } catch (e) {
+            alert('密钥添加失败');
+          }
+        };
+
+        const setActiveKey = async (keyId) => {
+          try {
+            const res = await authFetch(`/api/keys/${keyId}/activate`, { method: 'POST' });
+            if (res.ok) await loadKeys();
+          } catch (e) {
+            alert('切换失败');
+          }
+        };
+
+        const deleteKey = async (keyId) => {
+          if (!confirm('确定删除此 API 密钥吗？')) return;
+          try {
+            const res = await authFetch(`/api/keys/${keyId}`, { method: 'DELETE' });
+            if (res.ok) await loadKeys();
+          } catch (e) {
+            alert('删除失败');
+          }
+        };
+
+        const logout = () => {
+          localStorage.removeItem('rh_auth_token');
+          localStorage.removeItem('rh_auth_user');
+          window.location.href = '/sign-in';
+        };
+
+        const formatTimestamp = (ts) => {
+          if (!ts) return '-';
+          const d = new Date(ts * 1000);
+          return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        };
+
+        const getStatusBadge = (status) => {
+          switch (status) {
+            case 'SUCCESS': return 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30';
+            case 'RUNNING': return 'bg-indigo-500/15 text-indigo-400 border border-indigo-500/30';
+            case 'FAILED': return 'bg-rose-500/15 text-rose-400 border border-rose-500/30';
+            default: return 'bg-slate-800 text-slate-400';
+          }
+        };
+
+        onMounted(() => {
+          checkAdminAuth();
+        });
+
+        return {
+          authChecked,
+          currentUser,
+          activeSection,
+          sectionTitles,
+          loading,
+          savingSettings,
+          overview,
+          users,
+          userSearchQuery,
+          filteredUsers,
+          allTasks,
+          keys,
+          systemConfig,
+          editPointsModal,
+          resetPwdModal,
+          showAddKeyModal,
+          newKeyForm,
+          refreshCurrentSection,
+          loadTasks,
+          saveSystemSettings,
+          saveSystemSettingsQuick,
+          openEditPoints,
+          submitEditPoints,
+          toggleUserRole,
+          toggleUserActive,
+          openResetPassword,
+          submitResetPassword,
+          submitAddKey,
+          setActiveKey,
+          deleteKey,
+          logout,
+          formatTimestamp,
+          getStatusBadge
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>

@@ -10,6 +10,12 @@
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <!-- Cloudflare Turnstile 人机安全验证 -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+  <script>
+    // 强制鉴权路由守卫：未登录直接拦截并进入独立登录/注册门户
+    if (!localStorage.getItem('rh_auth_token')) {
+      window.location.replace('/sign-in?redirect=' + encodeURIComponent(window.location.pathname + window.location.search));
+    }
+  </script>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-indigo-500 selection:text-white antialiased">
@@ -63,26 +69,25 @@
           class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
           <span>⚙️</span> <span>密钥设置</span>
         </button>
-        <!-- 仅管理员可见后台管理入口 -->
-        <button 
+        <!-- 管理员直达独立后台系统入口 -->
+        <a 
           v-if="currentUser && currentUser.role === 'admin'"
-          @click="switchTab('admin')"
-          :class="activeTab === 'admin' ? 'bg-amber-600 text-white shadow font-bold' : 'text-amber-400 hover:text-amber-300'"
-          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
-          <span>🛡️</span> <span>后台管理</span>
-        </button>
+          href="/admin"
+          class="px-3 sm:px-3.5 py-1.5 rounded-lg bg-amber-500/10 text-amber-300 border border-amber-500/30 hover:bg-amber-500/20 transition font-semibold flex items-center gap-1.5 shadow-sm">
+          <span>👑</span> <span>管理后台</span>
+        </a>
       </nav>
 
       <!-- 右侧 用户登录状态 + 密钥状态 -->
       <div class="flex items-center gap-2 sm:gap-3 flex-shrink-0">
-        <!-- 未登录状态：Moyuu 风格醒目登录/注册按钮 -->
-        <button 
+        <!-- 未登录状态：跳转独立登录/注册门户 -->
+        <a 
           v-if="!currentUser"
-          @click="openAuthModal('signin')"
+          href="/sign-in"
           class="flex items-center gap-1.5 text-xs bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-3 sm:px-3.5 py-1.5 rounded-full font-semibold shadow-md shadow-indigo-600/25 transition active:scale-95">
           <span>✨</span>
           <span>登录 / 注册</span>
-        </button>
+        </a>
 
         <!-- 已登录状态：用户个人档案下拉浮层 -->
         <div v-else class="relative">
@@ -118,12 +123,12 @@
             </div>
 
             <div class="py-1">
-              <button 
+              <a 
                 v-if="currentUser.role === 'admin'"
-                @click="switchTab('admin'); showUserDropdown = false"
+                href="/admin"
                 class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-amber-300 flex items-center gap-2 transition font-medium">
-                <span>🛡️</span> <span>开发者后台管理</span>
-              </button>
+                <span>👑</span> <span>开发者后台管理</span>
+              </a>
               <button 
                 @click="openChangePwdModal" 
                 class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-slate-300 flex items-center gap-2 transition">
@@ -229,14 +234,13 @@
         <span class="text-base">🖼</span>
         <span>画廊</span>
       </button>
-      <button 
+      <a 
         v-if="currentUser && currentUser.role === 'admin'"
-        @click="switchTab('admin')" 
-        :class="activeTab === 'admin' ? 'text-amber-400 font-bold' : 'text-slate-400'"
-        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
-        <span class="text-base">🛡️</span>
-        <span>管理</span>
-      </button>
+        href="/admin" 
+        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 text-amber-400 font-bold transition active:scale-95">
+        <span class="text-base">👑</span>
+        <span>后台</span>
+      </a>
       <button 
         v-else
         @click="switchTab('settings')" 
@@ -1154,224 +1158,6 @@
             <li><strong>Git 仓库自动防泄露</strong>：程序已配置 <code class="text-indigo-400">.gitignore</code>，主加密密钥 <code class="text-indigo-400">data/.secret.key</code> 绝不会被推送至公开或私有 Git 仓库。</li>
             <li><strong>局域网与外网反代</strong>：部署在云服务器或 VPS 时，推荐使用 Nginx 配置 HTTPS 证书并设置 Basic Auth 或反向代理端口，实现端到端传输加密。</li>
           </ul>
-        </div>
-      </div>
-
-      <!-- ================= TAB 6: 开发者后台管理 (Admin) ================= -->
-      <div v-show="activeTab === 'admin' && currentUser && currentUser.role === 'admin'" class="max-w-6xl mx-auto space-y-6">
-        <!-- 顶部管理员专属 Banner 与子导航 -->
-        <div class="bg-gradient-to-r from-slate-900 via-indigo-950/40 to-slate-900 border border-indigo-900/50 rounded-2xl p-4 sm:p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <div class="flex items-center gap-2">
-              <span class="text-xl">🛡️</span>
-              <h2 class="text-base sm:text-xl font-bold bg-gradient-to-r from-white via-indigo-200 to-indigo-400 bg-clip-text text-transparent">开发者系统后台管理</h2>
-              <span class="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-2 py-0.5 rounded-full font-mono font-bold">超级管理员</span>
-            </div>
-            <p class="text-xs text-slate-400 mt-1">全局调度监控 · 用户权限与算力分配 · Cloudflare Turnstile 密钥防御中枢</p>
-          </div>
-          <!-- 子标签切换 -->
-          <div class="flex bg-slate-950/80 p-1 rounded-xl border border-slate-800 text-xs self-start sm:self-auto">
-            <button @click="adminTab = 'overview'" :class="adminTab === 'overview' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg transition">📊 概览</button>
-            <button @click="adminTab = 'users'" :class="adminTab === 'users' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg transition">👥 用户 ({{ adminUsers.length }})</button>
-            <button @click="adminTab = 'system'" :class="adminTab === 'system' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg transition">⚙️ 安全设置</button>
-            <button @click="adminTab = 'tasks'" :class="adminTab === 'tasks' ? 'bg-indigo-600 text-white font-bold' : 'text-slate-400 hover:text-white'" class="px-3 py-1.5 rounded-lg transition">📜 全局任务</button>
-          </div>
-        </div>
-
-        <!-- 1. 概览卡片 -->
-        <div v-show="adminTab === 'overview'" class="space-y-6">
-          <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-              <div class="text-xs text-slate-400 flex items-center justify-between"><span>总注册用户</span><span>👥</span></div>
-              <div class="text-2xl font-bold font-mono text-white">{{ adminOverview.totalUsers || 0 }}</div>
-              <div class="text-[11px] text-emerald-400">活跃账户: {{ adminOverview.activeUsers || 0 }} 人</div>
-            </div>
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-              <div class="text-xs text-slate-400 flex items-center justify-between"><span>全平台生成任务</span><span>⚡</span></div>
-              <div class="text-2xl font-bold font-mono text-indigo-400">{{ adminOverview.totalTasks || 0 }}</div>
-              <div class="text-[11px] text-slate-400">今日新增: {{ adminOverview.todayTasks || 0 }} 次</div>
-            </div>
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-              <div class="text-xs text-slate-400 flex items-center justify-between"><span>累计消耗 RH 币</span><span>🪙</span></div>
-              <div class="text-2xl font-bold font-mono text-amber-400">{{ adminOverview.totalCoinsUsed || 0 }}</div>
-              <div class="text-[11px] text-slate-400">成功完成: {{ adminOverview.successTasks || 0 }} 笔</div>
-            </div>
-            <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-1">
-              <div class="text-xs text-slate-400 flex items-center justify-between"><span>Turnstile 人机防御</span><span>🛡️</span></div>
-              <div class="text-sm font-bold mt-1">
-                <span v-if="adminOverview.turnstileConfigured && adminOverview.turnstileEnabled" class="text-emerald-400 flex items-center gap-1">
-                  <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> 正常防御中
-                </span>
-                <span v-else-if="adminOverview.turnstileConfigured" class="text-amber-400 flex items-center gap-1">
-                  <span class="w-2 h-2 rounded-full bg-amber-400"></span> 已配置 (未开启)
-                </span>
-                <span v-else class="text-slate-500 flex items-center gap-1">
-                  <span class="w-2 h-2 rounded-full bg-slate-600"></span> 未配置
-                </span>
-              </div>
-              <div class="text-[11px] text-slate-500 font-mono truncate" :title="adminOverview.turnstileSiteKey">
-                {{ adminOverview.turnstileSiteKey || '点击安全设置绑定' }}
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 2. 用户列表 -->
-        <div v-show="adminTab === 'users'" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>👥 全体注册用户档案</span><span class="text-xs text-slate-500 font-normal">({{ adminUsers.length }} 人)</span></h3>
-            <button @click="fetchAdminUsers" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700 self-start sm:self-auto">刷新列表</button>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs text-slate-300">
-              <thead class="bg-slate-950/80 text-slate-400 uppercase text-[10px] font-mono border-b border-slate-800">
-                <tr>
-                  <th class="p-3">用户</th>
-                  <th class="p-3">邮箱</th>
-                  <th class="p-3">身份角色</th>
-                  <th class="p-3">算力币额度</th>
-                  <th class="p-3">生成次数</th>
-                  <th class="p-3">状态</th>
-                  <th class="p-3">注册时间</th>
-                  <th class="p-3 text-right">管理操作</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-slate-800/60">
-                <tr v-for="u in adminUsers" :key="u.id" class="hover:bg-slate-800/40">
-                  <td class="p-3 font-semibold text-white flex items-center gap-2">
-                    <span class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[10px] font-bold">{{ u.username[0].toUpperCase() }}</span>
-                    <span>{{ u.username }}</span>
-                  </td>
-                  <td class="p-3 text-slate-400 font-mono">{{ u.email || '-' }}</td>
-                  <td class="p-3">
-                    <span :class="u.role === 'admin' ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60' : 'bg-slate-800 text-slate-300'" class="px-2 py-0.5 rounded text-[10px] font-bold">
-                      {{ u.role === 'admin' ? '👑 超级管理员' : '👤 普通用户' }}
-                    </span>
-                  </td>
-                  <td class="p-3 font-mono font-bold text-indigo-400">🪙 {{ u.points }}</td>
-                  <td class="p-3 font-mono text-slate-300">{{ u.taskCount || 0 }} 次</td>
-                  <td class="p-3">
-                    <span :class="u.isActive ? 'text-emerald-400' : 'text-red-400'" class="text-[11px] font-semibold">
-                      {{ u.isActive ? '● 正常' : '✕ 封禁中' }}
-                    </span>
-                  </td>
-                  <td class="p-3 text-slate-500 font-mono text-[11px]">{{ formatTime(u.createdAt) }}</td>
-                  <td class="p-3 text-right space-x-2">
-                    <button @click="openEditUserModal(u)" class="text-indigo-400 hover:text-indigo-300 text-xs font-semibold">编辑</button>
-                    <button v-if="u.id !== currentUser.id" @click="deleteUser(u.id, u.username)" class="text-rose-400 hover:text-rose-300 text-xs font-semibold">删除</button>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- 3. 系统与安全设置 -->
-        <div v-show="adminTab === 'system'" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-6">
-          <div class="border-b border-slate-800 pb-4">
-            <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>⚙️ 系统全局安全与 Cloudflare Turnstile 验证配置</span></h3>
-            <p class="text-xs text-slate-400 mt-1">面向开发者的安全中枢，密钥经由 Fernet AES-256 工业级加密后安全落盘，前端杜绝泄漏。</p>
-          </div>
-
-          <div class="space-y-4 max-w-2xl">
-            <!-- 站点标题 -->
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold text-slate-300">站点自定义标题</label>
-              <input type="text" v-model="adminSystem.siteTitle" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
-            </div>
-
-            <!-- Cloudflare Turnstile 启用开关 -->
-            <div class="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
-              <div>
-                <div class="text-xs font-semibold text-white flex items-center gap-2">
-                  <span>🛡️ 强制启用 Cloudflare Turnstile 人机验证</span>
-                  <span v-if="adminSystem.turnstileEnabled" class="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 rounded">防御开启中</span>
-                </div>
-                <div class="text-[11px] text-slate-400 mt-0.5">开启后，登录与注册界面将自动加载 Turnstile 防御插件，彻底阻断撞库爬虫与恶意机器人注册</div>
-              </div>
-              <input type="checkbox" v-model="adminSystem.turnstileEnabled" class="w-4 h-4 accent-indigo-500 cursor-pointer">
-            </div>
-
-            <!-- Turnstile Site Key -->
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                <span>Cloudflare Turnstile 站点密钥 (Site Key)</span>
-                <span class="text-[10px] text-slate-500 font-mono">公开参数，用于前端挂载</span>
-              </label>
-              <input type="text" v-model="adminSystem.turnstileSiteKey" placeholder="例如: 0x4AAAAAAAx..." class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
-            </div>
-
-            <!-- Turnstile Secret Key -->
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                <span>Cloudflare Turnstile 通信密钥 (Secret Key)</span>
-                <span class="text-[10px] text-emerald-400 font-mono">{{ adminSystem.hasTurnstileSecret ? '✓ 已安全加密存储' : '未设置' }}</span>
-              </label>
-              <input type="password" v-model="adminSystem.turnstileSecretKey" :placeholder="adminSystem.turnstileSecretKeyMasked ? ('当前存储: ' + adminSystem.turnstileSecretKeyMasked + ' (如无需修改请留空)') : '输入 0x4AAAAAA... 私钥'" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
-            </div>
-
-            <!-- 注册开放开关 -->
-            <div class="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
-              <div>
-                <div class="text-xs font-semibold text-white">允许新用户自由注册</div>
-                <div class="text-[11px] text-slate-400 mt-0.5">关闭后，外部访客无法点击注册新账号，仅由管理员在后台添加</div>
-              </div>
-              <input type="checkbox" v-model="adminSystem.allowRegistration" class="w-4 h-4 accent-indigo-500 cursor-pointer">
-            </div>
-
-            <!-- 强制登录生成开关 -->
-            <div class="flex items-center justify-between p-3.5 bg-slate-950 rounded-xl border border-slate-800">
-              <div>
-                <div class="text-xs font-semibold text-white">强制要求登录后方可生成</div>
-                <div class="text-[11px] text-slate-400 mt-0.5">开启后，未登录访客点击生图将自动弹出登录注册窗口</div>
-              </div>
-              <input type="checkbox" v-model="adminSystem.requireLoginToGenerate" class="w-4 h-4 accent-indigo-500 cursor-pointer">
-            </div>
-
-            <!-- 注册赠送额度 -->
-            <div class="space-y-1.5">
-              <label class="text-xs font-semibold text-slate-300">新用户注册默认赠送算力币 (Points)</label>
-              <input type="number" v-model.number="adminSystem.defaultUserPoints" class="w-40 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
-            </div>
-
-            <button @click="saveAdminSystem" class="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/30 transition">保存安全配置</button>
-          </div>
-        </div>
-
-        <!-- 4. 全局任务审计 -->
-        <div v-show="adminTab === 'tasks'" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 sm:p-6 space-y-4">
-          <div class="flex items-center justify-between">
-            <h3 class="text-sm font-bold text-white flex items-center gap-2"><span>📜 全平台任务执行审计流水</span><span class="text-xs text-slate-500 font-normal">({{ tasks.length }} 笔记录)</span></h3>
-            <button @click="refreshTasks" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700">刷新任务</button>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs text-slate-300">
-              <thead class="bg-slate-950/80 text-slate-400 uppercase text-[10px] font-mono border-b border-slate-800">
-                <tr>
-                  <th class="p-3">任务 ID</th>
-                  <th class="p-3">提交用户</th>
-                  <th class="p-3">工作流</th>
-                  <th class="p-3">规格</th>
-                  <th class="p-3">状态</th>
-                  <th class="p-3">耗时</th>
-                  <th class="p-3">消耗</th>
-                  <th class="p-3">提交时间</th>
-                </tr>
-              </thead>
-              <tbody class="divide-y divide-slate-800/60">
-                <tr v-for="t in tasks" :key="t.taskId" class="hover:bg-slate-800/40">
-                  <td class="p-3 font-mono text-indigo-400">{{ t.taskId }}</td>
-                  <td class="p-3 text-white font-medium">{{ t.username || '匿名访客' }}</td>
-                  <td class="p-3 text-slate-300 max-w-[140px] truncate" :title="t.workflowName">{{ t.workflowName }}</td>
-                  <td class="p-3"><span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300">{{ t.taskType || 'Standard' }}</span></td>
-                  <td class="p-3"><span :class="statusBadgeClass(t.status)" class="px-2 py-0.5 rounded text-[10px] font-bold">{{ t.status }}</span></td>
-                  <td class="p-3 font-mono">{{ t.duration || 0 }}s</td>
-                  <td class="p-3 font-mono text-amber-400">{{ t.consumeCoins || 0 }} 币</td>
-                  <td class="p-3 text-slate-500 font-mono text-[10px]">{{ formatTime(t.createdAt) }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
         </div>
       </div>
 
