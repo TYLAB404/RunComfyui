@@ -1,0 +1,33 @@
+{
+  "workflows": [
+    {
+      "id": "2105612272424034306",
+      "name": "Wan2.1 视频生成 (万象2.1 图/视生视)",
+      "description": "基于 Wan2.1 14B 模型，支持参考图、参考视频、提示词、分辨率与全参数微调。",
+      "category": "视频生成"
+    },
+    {
+      "id": "2102338516546416641",
+      "name": "krea2 (暗调胶片人像摄影)",
+      "description": "基于 Krea2-turbo 的暗调胶片人像质感生图工作流，支持中文长提示词，仅需8步极速出图。",
+      "category": "文生图"
+    },
+    {
+      "id": "1904136902449209346",
+      "name": "SDXL 文生图 (基础官方模板)",
+      "description": "标准 SDXL 文生图工作流，支持提示词、步数、尺寸调节，耗时短，RH币消耗低。",
+      "category": "文生图"
+    }
+  ],
+  "apiKeys": [],
+  "activeKeyId": "",
+  "system": {
+    "siteTitle": "RunningHub 智算创作中枢",
+    "turnstileEnabled": false,
+    "turnstileSiteKey": "",
+    "turnstileSecretKeyEncrypted": "",
+    "allowRegistration": true,
+    "defaultUserPoints": 100,
+    "requireLoginToGenerate": false
+  }
+}
