@@ -1019,7 +1019,10 @@
 
         const loadKeys = async () => {
           const res = await authFetch('/api/keys');
-          if (res.ok) keys.value = await res.json();
+          if (res.ok) {
+            const data = await res.json();
+            keys.value = Array.isArray(data) ? data : (data.keys || []);
+          }
         };
 
         const refreshCurrentSection = () => {
