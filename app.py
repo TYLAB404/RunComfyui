@@ -2433,54 +2433,5 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    import socket
-    import threading
-
-    def start_dual_port_bridge(bridge_port: int, target_port: int):
-        """双端口热备桥接：无论用户输入 8000 还是 8080，均能 100% 成功连入主服务"""
-        try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            sock.bind(('0.0.0.0', bridge_port))
-            sock.listen(128)
-            while True:
-                client_sock, _ = sock.accept()
-                def handle_client(c_sock):
-                    try:
-                        remote_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                        remote_sock.connect(('127.0.0.1', target_port))
-                        def pipe(s1, s2):
-                            try:
-                                while True:
-                                    data = s1.recv(8192)
-                                    if not data:
-                                        break
-                                    s2.sendall(data)
-                            except Exception:
-                                pass
-                            finally:
-                                try: s1.close()
-                                except Exception: pass
-                                try: s2.close()
-                                except Exception: pass
-                        threading.Thread(target=pipe, args=(c_sock, remote_sock), daemon=True).start()
-                        threading.Thread(target=pipe, args=(remote_sock, c_sock), daemon=True).start()
-                    except Exception:
-                        try: c_sock.close()
-                        except Exception: pass
-                threading.Thread(target=handle_client, args=(client_sock,), daemon=True).start()
-        except Exception:
-            pass
-
-    port = 8000
-    alt_port = 8080
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        if s.connect_ex(('127.0.0.1', 8000)) == 0:
-            port = 8080
-            alt_port = 8000
-
-    # 启动另一端口的双向桥接透明转发（8000 与 8080 均可无缝访问）
-    threading.Thread(target=start_dual_port_bridge, args=(alt_port, port), daemon=True).start()
-
-    print(f"Starting server on primary port {port} (Bridge port {alt_port})...")
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)
+    # host 0.0.0.0 允许局域网或公网通过服务器 IP / 域名访问
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
