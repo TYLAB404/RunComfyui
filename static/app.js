@@ -500,9 +500,6 @@ createApp({
         console.error('Failed to fetch gallery:', err);
       }
     };
-        console.error('Failed to fetch gallery:', err);
-      }
-    };
 
     // 随机种子
     const randomizeDynamicSeed = () => {
