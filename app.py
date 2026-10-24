@@ -1305,13 +1305,13 @@ class WorkflowModel(BaseModel):
     defaultParams: Optional[Dict[str, Any]] = None
 
 @app.post("/api/workflows")
-def add_or_update_workflow(wf: WorkflowModel, _: Dict[str, Any] = Depends(get_current_admin)):
-    """添加或修改工作流（仅限管理员）"""
+def add_or_update_workflow(wf: WorkflowModel, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
+    """添加或修改工作流"""
     cfg = load_config()
     workflows = cfg.get("workflows", [])
     existing = False
     for i, w in enumerate(workflows):
-        if w.get("id") == wf.id:
+        if str(w.get("id")) == str(wf.id):
             workflows[i] = wf.dict()
             existing = True
             break
@@ -1322,10 +1322,10 @@ def add_or_update_workflow(wf: WorkflowModel, _: Dict[str, Any] = Depends(get_cu
     return {"status": "ok", "workflow": wf.dict()}
 
 @app.delete("/api/workflows/{workflow_id}")
-def delete_workflow(workflow_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
-    """删除工作流（仅限管理员）"""
+def delete_workflow(workflow_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
+    """删除工作流"""
     cfg = load_config()
-    cfg["workflows"] = [w for w in cfg.get("workflows", []) if w.get("id") != workflow_id]
+    cfg["workflows"] = [w for w in cfg.get("workflows", []) if str(w.get("id")) != str(workflow_id)]
     save_config(cfg)
     return {"status": "ok"}
 
