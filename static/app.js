@@ -933,12 +933,14 @@ createApp({
     };
 
     // 保存新工作流
+    const isAddingWorkflow = ref(false);
     const saveNewWorkflow = async () => {
       if (!newWf.value.id || !newWf.value.name) {
         alert('请填写工作流 ID 与名称');
         return;
       }
 
+      isAddingWorkflow.value = true;
       try {
         const res = await authFetch('/api/workflows', {
           method: 'POST',
@@ -946,7 +948,7 @@ createApp({
           body: JSON.stringify(newWf.value)
         });
         const data = await res.json();
-        if (data.status === 'ok') {
+        if (res.ok && data.status === 'ok') {
           await fetchConfig();
           showAddWorkflowModal.value = false;
           const addedId = newWf.value.id;
@@ -954,9 +956,13 @@ createApp({
           selectedWorkflowId.value = addedId;
           await loadWorkflowSchema(addedId);
           activeTab.value = 'studio';
+        } else {
+          alert('添加失败: ' + (data.detail || JSON.stringify(data)));
         }
       } catch (err) {
-        alert('添加失败: ' + err.message);
+        alert('保存请求发生网络异常: ' + err.message);
+      } finally {
+        isAddingWorkflow.value = false;
       }
     };
 
@@ -1659,6 +1665,7 @@ createApp({
       submitDynamicGeneration,
       saveSettings,
       saveNewWorkflow,
+      isAddingWorkflow,
       autoDetectWorkflow,
       deleteWorkflow,
       inspectWorkflow,
