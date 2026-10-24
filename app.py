@@ -1379,6 +1379,7 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
     latent_nodes = []
     image_nodes = []
     video_nodes = []
+    audio_nodes = []
     quality_nodes = []
     output_nodes = []
     all_editable_nodes = []
@@ -1464,6 +1465,18 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
                     "defaultValue": str(literal_fields.get("video", ""))
                 })
 
+        # 5.1 参考音频输入节点 (LoadAudio / VHS_LoadAudio / AudioLoader / 或包含 audio 参数)
+        if any(k.lower() in ctype.lower() for k in ["loadaudio", "audioloader"]) or any(k in literal_fields for k in ["audio", "audio_file", "audio_path", "sound", "voice", "speech"]):
+            audio_field = next((k for k in ["audio", "audio_file", "audio_path", "sound", "voice", "speech"] if k in literal_fields and isinstance(literal_fields[k], str)), None)
+            if audio_field:
+                audio_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"参考音频输入 #{nid} ({ctype})",
+                    "fieldName": audio_field,
+                    "defaultValue": str(literal_fields.get(audio_field, ""))
+                })
+
         # 6. 画质/基准分辨率节点 (如 PrimitiveInt: 1280)
         if ctype in ("PrimitiveInt", "Int") and "value" in literal_fields:
             val = literal_fields["value"]
@@ -1519,6 +1532,7 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
         latent_nodes = [l for l in latent_nodes if str(l.get("nodeId")) not in hidden_node_ids]
         image_nodes = [im for im in image_nodes if str(im.get("nodeId")) not in hidden_node_ids]
         video_nodes = [vm for vm in video_nodes if str(vm.get("nodeId")) not in hidden_node_ids]
+        audio_nodes = [am for am in audio_nodes if str(am.get("nodeId")) not in hidden_node_ids]
         quality_nodes = [q for q in quality_nodes if str(q.get("nodeId")) not in hidden_node_ids]
         output_nodes = [o for o in output_nodes if str(o.get("nodeId")) not in hidden_node_ids]
         all_editable_nodes = [n for n in all_editable_nodes if str(n.get("nodeId")) not in hidden_node_ids]
@@ -1558,6 +1572,7 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
             "latentNode": latent_nodes[0] if latent_nodes else None,
             "imageNodes": image_nodes,
             "videoNodes": video_nodes,
+            "audioNodes": audio_nodes,
             "qualityNodes": quality_nodes,
             "allEditableNodes": all_editable_nodes
         }
@@ -1890,12 +1905,16 @@ async def upload_file_to_runninghub(
     if not api_key:
         raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中配置启用")
 
-    # 1. 安全扩展名白名单校验
+    # 1. 安全扩展名白名单校验 (支持图片、视频与音频格式)
     filename_raw = file.filename or ""
-    allowed_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".mp4", ".webm", ".mov"}
+    allowed_image_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+    allowed_video_exts = {".mp4", ".webm", ".mov"}
+    allowed_audio_exts = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}
+    allowed_exts = allowed_image_exts | allowed_video_exts | allowed_audio_exts
+
     ext = os.path.splitext(filename_raw)[1].lower()
     if ext not in allowed_exts:
-        raise HTTPException(status_code=400, detail=f"不支持的文件格式: {ext}，仅支持图像与视频文件")
+        raise HTTPException(status_code=400, detail=f"不支持的文件格式: {ext}，支持图像、视频与音频文件 (mp3/wav/flac/ogg/m4a 等)")
 
     # 2. 流式分块读取并限流最大 30MB，彻底免疫内存 DoS
     MAX_UPLOAD_SIZE = 30 * 1024 * 1024
@@ -1924,11 +1943,12 @@ async def upload_file_to_runninghub(
         resp_data = res.json()
         if resp_data.get("code") == 0:
             data = resp_data.get("data", {})
+            inferred_type = "audio" if ext in allowed_audio_exts else ("video" if ext in allowed_video_exts else "image")
             return {
                 "status": "ok",
                 "fileName": data.get("fileName"),
                 "downloadUrl": data.get("download_url"),
-                "fileType": data.get("type", "file")
+                "fileType": data.get("type") or inferred_type
             }
         else:
             raise HTTPException(status_code=400, detail=resp_data.get("msg") or "上传失败")
@@ -2309,13 +2329,22 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
             if fname in seen:
                 continue
             seen.add(fname)
+            ext = os.path.splitext(fname)[1].lower()
+            file_type = out.get("fileType")
+            if not file_type or file_type == "image":
+                if ext in {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}:
+                    file_type = "audio"
+                elif ext in {".mp4", ".webm", ".mov"}:
+                    file_type = "video"
+                else:
+                    file_type = "image"
             items.append({
                 "filename": fname,
                 "url": url,
                 "remoteUrl": out.get("remoteUrl", url),
                 "size": out.get("size", 0),
                 "createdAt": created_at,
-                "fileType": out.get("fileType", "image"),
+                "fileType": file_type,
                 "taskId": t.get("taskId"),
                 "username": t.get("username", "")
             })
@@ -2404,5 +2433,11 @@ app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 if __name__ == "__main__":
     import uvicorn
-    # host 0.0.0.0 允许局域网或公网通过服务器 IP / 域名访问
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    import socket
+    port = 8000
+    # 智能端口检测：若 8000 端口已被其他本地服务占用，自动安全平滑切至 8080
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(('127.0.0.1', 8000)) == 0:
+            port = 8080
+    print(f"Starting server on port {port}...")
+    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=True)

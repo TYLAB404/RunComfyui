@@ -99,6 +99,7 @@ createApp({
     const dynamicLatent = ref(null);
     const dynamicImages = ref([]);
     const dynamicVideos = ref([]);
+    const dynamicAudios = ref([]);
     const dynamicQuality = ref([]);
     const allEditableNodes = ref([]);
 
@@ -174,6 +175,20 @@ createApp({
       if (!out) return false;
       if (out.fileType === 'video' || out.fileType === 'mp4' || out.fileType === 'webm') return true;
       return isVideoUrl(out.url) || isVideoUrl(out.filename);
+    };
+
+    // 判断是否为音频文件/URL
+    const isAudioUrl = (url) => {
+      if (!url) return false;
+      const clean = String(url).split('?')[0].toLowerCase();
+      return ['.mp3', '.wav', '.flac', '.ogg', '.m4a', '.aac', '.wma', '.opus'].some(ext => clean.endsWith(ext));
+    };
+
+    // 判断当前输出对象是否为音频
+    const isAudioOutput = (out) => {
+      if (!out) return false;
+      if (out.fileType === 'audio' || out.fileType === 'mp3' || out.fileType === 'wav') return true;
+      return isAudioUrl(out.url) || isAudioUrl(out.filename);
     };
 
     // 统计用户修改过的参数总数
@@ -348,6 +363,16 @@ createApp({
         isUploading: false
       }));
 
+      // 5.1 动态参考音频输入 (LoadAudio / VHS_LoadAudio 等)
+      dynamicAudios.value = (data.dynamicSchema.audioNodes || []).map(am => ({
+        nodeId: am.nodeId,
+        fieldName: am.fieldName || 'audio',
+        defaultValue: am.defaultValue || '',
+        uploadedFileName: '',
+        previewUrl: null,
+        isUploading: false
+      }));
+
       // 6. 动态画质基准参数 (PrimitiveInt 等)
       dynamicQuality.value = (data.dynamicSchema.qualityNodes || []).map(qm => ({
         nodeId: qm.nodeId,
@@ -435,29 +460,46 @@ createApp({
       await loadWorkflowSchema(selectedWorkflowId.value);
     };
 
-    // 获取任务列表
+    // 获取任务列表 (带增量指纹比对，避免无变动时频繁引起 Vue 虚拟 DOM 遍历与内存抖动)
+    let lastTasksHash = '';
     const refreshTasks = async () => {
       try {
         const res = await authFetch('/api/tasks');
         const data = await res.json();
-        tasks.value = data;
+        if (Array.isArray(data)) {
+          const newHash = data.map(t => `${t.taskId}:${t.status}:${(t.outputs||[]).length}`).join('|');
+          if (newHash !== lastTasksHash) {
+            lastTasksHash = newHash;
+            tasks.value = data;
+          }
 
-        const hasActive = data.some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
-        if (!hasActive) {
-          isGenerating.value = false;
+          const hasActive = data.some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
+          if (!hasActive) {
+            isGenerating.value = false;
+          }
         }
       } catch (err) {
         console.error('Failed to fetch tasks:', err);
       }
     };
 
-    // 获取本地画廊
+    // 获取本地画廊 (带指纹比对，仅在有新产出或增删时触发重绘)
+    let lastGalleryHash = '';
     const refreshGallery = async () => {
       try {
         const res = await authFetch('/api/gallery');
         const data = await res.json();
-        gallery.value = data;
+        if (Array.isArray(data)) {
+          const newHash = data.map(g => `${g.filename}:${g.fileType}`).join('|');
+          if (newHash !== lastGalleryHash) {
+            lastGalleryHash = newHash;
+            gallery.value = data;
+          }
+        }
       } catch (err) {
+        console.error('Failed to fetch gallery:', err);
+      }
+    };
         console.error('Failed to fetch gallery:', err);
       }
     };
@@ -545,6 +587,44 @@ createApp({
       }
     };
 
+    // 参考音频上传处理 (自动上传至 RunningHub OpenAPI 并关联对应节点)
+    const handleNodeAudioUpload = async (event, audNode) => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      audNode.previewUrl = URL.createObjectURL(file);
+      audNode.isUploading = true;
+
+      const formData = new FormData();
+      formData.append('file', file);
+
+      try {
+        const res = await authFetch('/api/upload', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        if (data.status === 'ok') {
+          audNode.uploadedFileName = data.fileName;
+          // 同步写入全节点覆盖字典
+          if (!nodeOverrides.value[audNode.nodeId]) {
+            nodeOverrides.value[audNode.nodeId] = {};
+          }
+          nodeOverrides.value[audNode.nodeId][audNode.fieldName] = data.fileName;
+        } else {
+          alert('音频上传失败: ' + (data.detail || '未知原因'));
+          audNode.previewUrl = null;
+          audNode.uploadedFileName = '';
+        }
+      } catch (err) {
+        alert('音频上传发生异常: ' + err.message);
+        audNode.previewUrl = null;
+        audNode.uploadedFileName = '';
+      } finally {
+        audNode.isUploading = false;
+      }
+    };
+
     // 提交运行生成任务：严格遵循“未修改不注入”铁律，只提交用户确实更改过的参数！
     const submitDynamicGeneration = async () => {
       if (!config.value.hasKey) {
@@ -616,6 +696,16 @@ createApp({
           const vmId = String(vm.nodeId);
           if (nodeOverrides.value[vmId] && originalDefaults.value[vmId]?.[vm.fieldName] !== undefined) {
             nodeOverrides.value[vmId][vm.fieldName] = vm.uploadedFileName;
+          }
+        }
+      });
+
+      // 参考音频
+      dynamicAudios.value.forEach(am => {
+        if (am.uploadedFileName) {
+          const amId = String(am.nodeId);
+          if (nodeOverrides.value[amId] && originalDefaults.value[amId]?.[am.fieldName] !== undefined) {
+            nodeOverrides.value[amId][am.fieldName] = am.uploadedFileName;
           }
         }
       });
@@ -925,7 +1015,8 @@ createApp({
       }
 
       const isVideo = isVideoUrl(url) || (defaultFilename && isVideoUrl(defaultFilename));
-      const fallbackName = defaultFilename || (isVideo ? 'output.mp4' : 'output.png');
+      const isAudio = isAudioUrl(url) || (defaultFilename && isAudioUrl(defaultFilename));
+      const fallbackName = defaultFilename || (isVideo ? 'output.mp4' : (isAudio ? 'output.mp3' : 'output.png'));
 
       try {
         const resp = await fetch(url, { mode: 'cors' });
@@ -1457,6 +1548,7 @@ createApp({
       }
     };
 
+    let galleryTimer = null;
     onMounted(async () => {
       await fetchPublicConfig();
       await fetchCurrentUser();
@@ -1465,15 +1557,26 @@ createApp({
       await refreshTasks();
       await refreshGallery();
 
-      // 定时轮询任务状态与画廊（每 2.5 秒）
-      pollingTimer = setInterval(() => {
-        refreshTasks();
-        refreshGallery();
-      }, 2500);
+      // 智能自适应静默轮询：
+      // 1. 标签页处于后台静默或切换到其他窗口时自动跳过轮询，彻底释放浏览器线程
+      // 2. 有任务运行中时按 3 秒频率轮询任务与画廊；任务空闲时画廊每 10 秒低频同步
+      pollingTimer = setInterval(async () => {
+        if (document.hidden) return;
+        await refreshTasks();
+        const hasActive = (tasks.value || []).some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
+        if (hasActive) {
+          await refreshGallery();
+        }
+      }, 3000);
+
+      galleryTimer = setInterval(() => {
+        if (!document.hidden) refreshGallery();
+      }, 10000);
     });
 
     onUnmounted(() => {
       if (pollingTimer) clearInterval(pollingTimer);
+      if (galleryTimer) clearInterval(galleryTimer);
       if (userEventSource) {
         try { userEventSource.close(); } catch(e){}
         userEventSource = null;
@@ -1523,6 +1626,7 @@ createApp({
       dynamicLatent,
       dynamicImages,
       dynamicVideos,
+      dynamicAudios,
       dynamicQuality,
       allEditableNodes,
       customWorkflow,
@@ -1541,6 +1645,8 @@ createApp({
       newWf,
       isVideoUrl,
       isVideoOutput,
+      isAudioUrl,
+      isAudioOutput,
       isFieldModified,
       resetField,
       resetNode,
@@ -1552,6 +1658,7 @@ createApp({
       randomizeDynamicSeed,
       handleNodeImageUpload,
       handleNodeVideoUpload,
+      handleNodeAudioUpload,
       submitDynamicGeneration,
       saveSettings,
       saveNewWorkflow,

@@ -420,6 +420,41 @@
             </div>
           </div>
 
+          <!-- 3.1 参考音频输入节点 (动态映射) -->
+          <div v-if="dynamicAudios.length > 0" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-4">
+            <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+              <span>🎵 参考音频输入 (Audio Input)</span>
+            </h3>
+            <div v-for="audNode in dynamicAudios" :key="audNode.nodeId" class="space-y-3 p-3 bg-slate-950/60 rounded-xl border border-slate-800/60">
+              <div class="flex items-center justify-between text-xs">
+                <span class="text-slate-200 font-medium flex items-center gap-1.5">
+                  <span>🎧</span>
+                  <span>音频节点 #{{ audNode.nodeId }} ({{ audNode.fieldName }})</span>
+                </span>
+                <span v-if="audNode.isUploading" class="text-indigo-400 animate-pulse text-[11px]">正在上传音频...</span>
+              </div>
+              <div class="flex items-center gap-3">
+                <label class="flex-1 flex items-center justify-center gap-2 p-3 border-2 border-dashed border-slate-700/80 hover:border-indigo-500 rounded-xl cursor-pointer bg-slate-900/50 hover:bg-slate-850 transition">
+                  <span class="text-indigo-400 text-sm">📤</span>
+                  <span class="text-xs text-slate-300 font-medium">选择本地音频 (MP3/WAV/FLAC/OGG/M4A)</span>
+                  <input type="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac" @change="e => handleNodeAudioUpload(e, audNode)" class="hidden" />
+                </label>
+              </div>
+              <div v-if="audNode.previewUrl" class="space-y-1">
+                <audio :src="audNode.previewUrl" controls class="w-full h-8 rounded-lg"></audio>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <span class="text-slate-500 whitespace-nowrap">当前音频名:</span>
+                <input 
+                  type="text" 
+                  :value="audNode.uploadedFileName || audNode.defaultValue"
+                  @input="e => { audNode.uploadedFileName = e.target.value; if (nodeOverrides[audNode.nodeId]) nodeOverrides[audNode.nodeId][audNode.fieldName] = e.target.value; }" 
+                  placeholder="留空则使用工作流默认参考音频"
+                  class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-300 font-mono text-xs focus:outline-none focus:border-indigo-500">
+              </div>
+            </div>
+          </div>
+
           <!-- 4. 画质与分辨率基准控制 (PrimitiveInt / Latent) -->
           <div v-if="dynamicQuality.length > 0 || dynamicLatent" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
             <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
@@ -529,8 +564,8 @@
               </div>
             </div>
 
-            <!-- 折叠展开内容 -->
-            <div v-show="showAllNodes" class="p-4 space-y-4 bg-slate-950/40">
+            <!-- 折叠展开内容 (改用 v-if 懒渲染，折叠时不挂载 DOM，彻底释放浏览器主线程) -->
+            <div v-if="showAllNodes" class="p-4 space-y-4 bg-slate-950/40">
               <div class="flex items-center justify-between gap-3 bg-indigo-950/30 border border-indigo-800/40 p-2.5 rounded-xl text-xs text-indigo-300">
                 <div class="flex items-center gap-2">
                   <span>💡</span>
@@ -742,6 +777,19 @@
                     playsinline 
                     class="w-full h-full object-contain bg-black"></video>
                   
+                  <!-- 音频输出渲染 -->
+                  <div 
+                    v-else-if="isAudioOutput(currentDisplayOutput)" 
+                    class="w-full h-full flex flex-col items-center justify-center p-6 bg-slate-950/90 gap-4">
+                    <div class="w-20 h-20 rounded-full bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-4xl animate-pulse">
+                      🎵
+                    </div>
+                    <div class="text-xs font-mono text-slate-300 truncate max-w-[85%] text-center">
+                      {{ currentDisplayOutput.filename || '音频成果输出' }}
+                    </div>
+                    <audio :src="currentDisplayOutput.url" controls class="w-full max-w-sm"></audio>
+                  </div>
+
                   <!-- 图像输出渲染 -->
                   <img 
                     v-else 
@@ -754,12 +802,13 @@
                     <a 
                       :href="currentDisplayOutput.url" 
                       target="_blank"
-                      :download="currentDisplayOutput.filename || (isVideoOutput(currentDisplayOutput) ? 'output.mp4' : 'output.png')"
+                      :download="currentDisplayOutput.filename || (isVideoOutput(currentDisplayOutput) ? 'output.mp4' : (isAudioOutput(currentDisplayOutput) ? 'output.mp3' : 'output.png'))"
                       @click.prevent="downloadMedia(currentDisplayOutput.url, currentDisplayOutput.filename)"
                       class="pointer-events-auto px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium shadow flex items-center gap-1 cursor-pointer">
-                      <span>⬇</span> <span>{{ isVideoOutput(currentDisplayOutput) ? '下载视频' : '下载原图' }}</span>
+                      <span>⬇</span> <span>{{ isVideoOutput(currentDisplayOutput) ? '下载视频' : (isAudioOutput(currentDisplayOutput) ? '下载音频' : '下载原图') }}</span>
                     </a>
                     <button 
+                      v-if="!isAudioOutput(currentDisplayOutput)"
                       @click="openLightbox(currentDisplayOutput.url)" 
                       class="pointer-events-auto px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-medium">
                       全屏放大
@@ -832,7 +881,7 @@
                   @click="activeOutputIndex = idx"
                   :class="activeOutputIndex === idx ? 'bg-indigo-600 text-white shadow' : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200'"
                   class="text-[11px] px-2.5 py-1 rounded-lg font-mono transition flex items-center gap-1">
-                  <span>{{ isVideoOutput(out) ? '🎬' : '🖼' }}</span>
+                  <span>{{ isVideoOutput(out) ? '🎬' : (isAudioOutput(out) ? '🎵' : '🖼') }}</span>
                   <span>{{ out.isRealtime ? '⚡ 截流预览' : ('Node #' + (out.nodeId || idx)) }}</span>
                 </button>
               </div>
@@ -953,8 +1002,10 @@
                         target="_blank" 
                         class="w-8 h-8 rounded border border-slate-700 overflow-hidden bg-black flex-shrink-0 relative group block">
                         <video v-if="isVideoOutput(out)" :src="out.url" class="w-full h-full object-cover"></video>
+                        <div v-else-if="isAudioOutput(out)" class="w-full h-full flex items-center justify-center bg-indigo-950 text-indigo-400 text-xs">🎵</div>
                         <img v-else :src="out.url" class="w-full h-full object-cover">
                         <span v-if="isVideoOutput(out)" class="absolute bottom-0 right-0 bg-indigo-600/90 text-[8px] text-white px-0.5 font-bold">▶</span>
+                        <span v-else-if="isAudioOutput(out)" class="absolute bottom-0 right-0 bg-emerald-600/90 text-[8px] text-white px-0.5 font-bold">♪</span>
                       </a>
                     </div>
                     <span v-else class="text-slate-600">-</span>
@@ -990,9 +1041,17 @@
 
         <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <div v-for="item in gallery" :key="item.filename" class="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden group relative aspect-square">
+            <!-- 音频项 -->
+            <div 
+              v-if="item.fileType === 'audio' || isAudioOutput(item)" 
+              class="w-full h-full flex flex-col items-center justify-center p-3 bg-slate-950/90 text-center gap-2">
+              <span class="text-3xl text-indigo-400 animate-pulse">🎵</span>
+              <span class="text-[10px] text-slate-300 font-mono truncate max-w-full px-1">{{ item.filename }}</span>
+              <audio :src="item.url" controls class="w-full h-7 mt-1 scale-90"></audio>
+            </div>
             <!-- 视频项 -->
             <video 
-              v-if="item.fileType === 'video' || isVideoUrl(item.url)" 
+              v-else-if="item.fileType === 'video' || isVideoUrl(item.url)" 
               :src="item.url" 
               class="w-full h-full object-cover cursor-pointer" 
               @click="openLightbox(item.url)" 
@@ -1007,7 +1066,8 @@
               class="w-full h-full object-cover cursor-pointer" 
               @click="openLightbox(item.url)">
             
-            <span v-if="item.fileType === 'video' || isVideoUrl(item.url)" class="absolute top-2 left-2 bg-indigo-600/80 text-white text-[10px] px-1.5 py-0.5 rounded font-semibold pointer-events-none">视频</span>
+            <span v-if="item.fileType === 'audio' || isAudioOutput(item)" class="absolute top-2 left-2 bg-emerald-600/80 text-white text-[10px] px-1.5 py-0.5 rounded font-semibold pointer-events-none">音频</span>
+            <span v-else-if="item.fileType === 'video' || isVideoUrl(item.url)" class="absolute top-2 left-2 bg-indigo-600/80 text-white text-[10px] px-1.5 py-0.5 rounded font-semibold pointer-events-none">视频</span>
 
             <div class="absolute inset-0 bg-slate-950/70 opacity-0 group-hover:opacity-100 transition p-2 flex flex-col justify-between pointer-events-none">
               <div class="flex justify-end">
