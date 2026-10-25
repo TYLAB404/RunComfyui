@@ -9,6 +9,8 @@ import urllib.parse
 import uuid
 import base64
 import requests
+import io
+import re
 from typing import Dict, Any, List, Optional, Set, Tuple
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Request, Depends, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -152,7 +154,13 @@ def load_config() -> Dict[str, Any]:
         "allowRegistration": True,
         "defaultUserPoints": 100,
         "requireLoginToGenerate": False,
-        "hideAuxiliaryAudioChain": True
+        "hideAuxiliaryAudioChain": True,
+        "imgbedEnabled": True,
+        "imgbedUploadUrl": "https://imgbed.2364498.xyz/upload",
+        "imgbedAuthHeaderEncrypted": encrypt_key("Bearer imgbed_165f2632dbcc32e7d3187a3b36051a8785fa6bc6d5834b0dd69ee07134a139b2"),
+        "imgbedRootFolder": "RunComfyui",
+        "imgbedIsolateByUser": True,
+        "imgbedConcurrency": 3
     }
     for sk, sv in system_defaults.items():
         if sk not in sys_cfg:
@@ -182,7 +190,7 @@ def save_config(cfg: Dict[str, Any]):
         raise e
 
 def get_system_config_safe(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """返回脱敏的系统全局配置（隐藏 Turnstile 密钥明文）"""
+    """返回脱敏的系统全局配置（隐藏 Turnstile 密钥与图床密钥明文）"""
     if cfg is None:
         cfg = load_config()
     sys_cfg = dict(cfg.get("system", {}))
@@ -190,7 +198,31 @@ def get_system_config_safe(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, An
     secret_raw = decrypt_key(secret_enc) if secret_enc else ""
     sys_cfg["turnstileSecretKeyMasked"] = mask_key(secret_raw) if secret_raw else ""
     sys_cfg["hasTurnstileSecret"] = bool(secret_raw)
+
+    # ImgBed 图床敏感密钥脱敏
+    imgbed_enc = sys_cfg.pop("imgbedAuthHeaderEncrypted", "")
+    imgbed_raw = decrypt_key(imgbed_enc) if imgbed_enc else ""
+    sys_cfg["imgbedAuthHeaderMasked"] = mask_key(imgbed_raw) if imgbed_raw else ""
+    sys_cfg["hasImgbedAuthHeader"] = bool(imgbed_raw)
     return sys_cfg
+
+def get_imgbed_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """获取内部图床配置（含解密后的 AuthHeader）"""
+    if cfg is None:
+        cfg = load_config()
+    sys_cfg = cfg.get("system", {})
+    enc_auth = sys_cfg.get("imgbedAuthHeaderEncrypted", "")
+    raw_auth = decrypt_key(enc_auth) if enc_auth else ""
+    return {
+        "enabled": bool(sys_cfg.get("imgbedEnabled", True)),
+        "uploadUrl": sys_cfg.get("imgbedUploadUrl", "https://imgbed.2364498.xyz/upload"),
+        "rawAuthHeader": raw_auth,
+        "authHeaderMasked": mask_key(raw_auth) if raw_auth else "",
+        "hasAuthHeader": bool(raw_auth),
+        "rootFolder": sys_cfg.get("imgbedRootFolder", "RunComfyui") or "RunComfyui",
+        "isolateByUser": bool(sys_cfg.get("imgbedIsolateByUser", True)),
+        "concurrency": int(sys_cfg.get("imgbedConcurrency", 3))
+    }
 
 def get_active_api_key(cfg: Optional[Dict[str, Any]] = None) -> str:
     """获取当前激活的 API Key 明文（解密后仅供后端调用 RunningHub 内部使用，不向前端暴露）"""
@@ -250,6 +282,151 @@ def get_output_fingerprint(item: Dict[str, Any]) -> str:
     if fname and "." in fname and not fname.endswith("_preview.png"):
         return fname
     return clean
+
+# ----------------- 自建图床流式中继与流量整形异步工作引擎 -----------------
+
+IMGBED_SEMAPHORE = asyncio.Semaphore(3)
+
+def _sanitize_folder_name(name: str) -> str:
+    if not name:
+        return "guest"
+    cleaned = re.sub(r'[^\w\-]', '_', str(name).strip())
+    return cleaned or "guest"
+
+async def sync_single_file_to_imgbed(
+    file_url: str,
+    default_filename: str,
+    username: str,
+    imgbed_cfg: Dict[str, Any]
+) -> Optional[str]:
+    """
+    通过内存流式中继，将远程文件上传到自建图床（零硬盘落地，支持子文件夹隔离）
+    """
+    if not imgbed_cfg.get("enabled"):
+        return None
+    raw_auth = imgbed_cfg.get("rawAuthHeader")
+    if not raw_auth:
+        return None
+        
+    upload_base = imgbed_cfg.get("uploadUrl", "https://imgbed.2364498.xyz/upload").strip()
+    root_folder = imgbed_cfg.get("rootFolder", "RunComfyui").strip() or "RunComfyui"
+    
+    if imgbed_cfg.get("isolateByUser", True):
+        user_folder = _sanitize_folder_name(username)
+        target_folder = f"{root_folder}/{user_folder}"
+    else:
+        target_folder = root_folder
+
+    sep = "&" if "?" in upload_base else "?"
+    upload_url = f"{upload_base}{sep}uploadFolder={urllib.parse.quote(target_folder)}"
+
+    # 1. 内存流式拉取远程文件（零落盘）
+    file_bytes = b""
+    content_type = ""
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=45)) as resp:
+                if resp.status == 200:
+                    file_bytes = await resp.read()
+                    content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+    except Exception as e:
+        print(f"[ImgBed Warning] Stream fetch failed from {file_url}: {e}")
+        return None
+
+    if not file_bytes:
+        return None
+
+    fname = default_filename or os.path.basename(file_url.split("?")[0]) or "output.png"
+    if not content_type or content_type == "application/octet-stream":
+        ext = os.path.splitext(fname)[1].lower()
+        if ext in [".png", ".jpg", ".jpeg", ".webp"]:
+            content_type = f"image/{ext.lstrip('.')}" if ext != ".jpg" else "image/jpeg"
+        elif ext in [".mp4", ".webm"]:
+            content_type = f"video/{ext.lstrip('.')}"
+        elif ext in [".mp3", ".wav", ".ogg", ".flac", ".m4a"]:
+            content_type = f"audio/{ext.lstrip('.')}"
+
+    headers = {"Authorization": raw_auth}
+    
+    # 2. 信号量排队防打爆
+    async with IMGBED_SEMAPHORE:
+        for attempt in range(2):
+            try:
+                def _do_upload():
+                    files = {"file": (fname, io.BytesIO(file_bytes), content_type)}
+                    return requests.post(upload_url, headers=headers, files=files, timeout=30)
+                
+                up_resp = await asyncio.to_thread(_do_upload)
+                if up_resp.status_code == 200:
+                    data = up_resp.json()
+                    src = None
+                    if isinstance(data, list) and len(data) > 0:
+                        src = data[0].get("src")
+                    elif isinstance(data, dict):
+                        src = data.get("src") or data.get("url")
+                    
+                    if src:
+                        if src.startswith("http://") or src.startswith("https://"):
+                            return src
+                        parsed_base = urllib.parse.urlparse(upload_base)
+                        domain = f"{parsed_base.scheme}://{parsed_base.netloc}"
+                        clean_src = "/" + src.lstrip("/")
+                        return f"{domain}{clean_src}"
+            except Exception as e:
+                print(f"[ImgBed Warning] Upload attempt {attempt+1} error: {e}")
+            await asyncio.sleep(1.0)
+            
+    return None
+
+async def sync_task_outputs_to_imgbed(task_id: str):
+    """
+    后台任务：在任务生成成功后，平滑将各个成果流式备份到用户隔离图床文件夹并原子升级数据库链接
+    """
+    try:
+        t = db_get_task(str(task_id))
+        if not t:
+            return
+        outputs = t.get("outputs", [])
+        if not outputs:
+            return
+        
+        cfg = load_config()
+        imgbed_cfg = get_imgbed_config(cfg)
+        if not imgbed_cfg.get("enabled"):
+            return
+            
+        username = t.get("username") or "guest"
+        updated = False
+        new_outputs = []
+        
+        for out in outputs:
+            cur_url = out.get("url") or out.get("remoteUrl") or ""
+            if "imgbed.2364498.xyz" in cur_url or out.get("storage") == "imgbed":
+                new_outputs.append(out)
+                continue
+            
+            if not cur_url.startswith("http://") and not cur_url.startswith("https://"):
+                new_outputs.append(out)
+                continue
+                
+            fname = out.get("filename") or os.path.basename(cur_url.split("?")[0])
+            perm_url = await sync_single_file_to_imgbed(cur_url, fname, username, imgbed_cfg)
+            if perm_url:
+                out_copy = dict(out)
+                out_copy["remoteUrl"] = cur_url # 保留原官方 CDN 直链作为永久兜底备份
+                out_copy["url"] = perm_url      # 升级为主展示直链
+                out_copy["storage"] = "imgbed"
+                out_copy["imgbedFolder"] = f"{imgbed_cfg['rootFolder']}/{_sanitize_folder_name(username)}"
+                new_outputs.append(out_copy)
+                updated = True
+                print(f"[ImgBed] Successfully synced output for Task {task_id} ({username}) -> {perm_url}")
+            else:
+                new_outputs.append(out)
+                
+        if updated:
+            update_task_record(str(task_id), {"outputs": new_outputs, "updatedAt": int(time.time())})
+    except Exception as e:
+        print(f"[ImgBed Error] Error syncing task {task_id}: {e}")
 
 # ----------------- 异步后台实时截流与轮询任务 -----------------
 
@@ -516,6 +693,7 @@ async def poll_task_status(task_id: str, api_key: str):
                         "statusText": "生成任务已圆满完成",
                         "updatedAt": int(time.time())
                     })
+                    asyncio.create_task(sync_task_outputs_to_imgbed(str(task_id)))
                     return
                 
                 # 正在排队或执行中
@@ -542,6 +720,7 @@ async def poll_task_status(task_id: str, api_key: str):
                             "statusText": "生成完成 (已安全截流有效成果)",
                             "updatedAt": int(time.time())
                         })
+                        asyncio.create_task(sync_task_outputs_to_imgbed(str(task_id)))
                         return
                     else:
                         fail_data = data.get("data")
@@ -611,6 +790,13 @@ class AdminSystemConfigRequest(BaseModel):
     defaultUserPoints: Optional[int] = None
     requireLoginToGenerate: Optional[bool] = None
     hideAuxiliaryAudioChain: Optional[bool] = None
+    # 自建图床配置
+    imgbedEnabled: Optional[bool] = None
+    imgbedUploadUrl: Optional[str] = None
+    imgbedAuthHeader: Optional[str] = None
+    imgbedRootFolder: Optional[str] = None
+    imgbedIsolateByUser: Optional[bool] = None
+    imgbedConcurrency: Optional[int] = None
 
 async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]]:
     """从 Authorization 标头或 Cookie 中解析用户（未登录返回 None）"""
@@ -1029,6 +1215,20 @@ def admin_update_system_config(req: AdminSystemConfigRequest, _: Dict[str, Any] 
         sys_cfg["requireLoginToGenerate"] = bool(req.requireLoginToGenerate)
     if req.hideAuxiliaryAudioChain is not None:
         sys_cfg["hideAuxiliaryAudioChain"] = bool(req.hideAuxiliaryAudioChain)
+    if req.imgbedEnabled is not None:
+        sys_cfg["imgbedEnabled"] = bool(req.imgbedEnabled)
+    if req.imgbedUploadUrl is not None:
+        sys_cfg["imgbedUploadUrl"] = req.imgbedUploadUrl.strip()
+    if req.imgbedRootFolder is not None:
+        sys_cfg["imgbedRootFolder"] = req.imgbedRootFolder.strip() or "RunComfyui"
+    if req.imgbedIsolateByUser is not None:
+        sys_cfg["imgbedIsolateByUser"] = bool(req.imgbedIsolateByUser)
+    if req.imgbedConcurrency is not None:
+        sys_cfg["imgbedConcurrency"] = max(1, min(10, int(req.imgbedConcurrency)))
+    if req.imgbedAuthHeader is not None and req.imgbedAuthHeader.strip():
+        raw_header = req.imgbedAuthHeader.strip()
+        if not raw_header.startswith("****") and "****" not in raw_header:
+            sys_cfg["imgbedAuthHeaderEncrypted"] = encrypt_key(raw_header)
     
     save_config(cfg)
     safe_data = get_system_config_safe(cfg)
@@ -2229,6 +2429,156 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
 def admin_list_all_tasks(_: Dict[str, Any] = Depends(get_current_admin)):
     """管理员全量任务审计视图"""
     return db_load_tasks(is_admin=True, limit=500)
+
+@app.get("/api/admin/gallery")
+def admin_get_gallery(
+    username: Optional[str] = None,
+    file_type: Optional[str] = None,
+    storage: Optional[str] = None,
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """管理员全站画廊视图（支持按用户、媒体类型、存储介质多维聚合筛选）"""
+    tasks = db_load_tasks(is_admin=True, limit=500)
+    items = []
+    seen = set()
+    for t in tasks:
+        t_user = t.get("username") or "guest"
+        if username and username != "all" and t_user != username:
+            continue
+        created_at = t.get("createdAt", int(time.time()))
+        for out in t.get("outputs", []):
+            url = out.get("url") or out.get("remoteUrl")
+            if not url or url.startswith("data:"):
+                continue
+            fname = out.get("filename") or os.path.basename(url.split("?")[0])
+            fp = f"{t.get('taskId')}_{fname}"
+            if fp in seen:
+                continue
+            seen.add(fp)
+            
+            ext = os.path.splitext(fname)[1].lower()
+            ft = out.get("fileType")
+            if not ft or ft == "image":
+                if ext in {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}:
+                    ft = "audio"
+                elif ext in {".mp4", ".webm", ".mov"}:
+                    ft = "video"
+                else:
+                    ft = "image"
+            if file_type and file_type != "all" and ft != file_type:
+                continue
+                
+            out_storage = out.get("storage", "imgbed" if "imgbed.2364498.xyz" in url else "remote")
+            if storage and storage != "all":
+                if storage == "imgbed" and out_storage != "imgbed":
+                    continue
+                if storage == "remote" and out_storage == "imgbed":
+                    continue
+                    
+            items.append({
+                "filename": fname,
+                "url": url,
+                "remoteUrl": out.get("remoteUrl", url),
+                "storage": out_storage,
+                "imgbedFolder": out.get("imgbedFolder", f"RunComfyui/{t_user}"),
+                "createdAt": created_at,
+                "fileType": ft,
+                "taskId": t.get("taskId"),
+                "userId": t.get("userId"),
+                "username": t_user,
+                "positivePrompt": t.get("positivePrompt", ""),
+                "workflowName": t.get("workflowName", "")
+            })
+    items.sort(key=lambda x: x["createdAt"], reverse=True)
+    return items
+
+@app.delete("/api/admin/gallery/{task_id}/{filename}")
+def admin_delete_gallery_item(task_id: str, filename: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员强制下架违规/过期的生成成果"""
+    t = db_get_task(str(task_id))
+    if not t:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    safe_name = os.path.basename(filename)
+    outs = t.get("outputs", [])
+    new_outs = [o for o in outs if o.get("filename") != safe_name and os.path.basename(o.get("url", "").split("?")[0]) != safe_name]
+    update_task_record(str(task_id), {
+        "outputs": new_outs,
+        "updatedAt": int(time.time())
+    })
+    return {"status": "ok", "message": "该成果已从全站画廊中成功移除"}
+
+@app.get("/api/admin/imgbed")
+def admin_get_imgbed_status(_: Dict[str, Any] = Depends(get_current_admin)):
+    """获取图床运行配置与同步审计概览"""
+    cfg = load_config()
+    safe_info = get_imgbed_config(cfg)
+    tasks = db_load_tasks(is_admin=True, limit=500)
+    total_outputs = 0
+    synced_count = 0
+    for t in tasks:
+        for o in t.get("outputs", []):
+            u = o.get("url", "")
+            total_outputs += 1
+            if "imgbed.2364498.xyz" in u or o.get("storage") == "imgbed":
+                synced_count += 1
+    
+    safe_info.pop("rawAuthHeader", None)
+    safe_info["totalOutputs"] = total_outputs
+    safe_info["syncedOutputs"] = synced_count
+    safe_info["pendingSync"] = max(0, total_outputs - synced_count)
+    return safe_info
+
+@app.post("/api/admin/imgbed/test")
+async def admin_test_imgbed(_: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员在线测试自建图床 API 连通性与 Token 有效性"""
+    cfg = load_config()
+    imgbed_cfg = get_imgbed_config(cfg)
+    raw_auth = imgbed_cfg.get("rawAuthHeader")
+    if not raw_auth:
+        return {"status": "error", "message": "尚未配置图床 Authorization 密钥"}
+    
+    upload_url = f"{imgbed_cfg['uploadUrl']}?uploadFolder={imgbed_cfg['rootFolder']}/_health_check"
+    headers = {"Authorization": raw_auth}
+    dummy_png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82'
+    
+    try:
+        def _test():
+            files = {"file": ("health.png", io.BytesIO(dummy_png), "image/png")}
+            return requests.post(upload_url, headers=headers, files=files, timeout=15)
+        resp = await asyncio.to_thread(_test)
+        if resp.status_code == 200:
+            return {"status": "ok", "message": "图床接口连通性极佳！已成功通过 Authorization 认证握手并完成隔离文件夹探测。"}
+        else:
+            return {"status": "error", "message": f"图床响应异常 (HTTP {resp.status_code}): {resp.text[:200]}"}
+    except Exception as e:
+        return {"status": "error", "message": f"连接异常: {str(e)}"}
+
+SYNC_ALL_RUNNING = False
+
+@app.post("/api/admin/imgbed/sync_all")
+async def admin_sync_all_to_imgbed(_: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员一键将历史所有未备份的成果平滑转存至图床（按所属用户文件夹隔离）"""
+    global SYNC_ALL_RUNNING
+    if SYNC_ALL_RUNNING:
+        return {"status": "busy", "message": "全量历史成果正在后台平稳转存中，请勿重复触发"}
+    
+    async def _batch_sync():
+        global SYNC_ALL_RUNNING
+        SYNC_ALL_RUNNING = True
+        try:
+            tasks = db_load_tasks(is_admin=True, limit=500)
+            for t in tasks:
+                tid = str(t.get("taskId"))
+                outs = t.get("outputs", [])
+                needs_sync = any("imgbed.2364498.xyz" not in (o.get("url") or "") for o in outs)
+                if needs_sync:
+                    await sync_task_outputs_to_imgbed(tid)
+                    await asyncio.sleep(0.5)
+        finally:
+            SYNC_ALL_RUNNING = False
+            
+    asyncio.create_task(_batch_sync())
+    return {"status": "ok", "message": "已成功启动历史成果后台平稳同步！任务将在后台按用户文件夹隔离分流转存。"}
 
 @app.get("/api/tasks/{task_id}")
 def get_task(task_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):

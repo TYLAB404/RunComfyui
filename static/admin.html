@@ -184,6 +184,17 @@
               <i data-lucide="key" class="w-4 h-4"></i>
               <span>API 密钥池调度</span>
             </button>
+
+            <button 
+              @click="activeSection = 'gallery'" 
+              :class="activeSection === 'gallery' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
+              class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
+              <div class="flex items-center gap-3">
+                <i data-lucide="image" class="w-4 h-4"></i>
+                <span>全站画廊 & 图床资产</span>
+              </div>
+              <span class="text-[10px] bg-indigo-950 text-indigo-400 px-1.5 py-0.5 rounded-full font-mono">{{ adminGallery.length }}</span>
+            </button>
           </nav>
         </div>
 
@@ -734,6 +745,277 @@
 
           </section>
 
+          <!-- 7. 全站画廊与自建图床资产管控视图 (Gallery & Imgbed) -->
+          <section v-if="activeSection === 'gallery'" class="space-y-6">
+            
+            <!-- 顶部总览卡片 -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
+                <div class="w-12 h-12 rounded-xl bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400 flex-shrink-0">
+                  <i data-lucide="image" class="w-6 h-6"></i>
+                </div>
+                <div>
+                  <div class="text-[11px] font-medium text-slate-400">全站成果总数</div>
+                  <div class="text-xl font-black text-white mt-0.5 font-mono">{{ adminGallery.length }}</div>
+                </div>
+              </div>
+
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400 flex-shrink-0">
+                  <i data-lucide="cloud" class="w-6 h-6"></i>
+                </div>
+                <div>
+                  <div class="text-[11px] font-medium text-slate-400">自建图床永久备份</div>
+                  <div class="text-xl font-black text-emerald-400 mt-0.5 font-mono">{{ imgbedInfo.syncedOutputs || 0 }}</div>
+                </div>
+              </div>
+
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
+                <div class="w-12 h-12 rounded-xl bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-400 flex-shrink-0">
+                  <i data-lucide="refresh-cw" class="w-6 h-6"></i>
+                </div>
+                <div>
+                  <div class="text-[11px] font-medium text-slate-400">待转存 / 临时直链</div>
+                  <div class="text-xl font-black text-amber-400 mt-0.5 font-mono">{{ imgbedInfo.pendingSync || 0 }}</div>
+                </div>
+              </div>
+
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex items-center gap-4 shadow-sm">
+                <div class="w-12 h-12 rounded-xl bg-violet-500/15 border border-violet-500/30 flex items-center justify-center text-violet-400 flex-shrink-0">
+                  <i data-lucide="folder-git-2" class="w-6 h-6"></i>
+                </div>
+                <div>
+                  <div class="text-[11px] font-medium text-slate-400">用户隔离目录格式</div>
+                  <div class="text-xs font-bold text-violet-300 mt-0.5 font-mono truncate max-w-[150px]">{{ systemConfig.imgbedRootFolder || 'RunComfyui' }}/{username}</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 控制面板与多维筛选栏 -->
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold text-white">全站成果资产管理与用户隔离图床</h3>
+                    <span v-if="systemConfig.imgbedEnabled" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                      图床隔离自动转存已就绪
+                    </span>
+                    <span v-else class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-400">
+                      自动转存已暂停
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-400 mt-1">
+                    用户作品按账号隔离存储在 RunComfyui/{username}，全部内存流直连中继，服务器 0 磁盘占用，杜绝封禁风险
+                  </p>
+                </div>
+                
+                <div class="flex flex-wrap items-center gap-2">
+                  <button 
+                    @click="openImgbedModal" 
+                    class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center gap-1.5">
+                    <i data-lucide="settings" class="w-3.5 h-3.5 text-indigo-400"></i>
+                    <span>图床配置</span>
+                  </button>
+
+                  <button 
+                    @click="testImgbedConnection" 
+                    :disabled="testingImgbed"
+                    class="px-3.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center gap-1.5 disabled:opacity-50">
+                    <span v-if="testingImgbed" class="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
+                    <i v-else data-lucide="zap" class="w-3.5 h-3.5 text-emerald-400"></i>
+                    <span>连通性测试</span>
+                  </button>
+
+                  <button 
+                    @click="syncAllToImgbed" 
+                    :disabled="syncingAllImgbed"
+                    class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50 shadow-lg shadow-indigo-950/40">
+                    <span v-if="syncingAllImgbed" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <i v-else data-lucide="cloud-upload" class="w-3.5 h-3.5"></i>
+                    <span>一键平稳同步历史成果</span>
+                  </button>
+
+                  <button 
+                    @click="loadAdminGallery" 
+                    class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition"
+                    title="刷新列表">
+                    <i data-lucide="rotate-cw" class="w-4 h-4"></i>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 筛选条 -->
+              <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+                <!-- 用户筛选 -->
+                <div>
+                  <label class="block text-slate-400 text-[11px] mb-1 font-medium">按账号 / 隔离文件夹过滤</label>
+                  <select 
+                    v-model="galleryUserFilter" 
+                    @change="loadAdminGallery" 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500">
+                    <option value="all">全站所有用户 ({{ galleryUniqueUsers.length }} 位)</option>
+                    <option v-for="u in galleryUniqueUsers" :key="u" :value="u">用户: {{ u }} (RunComfyui/{{ u }})</option>
+                  </select>
+                </div>
+
+                <!-- 媒体类型筛选 -->
+                <div>
+                  <label class="block text-slate-400 text-[11px] mb-1 font-medium">按媒体类型过滤</label>
+                  <select 
+                    v-model="galleryTypeFilter" 
+                    @change="loadAdminGallery" 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500">
+                    <option value="all">所有媒体格式</option>
+                    <option value="image">图片 (PNG / JPG / WEBP)</option>
+                    <option value="video">视频 (MP4 / WEBM)</option>
+                    <option value="audio">音频 (MP3 / WAV)</option>
+                  </select>
+                </div>
+
+                <!-- 存储介质筛选 -->
+                <div>
+                  <label class="block text-slate-400 text-[11px] mb-1 font-medium">按存储备份状态过滤</label>
+                  <select 
+                    v-model="galleryStorageFilter" 
+                    @change="loadAdminGallery" 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-slate-200 focus:outline-none focus:border-indigo-500">
+                    <option value="all">所有存储状态</option>
+                    <option value="imgbed">仅自建图床永久存储 (RunComfyui/...)</option>
+                    <option value="remote">第三方算力平台临时直链</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- 画廊展示区 -->
+            <div v-if="adminGalleryLoading" class="py-20 flex flex-col items-center justify-center text-slate-500 gap-3">
+              <span class="w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></span>
+              <span class="text-xs">正在实时加载多用户画廊资产...</span>
+            </div>
+
+            <div v-else-if="adminGallery.length === 0" class="py-16 text-center bg-slate-900/40 border border-slate-800/80 rounded-2xl">
+              <div class="w-12 h-12 rounded-full bg-slate-800 text-slate-500 flex items-center justify-center mx-auto mb-3">
+                <i data-lucide="image-off" class="w-6 h-6"></i>
+              </div>
+              <h4 class="text-sm font-semibold text-slate-300">暂无符合条件的成果</h4>
+              <p class="text-xs text-slate-500 mt-1">生成出的图片与视频将自动收录并隔离备份在此处</p>
+            </div>
+
+            <div v-else class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+              <div 
+                v-for="item in adminGallery" 
+                :key="item.taskId + '_' + item.filename"
+                class="bg-slate-900/90 border border-slate-800/90 rounded-2xl overflow-hidden flex flex-col group hover:border-slate-700 transition">
+                
+                <!-- 媒体预览区 -->
+                <div class="relative bg-black/60 aspect-square flex items-center justify-center overflow-hidden">
+                  <!-- 图片展示 -->
+                  <img 
+                    v-if="item.fileType === 'image'" 
+                    :src="item.url" 
+                    :alt="item.filename" 
+                    loading="lazy"
+                    class="w-full h-full object-cover transition duration-300 group-hover:scale-105"
+                    @error="handleMediaError($event, item)">
+                  
+                  <!-- 视频展示 -->
+                  <video 
+                    v-else-if="item.fileType === 'video'" 
+                    :src="item.url" 
+                    controls 
+                    preload="metadata"
+                    class="w-full h-full object-cover">
+                  </video>
+
+                  <!-- 音频展示 -->
+                  <div v-else class="p-4 w-full flex flex-col items-center justify-center gap-2">
+                    <i data-lucide="music" class="w-10 h-10 text-indigo-400"></i>
+                    <audio :src="item.url" controls class="w-full max-w-[200px]"></audio>
+                  </div>
+
+                  <!-- 存储状态角标 -->
+                  <div class="absolute top-2 left-2 flex items-center gap-1.5">
+                    <span 
+                      v-if="item.storage === 'imgbed'" 
+                      class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/90 text-white backdrop-blur-md shadow-lg flex items-center gap-1">
+                      <span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                      自建图床
+                    </span>
+                    <span 
+                      v-else 
+                      class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/90 text-white backdrop-blur-md shadow-lg">
+                      临时直链
+                    </span>
+                  </div>
+
+                  <!-- 快捷操作浮层 (悬停显示) -->
+                  <div class="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition duration-200">
+                    <a 
+                      :href="item.url" 
+                      target="_blank" 
+                      title="新窗口原图打开"
+                      class="w-7 h-7 rounded-lg bg-black/70 hover:bg-black text-white flex items-center justify-center text-xs backdrop-blur-md">
+                      <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+                    </a>
+                    <button 
+                      @click="copyToClipboard(item.url, '直链已复制到剪贴板')" 
+                      title="复制永久链接"
+                      class="w-7 h-7 rounded-lg bg-black/70 hover:bg-black text-white flex items-center justify-center text-xs backdrop-blur-md">
+                      <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                    </button>
+                    <button 
+                      @click="adminDeleteGalleryItem(item.taskId, item.filename)" 
+                      title="违规下架 / 删除该成果"
+                      class="w-7 h-7 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white flex items-center justify-center text-xs backdrop-blur-md">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- 成果元信息 -->
+                <div class="p-3.5 flex-1 flex flex-col justify-between space-y-2 text-xs">
+                  <div>
+                    <div class="flex items-center justify-between gap-1 mb-1">
+                      <!-- 所属用户 / 文件夹 -->
+                      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-300 font-mono text-[11px] font-semibold border border-indigo-500/30 truncate max-w-[140px]">
+                        <i data-lucide="user" class="w-3 h-3 flex-shrink-0"></i>
+                        {{ item.username }}
+                      </span>
+                      <span class="text-[10px] text-slate-500">{{ formatTimestamp(item.createdAt) }}</span>
+                    </div>
+
+                    <!-- 隔离子目录路径展示 -->
+                    <div class="text-[10px] font-mono text-slate-400 truncate flex items-center gap-1" title="图床存储目录">
+                      <i data-lucide="folder" class="w-3 h-3 text-slate-500 flex-shrink-0"></i>
+                      <span>{{ item.imgbedFolder || ('RunComfyui/' + item.username) }}</span>
+                    </div>
+
+                    <!-- 文件名与 Prompt -->
+                    <p class="text-white font-medium text-xs mt-1.5 line-clamp-1" :title="item.filename">
+                      {{ item.filename }}
+                    </p>
+                    <p v-if="item.positivePrompt" class="text-slate-400 text-[11px] line-clamp-2 mt-1 italic" :title="item.positivePrompt">
+                      "{{ item.positivePrompt }}"
+                    </p>
+                  </div>
+
+                  <!-- 底部底栏 -->
+                  <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                    <span class="text-slate-500 font-mono uppercase">{{ item.fileType }}</span>
+                    <button 
+                      @click="adminDeleteGalleryItem(item.taskId, item.filename)" 
+                      class="text-rose-400 hover:text-rose-300 text-[11px] font-medium flex items-center gap-1">
+                      <i data-lucide="trash-2" class="w-3 h-3"></i>
+                      <span>下架</span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+          </section>
+
         </div>
 
       </main>
@@ -836,6 +1118,103 @@
           <div class="flex justify-end gap-2 pt-2">
             <button @click="showAddKeyModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 text-slate-300">取消</button>
             <button @click="submitAddKey" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">加密保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 弹窗 5: 自建图床配置管理 Modal -->
+      <div v-if="showImgbedModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <i data-lucide="cloud" class="w-4 h-4 text-indigo-400"></i>
+              <span>自建 Cloudflare 图床与隔离转存配置</span>
+            </h3>
+            <button @click="showImgbedModal = false" class="text-slate-500 hover:text-white text-xs">✕</button>
+          </div>
+
+          <div class="space-y-4 text-xs">
+            <!-- 开启图床转存开关 -->
+            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div>
+                <div class="font-semibold text-white">开启生成成果自动转存图床</div>
+                <div class="text-[11px] text-slate-400">ComfyUI 任务成功后立即内存流直连转存，服务器 0 磁盘占用</div>
+              </div>
+              <input type="checkbox" v-model="imgbedForm.enabled" class="w-4 h-4 text-indigo-600 rounded bg-slate-900 border-slate-700">
+            </div>
+
+            <!-- 图床上传接口 URL -->
+            <div>
+              <label class="block text-slate-300 mb-1 font-semibold">上传接口地址 (Upload Endpoint)</label>
+              <input 
+                type="text" 
+                v-model="imgbedForm.uploadUrl" 
+                placeholder="https://imgbed.2364498.xyz/upload" 
+                class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+            </div>
+
+            <!-- 授权密钥 (Authorization Header) -->
+            <div>
+              <div class="flex items-center justify-between mb-1">
+                <label class="text-slate-300 font-semibold">Authorization Token / Header</label>
+                <span v-if="systemConfig.hasImgbedAuthHeader" class="text-[10px] text-emerald-400 font-medium">✓ 已落盘高强度 AES-256 加密</span>
+              </div>
+              <input 
+                type="password" 
+                v-model="imgbedForm.authHeader" 
+                :placeholder="systemConfig.imgbedAuthHeaderMasked || '例如 Bearer imgbed_... (留空保持已保存密钥)'" 
+                class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+              <p class="text-[10px] text-slate-500 mt-1">提交后立即经过 AES-256 对称加密保存，前端仅显示安全掩码，永远不泄露明文。</p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <!-- 根目录名称 -->
+              <div>
+                <label class="block text-slate-300 mb-1 font-semibold">图床根目录名</label>
+                <input 
+                  type="text" 
+                  v-model="imgbedForm.rootFolder" 
+                  placeholder="RunComfyui" 
+                  class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+              </div>
+
+              <!-- 并发控制 -->
+              <div>
+                <label class="block text-slate-300 mb-1 font-semibold">并发流量节流 (Semaphore)</label>
+                <input 
+                  type="number" 
+                  min="1" 
+                  max="10" 
+                  v-model.number="imgbedForm.concurrency" 
+                  placeholder="3" 
+                  class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+              </div>
+            </div>
+
+            <!-- 用户隔离存放开关 -->
+            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div>
+                <div class="font-semibold text-white">按用户账号分流独立目录 (User Isolation)</div>
+                <div class="text-[11px] text-slate-400">成果路径将变为: <code>{{ imgbedForm.rootFolder || 'RunComfyui' }}/{username}/filename</code></div>
+              </div>
+              <input type="checkbox" v-model="imgbedForm.isolateByUser" class="w-4 h-4 text-indigo-600 rounded bg-slate-900 border-slate-700">
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between pt-3 border-t border-slate-800">
+            <button 
+              @click="testImgbedConnection" 
+              :disabled="testingImgbed" 
+              class="px-3.5 py-2 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700 flex items-center gap-1.5 disabled:opacity-50">
+              <span v-if="testingImgbed" class="w-3 h-3 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
+              <i v-else data-lucide="zap" class="w-3.5 h-3.5 text-emerald-400"></i>
+              <span>测试连通性</span>
+            </button>
+
+            <div class="flex items-center gap-2">
+              <button @click="showImgbedModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 text-slate-300">取消</button>
+              <button @click="submitSaveImgbedConfig" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">保存配置</button>
+            </div>
           </div>
         </div>
       </div>
@@ -988,8 +1367,36 @@
           announcements: '官方公告与动态资讯管理',
           security: '云端防御 & Cloudflare Turnstile',
           tasks: '全局任务流水审计',
-          keys: 'API 密钥池调度'
+          keys: 'API 密钥池调度',
+          gallery: '全站画廊与自建图床资产管控'
         };
+
+        // 画廊与图床专属状态
+        const adminGallery = ref([]);
+        const adminGalleryLoading = ref(false);
+        const galleryUserFilter = ref('all');
+        const galleryTypeFilter = ref('all');
+        const galleryStorageFilter = ref('all');
+        const imgbedInfo = ref({ totalOutputs: 0, syncedOutputs: 0, pendingSync: 0 });
+        const showImgbedModal = ref(false);
+        const testingImgbed = ref(false);
+        const syncingAllImgbed = ref(false);
+        const imgbedForm = ref({
+          enabled: true,
+          uploadUrl: 'https://imgbed.2364498.xyz/upload',
+          authHeader: '',
+          rootFolder: 'RunComfyui',
+          isolateByUser: true,
+          concurrency: 3
+        });
+
+        const galleryUniqueUsers = computed(() => {
+          const s = new Set();
+          for (const item of adminGallery.value) {
+            if (item.username) s.add(item.username);
+          }
+          return Array.from(s).sort();
+        });
 
         const overview = ref({});
         const users = ref([]);
@@ -1119,7 +1526,9 @@
               loadAnnouncements(),
               loadSystemSettings(),
               loadTasks(),
-              loadKeys()
+              loadKeys(),
+              loadAdminGallery(),
+              loadImgbedInfo()
             ]);
           } finally {
             loading.value = false;
@@ -1157,6 +1566,184 @@
           if (res.ok) {
             const data = await res.json();
             keys.value = Array.isArray(data) ? data : (data.keys || []);
+          }
+        };
+
+        // 加载全站多用户画廊资产
+        const loadAdminGallery = async () => {
+          adminGalleryLoading.value = true;
+          try {
+            const params = new URLSearchParams();
+            if (galleryUserFilter.value && galleryUserFilter.value !== 'all') {
+              params.append('username', galleryUserFilter.value);
+            }
+            if (galleryTypeFilter.value && galleryTypeFilter.value !== 'all') {
+              params.append('file_type', galleryTypeFilter.value);
+            }
+            if (galleryStorageFilter.value && galleryStorageFilter.value !== 'all') {
+              params.append('storage', galleryStorageFilter.value);
+            }
+            const res = await authFetch('/api/admin/gallery?' + params.toString());
+            if (res.ok) {
+              adminGallery.value = await res.json();
+            }
+          } catch (e) {
+            console.error('加载画廊失败:', e);
+          } finally {
+            adminGalleryLoading.value = false;
+            refreshIcons();
+          }
+        };
+
+        // 加载图床运行概览
+        const loadImgbedInfo = async () => {
+          try {
+            const res = await authFetch('/api/admin/imgbed');
+            if (res.ok) {
+              imgbedInfo.value = await res.json();
+            }
+          } catch (e) {
+            console.error('加载图床状态失败:', e);
+          }
+        };
+
+        // 打开图床配置 Modal
+        const openImgbedModal = () => {
+          imgbedForm.value = {
+            enabled: systemConfig.value.imgbedEnabled !== false,
+            uploadUrl: systemConfig.value.imgbedUploadUrl || 'https://imgbed.2364498.xyz/upload',
+            authHeader: '',
+            rootFolder: systemConfig.value.imgbedRootFolder || 'RunComfyui',
+            isolateByUser: systemConfig.value.imgbedIsolateByUser !== false,
+            concurrency: systemConfig.value.imgbedConcurrency || 3
+          };
+          showImgbedModal.value = true;
+          refreshIcons();
+        };
+
+        // 测试图床连通性
+        const testImgbedConnection = async () => {
+          testingImgbed.value = true;
+          try {
+            const res = await authFetch('/api/admin/imgbed/test', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'ok') {
+              showToastNotification('✓ ' + data.message, 'success');
+            } else {
+              showToastNotification('✕ ' + (data.message || '图床测试未通过'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('测试异常: ' + e.message, 'error');
+          } finally {
+            testingImgbed.value = false;
+          }
+        };
+
+        // 保存图床配置
+        const submitSaveImgbedConfig = async () => {
+          try {
+            const payload = {
+              imgbedEnabled: imgbedForm.value.enabled,
+              imgbedUploadUrl: imgbedForm.value.uploadUrl,
+              imgbedRootFolder: imgbedForm.value.rootFolder,
+              imgbedIsolateByUser: imgbedForm.value.isolateByUser,
+              imgbedConcurrency: imgbedForm.value.concurrency
+            };
+            if (imgbedForm.value.authHeader && imgbedForm.value.authHeader.trim()) {
+              payload.imgbedAuthHeader = imgbedForm.value.authHeader.trim();
+            }
+            const res = await authFetch('/api/admin/system', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+              const updated = await res.json();
+              systemConfig.value = { ...systemConfig.value, ...updated };
+              showToastNotification('自建图床配置已成功落盘并加密生效', 'success');
+              showImgbedModal.value = false;
+              loadImgbedInfo();
+              loadAdminGallery();
+            } else {
+              showToastNotification('保存失败，请检查网络或权限', 'error');
+            }
+          } catch (e) {
+            showToastNotification('保存异常: ' + e.message, 'error');
+          }
+        };
+
+        // 一键平稳转存历史成果
+        const syncAllToImgbed = async () => {
+          const confirmed = await confirmAction({
+            title: '同步全站历史成果至自建图床',
+            message: '系统将从 ComfyUI 源端内存流拉取所有历史成果，按各作品所属用户名自动分流存入 RunComfyui/{username} 目录。\n\n全程服务器 0 磁盘占用并有并发节流保护，确定立即启动同步吗？',
+            confirmText: '立即启动平稳同步',
+            type: 'info'
+          });
+          if (!confirmed) return;
+
+          syncingAllImgbed.value = true;
+          try {
+            const res = await authFetch('/api/admin/imgbed/sync_all', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'ok') {
+              showToastNotification('✓ ' + data.message, 'success');
+              setTimeout(() => {
+                loadImgbedInfo();
+                loadAdminGallery();
+              }, 3000);
+            } else {
+              showToastNotification(data.message || '启动同步失败', 'warning');
+            }
+          } catch (e) {
+            showToastNotification('同步异常: ' + e.message, 'error');
+          } finally {
+            syncingAllImgbed.value = false;
+          }
+        };
+
+        // 下架违规成果
+        const adminDeleteGalleryItem = async (taskId, filename) => {
+          const confirmed = await confirmAction({
+            title: '违规成果下架确认',
+            message: '确定要将该成果从全站画廊与展示记录中下架吗？下架后该作品将不再对外公开展示。',
+            confirmText: '确认强制下架',
+            type: 'danger'
+          });
+          if (!confirmed) return;
+
+          try {
+            const res = await authFetch(`/api/admin/gallery/${encodeURIComponent(taskId)}/${encodeURIComponent(filename)}`, {
+              method: 'DELETE'
+            });
+            if (res.ok) {
+              adminGallery.value = adminGallery.value.filter(
+                i => !(i.taskId === taskId && i.filename === filename)
+              );
+              showToastNotification('该成果已成功下架', 'success');
+              loadImgbedInfo();
+            } else {
+              showToastNotification('下架失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('下架异常: ' + e.message, 'error');
+          }
+        };
+
+        // 媒体加载降级容错
+        const handleMediaError = (event, item) => {
+          if (item.remoteUrl && event.target.src !== item.remoteUrl) {
+            event.target.src = item.remoteUrl;
+          }
+        };
+
+        // 剪贴板快速复制
+        const copyToClipboard = async (text, successMsg = '已复制到剪贴板') => {
+          try {
+            await navigator.clipboard.writeText(text);
+            showToastNotification(successMsg, 'success');
+          } catch (e) {
+            showToastNotification('复制失败，请手动长按复制', 'error');
           }
         };
 
@@ -1487,7 +2074,27 @@
           submitAdminLogin,
           logoutAdmin,
           formatTimestamp,
-          getStatusBadge
+          getStatusBadge,
+          adminGallery,
+          adminGalleryLoading,
+          galleryUserFilter,
+          galleryTypeFilter,
+          galleryStorageFilter,
+          galleryUniqueUsers,
+          imgbedInfo,
+          showImgbedModal,
+          testingImgbed,
+          syncingAllImgbed,
+          imgbedForm,
+          loadAdminGallery,
+          loadImgbedInfo,
+          openImgbedModal,
+          testImgbedConnection,
+          submitSaveImgbedConfig,
+          syncAllToImgbed,
+          adminDeleteGalleryItem,
+          handleMediaError,
+          copyToClipboard
         };
       }
     }).mount('#app');
