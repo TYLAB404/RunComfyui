@@ -1999,7 +1999,10 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
         raise HTTPException(status_code=500, detail=f"Request to RunningHub failed: {str(e)}")
     
     if raw_data.get("code") != 0:
-        raise HTTPException(status_code=400, detail=raw_data.get("msg") or "获取工作流信息失败")
+        err_msg = str(raw_data.get("msg") or "获取工作流信息失败")
+        if "WORKFLOW_NOT_SAVED" in err_msg.upper() or "NOT_RUNNING" in err_msg.upper():
+            err_msg = "该工作流在 RunningHub 上尚未保存或未运行过：请在 RunningHub 网页版画布左上角点击【保存 (Alt+S)】或先运行一次，云端即可同步编译并开放 API 格式！"
+        raise HTTPException(status_code=400, detail=err_msg)
     
     prompt_str = raw_data.get("data", {}).get("prompt", "{}")
     try:
