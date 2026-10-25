@@ -177,6 +177,18 @@
               <span>全局任务审计流</span>
             </button>
 
+            <!-- 工作流调度与治理 (全新) -->
+            <button 
+              @click="activeSection = 'workflows'" 
+              :class="activeSection === 'workflows' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
+              class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
+              <div class="flex items-center gap-3">
+                <i data-lucide="git-merge" class="w-4 h-4"></i>
+                <span>工作流调度与上下架</span>
+              </div>
+              <span class="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full font-mono">{{ workflows.length }}</span>
+            </button>
+
             <button 
               @click="activeSection = 'keys'" 
               :class="activeSection === 'keys' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
@@ -308,6 +320,113 @@
                 </div>
                 <div class="mt-2 text-[11px] text-slate-500 font-mono truncate">
                   {{ overview.turnstileSiteKey || '前往安全设置绑定' }}
+                </div>
+              </div>
+
+            </div>
+
+            <!-- 全站实时广播与维护模式控制台 -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              
+              <!-- 1. 全站维护模式应急控制卡片 -->
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4 shadow-sm"
+                   :class="maintenanceForm.enabled ? 'border-rose-800/80 bg-rose-950/20' : ''">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl flex items-center justify-center font-bold"
+                         :class="maintenanceForm.enabled ? 'bg-rose-600/20 text-rose-400 border border-rose-500/30' : 'bg-slate-800 text-slate-400'">
+                      🚨
+                    </div>
+                    <div>
+                      <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                        <span>全站维护模式开关</span>
+                        <span v-if="maintenanceForm.enabled" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse">
+                          ● 正在维护中 (全员拦截)
+                        </span>
+                        <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+                          ● 正常运转中
+                        </span>
+                      </h3>
+                      <p class="text-xs text-slate-400 mt-0.5">开启后阻断非管理员提交新生成任务，阻断云端代币消耗</p>
+                    </div>
+                  </div>
+
+                  <button 
+                    @click="toggleMaintenance" 
+                    :class="maintenanceForm.enabled ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-900/50' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'"
+                    class="px-3.5 py-1.5 rounded-xl text-xs font-bold transition shadow-lg flex items-center gap-1.5">
+                    <span>{{ maintenanceForm.enabled ? '解除维护恢复全站' : '开启全站维护' }}</span>
+                  </button>
+                </div>
+
+                <div class="space-y-2">
+                  <label class="text-xs text-slate-400 font-medium">维护通知文案 (向普通用户展示)</label>
+                  <div class="flex gap-2">
+                    <input 
+                      type="text" 
+                      v-model="maintenanceForm.message" 
+                      placeholder="例如：系统正在进行云端节点升级维护，暂不可提交新任务，请稍后访问。"
+                      class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-rose-500">
+                    <button 
+                      @click="saveMaintenanceMessage" 
+                      class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium border border-slate-700 transition">
+                      保存通知
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 2. 全站实时广播与通知横幅控制卡片 -->
+              <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4 shadow-sm"
+                   :class="broadcastForm.enabled ? 'border-indigo-800/80 bg-indigo-950/15' : ''">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2.5">
+                    <div class="w-8 h-8 rounded-xl flex items-center justify-center font-bold"
+                         :class="broadcastForm.enabled ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'bg-slate-800 text-slate-400'">
+                      📢
+                    </div>
+                    <div>
+                      <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                        <span>全站实时广播横幅</span>
+                        <span v-if="broadcastForm.enabled" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-400 border border-indigo-500/40">
+                          ● 广播展示中
+                        </span>
+                        <span v-else class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-400">
+                          已关闭
+                        </span>
+                      </h3>
+                      <p class="text-xs text-slate-400 mt-0.5">置顶悬浮在用户端顶部，毫秒级同步推送平台通知与活动</p>
+                    </div>
+                  </div>
+
+                  <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" v-model="broadcastForm.enabled" class="sr-only peer">
+                    <div class="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                  </label>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                  <div class="sm:col-span-3">
+                    <input 
+                      type="text" 
+                      v-model="broadcastForm.message" 
+                      placeholder="输入广播公告内容..."
+                      class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                  </div>
+                  <div class="flex gap-2">
+                    <select 
+                      v-model="broadcastForm.level" 
+                      class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-2 py-2 text-xs text-slate-300 focus:outline-none focus:border-indigo-500">
+                      <option value="info">常规 (蓝色)</option>
+                      <option value="warning">提醒 (黄色)</option>
+                      <option value="critical">紧要 (红色)</option>
+                    </select>
+                    <button 
+                      @click="saveBroadcast" 
+                      class="px-3 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold transition shadow">
+                      生效
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -629,16 +748,67 @@
             
             <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
               
-              <div class="flex items-center justify-between">
+              <!-- 顶部工具栏与多维筛选 -->
+              <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
                 <div>
-                  <h3 class="text-sm font-bold text-white">平台全量任务流水监控</h3>
-                  <p class="text-xs text-slate-500">审计所有用户的 ComfyUI 运行记录、耗费算力币及输出图片</p>
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold text-white">平台全量任务流水监控</h3>
+                    <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
+                      {{ allTasks.length }} 条流水
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-500 mt-1">支持按用户分类、按状态筛选（进行中/成功/失败/已取消），支持任意进行中任务的强制取消与退款</p>
                 </div>
-                <button @click="loadTasks" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition">
-                  刷新审计表
-                </button>
+
+                <div class="flex flex-wrap items-center gap-2.5">
+                  <!-- 用户筛选 -->
+                  <div class="flex items-center gap-1.5 text-xs">
+                    <span class="text-slate-400 text-[11px]">用户:</span>
+                    <select 
+                      v-model="taskFilterUser" 
+                      @change="loadTasks" 
+                      class="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 max-w-[150px]">
+                      <option value="">全部用户</option>
+                      <option v-for="u in users" :key="u.id" :value="u.id">
+                        {{ u.username }} ({{ u.role === 'admin' ? '管理员' : '普通用户' }})
+                      </option>
+                    </select>
+                  </div>
+
+                  <!-- 状态筛选 -->
+                  <div class="flex items-center gap-1.5 text-xs">
+                    <span class="text-slate-400 text-[11px]">状态:</span>
+                    <select 
+                      v-model="taskFilterStatus" 
+                      @change="loadTasks" 
+                      class="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500">
+                      <option value="ALL">全部状态</option>
+                      <option value="RUNNING">⏳ 进行中 / 排队中</option>
+                      <option value="SUCCESS">✅ 成功完成 (SUCCESS)</option>
+                      <option value="FAILED">❌ 执行失败 (FAILED)</option>
+                      <option value="CANCELLED">⏹ 已取消 (CANCELLED)</option>
+                    </select>
+                  </div>
+
+                  <!-- 批量清理失败或取消任务 -->
+                  <button 
+                    @click="adminBatchCleanTasks('CANCELLED')" 
+                    title="清理全部已取消任务的历史流水"
+                    class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs transition border border-slate-700">
+                    清理已取消
+                  </button>
+
+                  <button 
+                    @click="loadTasks" 
+                    :disabled="taskFilterLoading"
+                    class="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition flex items-center gap-1 shadow">
+                    <i data-lucide="rotate-cw" :class="taskFilterLoading ? 'animate-spin' : ''" class="w-3.5 h-3.5"></i>
+                    <span>刷新</span>
+                  </button>
+                </div>
               </div>
 
+              <!-- 任务表格 -->
               <div class="overflow-x-auto">
                 <table class="w-full text-left text-xs">
                   <thead>
@@ -649,13 +819,14 @@
                       <th class="py-3 px-3">耗时 / 代币</th>
                       <th class="py-3 px-3">产出预览</th>
                       <th class="py-3 px-3">创建时间</th>
+                      <th class="py-3 px-3 text-right">管控操作</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
                     <tr v-for="t in allTasks" :key="t.taskId" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
-                        <div class="font-mono text-indigo-400 font-bold truncate max-w-[150px]">{{ t.taskId }}</div>
-                        <div class="text-[10px] text-slate-400">用户: <span class="text-slate-200">{{ t.username || '匿名' }}</span></div>
+                        <div class="font-mono text-indigo-400 font-bold truncate max-w-[150px]" :title="t.taskId">{{ t.taskId }}</div>
+                        <div class="text-[10px] text-slate-400">用户: <span class="text-slate-200 font-semibold">{{ t.username || '匿名' }}</span> <span v-if="t.userId" class="font-mono text-slate-500 text-[9px]">(ID: {{ t.userId }})</span></div>
                       </td>
                       <td class="py-3 px-3">
                         <div class="font-semibold text-white">{{ t.workflowName || '未命名工作流' }}</div>
@@ -665,6 +836,9 @@
                         <span :class="getStatusBadge(t.status)" class="px-2 py-0.5 rounded text-[10px] font-bold">
                           {{ t.status }}
                         </span>
+                        <div v-if="t.error || t.errorMessage" class="text-[10px] text-rose-400 mt-1 max-w-[160px] truncate" :title="t.error || t.errorMessage">
+                          {{ t.error || t.errorMessage }}
+                        </div>
                       </td>
                       <td class="py-3 px-3 font-mono">
                         <div>{{ t.duration || 0 }}s</div>
@@ -683,6 +857,162 @@
                       </td>
                       <td class="py-3 px-3 text-slate-400">
                         {{ formatTimestamp(t.createdAt) }}
+                      </td>
+                      <td class="py-3 px-3 text-right">
+                        <div class="flex items-center justify-end gap-1.5">
+                          <!-- 强制取消按钮 (仅运行中或排队中可见) -->
+                          <button 
+                            v-if="t.status === 'QUEUED' || t.status === 'RUNNING' || t.status === 'PENDING'"
+                            @click="adminCancelTask(t.taskId)"
+                            title="强制中断此任务并自动退还代币"
+                            class="px-2 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white text-[11px] font-medium border border-rose-800/50 transition flex items-center gap-1">
+                            <i data-lucide="slash" class="w-3 h-3"></i>
+                            <span>强行取消</span>
+                          </button>
+
+                          <!-- 清理任务记录 (彻底从数据库删除台账) -->
+                          <button 
+                            @click="adminDeleteTask(t.taskId)"
+                            title="从数据库彻底清理此任务记录"
+                            class="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 border border-slate-700 transition">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr v-if="allTasks.length === 0">
+                      <td colspan="7" class="py-12 text-center text-slate-500">
+                        当前筛选条件下无任何任务流水记录
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+
+          </section>
+
+          <!-- 5.5 工作流治理与上下架治理 (Workflows) -->
+          <section v-if="activeSection === 'workflows'" class="space-y-4">
+            
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
+              
+              <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h3 class="text-sm font-bold text-white">全站工作流治理中枢</h3>
+                    <span class="px-2.5 py-0.5 rounded-full text-xs font-mono bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
+                      {{ workflows.length }} 个工作流
+                    </span>
+                  </div>
+                  <p class="text-xs text-slate-500 mt-1">管理全平台预设工作流（全员可用且受保护）与各用户自建工作流（私有隔离），支持快捷上下架、置顶与分类调度</p>
+                </div>
+
+                <div class="flex flex-wrap items-center gap-2.5">
+                  <!-- 分类/属性过滤 -->
+                  <div class="flex items-center gap-1.5 text-xs">
+                    <span class="text-slate-400 text-[11px]">过滤:</span>
+                    <select 
+                      v-model="workflowFilter" 
+                      class="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500">
+                      <option value="ALL">全部工作流 ({{ workflows.length }})</option>
+                      <option value="OFFICIAL">🌟 仅官方预设</option>
+                      <option value="USER">👤 仅用户自建</option>
+                      <option value="ACTIVE">✅ 仅上架展示中</option>
+                      <option value="INACTIVE">⏸ 仅已下架隐藏</option>
+                    </select>
+                  </div>
+
+                  <button 
+                    @click="loadWorkflows" 
+                    class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition flex items-center gap-1 border border-slate-700">
+                    <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
+                    <span>刷新</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 工作流列表表格 -->
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead>
+                    <tr class="border-b border-slate-800 text-slate-400">
+                      <th class="py-3 px-3">工作流模型 / ID</th>
+                      <th class="py-3 px-3">类型归属</th>
+                      <th class="py-3 px-3">分类标签</th>
+                      <th class="py-3 px-3">单价 / 耗币</th>
+                      <th class="py-3 px-3">置顶状态</th>
+                      <th class="py-3 px-3">上架状态</th>
+                      <th class="py-3 px-3 text-right">调度操作</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-800/60">
+                    <tr v-for="wf in filteredWorkflows" :key="wf.id" class="hover:bg-slate-800/30 transition">
+                      <td class="py-3 px-3">
+                        <div class="font-bold text-white flex items-center gap-1.5">
+                          <span>{{ wf.name }}</span>
+                          <span v-if="wf.isPinned" class="text-amber-400 text-xs" title="当前已置顶">📌</span>
+                        </div>
+                        <div class="text-[10px] text-slate-500 font-mono mt-0.5">{{ wf.id }}</div>
+                        <div v-if="wf.description" class="text-[11px] text-slate-400 truncate max-w-[240px] mt-0.5">{{ wf.description }}</div>
+                      </td>
+                      <td class="py-3 px-3">
+                        <span v-if="wf.isOfficial" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
+                          🌟 官方预设 (全员可见)
+                        </span>
+                        <div v-else class="flex flex-col">
+                          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 w-max">
+                            👤 用户自建
+                          </span>
+                          <span class="text-[10px] text-slate-400 mt-1 font-mono">所有者: {{ wf.ownerName || wf.ownerId || '未知' }}</span>
+                        </div>
+                      </td>
+                      <td class="py-3 px-3 font-medium text-slate-300">
+                        {{ wf.category || '通用' }}
+                      </td>
+                      <td class="py-3 px-3 font-mono text-amber-400">
+                        {{ wf.pointsCost || 5 }} 点
+                      </td>
+                      <td class="py-3 px-3">
+                        <button 
+                          @click="adminToggleWorkflowPin(wf.id)" 
+                          :class="wf.isPinned ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 font-bold' : 'bg-slate-800 text-slate-400 border-slate-700'"
+                          class="px-2 py-0.5 rounded-lg border text-[11px] transition flex items-center gap-1">
+                          <span>{{ wf.isPinned ? '📌 已置顶' : '未置顶' }}</span>
+                        </button>
+                      </td>
+                      <td class="py-3 px-3">
+                        <button 
+                          @click="adminToggleWorkflowActive(wf.id)" 
+                          :class="wf.isActive ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-rose-500/15 text-rose-400 border-rose-500/30'"
+                          class="px-2.5 py-0.5 rounded-lg border text-[11px] font-bold transition">
+                          {{ wf.isActive ? '✅ 正常上架' : '⏸ 已下架隐藏' }}
+                        </button>
+                      </td>
+                      <td class="py-3 px-3 text-right">
+                        <div class="flex items-center justify-end gap-1.5">
+                          <!-- 设为官方 / 取消官方 -->
+                          <button 
+                            @click="adminToggleWorkflowOfficial(wf.id)" 
+                            :title="wf.isOfficial ? '转为普通自建' : '转为官方预设并全员开放'"
+                            class="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] border border-slate-700 transition">
+                            {{ wf.isOfficial ? '取消官方' : '设为官方' }}
+                          </button>
+
+                          <!-- 删除工作流 -->
+                          <button 
+                            @click="adminDeleteWorkflow(wf)" 
+                            title="彻底删除此工作流配置"
+                            class="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-900/60 text-slate-400 hover:text-rose-300 border border-slate-700 transition">
+                            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr v-if="filteredWorkflows.length === 0">
+                      <td colspan="7" class="py-12 text-center text-slate-500">
+                        当前分类下无工作流
                       </td>
                     </tr>
                   </tbody>
@@ -1448,6 +1778,7 @@
           announcements: '官方公告与动态资讯管理',
           security: '云端防御 & Cloudflare Turnstile',
           tasks: '全局任务流水审计',
+          workflows: '工作流资产调度与上下架治理',
           keys: 'API 密钥池调度',
           gallery: '全站画廊与自建图床资产管控'
         };
@@ -1485,6 +1816,38 @@
         const userSearchQuery = ref('');
         const announcements = ref([]);
         const allTasks = ref([]);
+        const taskFilterStatus = ref('ALL');
+        const taskFilterUser = ref('');
+        const taskFilterLoading = ref(false);
+
+        const workflows = ref([]);
+        const workflowFilter = ref('ALL');
+
+        const broadcastForm = ref({
+          enabled: false,
+          message: '🔥 欢迎体验全新一代 ComfyUI 云端工作流创作平台！',
+          level: 'info'
+        });
+        const maintenanceForm = ref({
+          enabled: false,
+          message: '系统正在进行云端算力节点升级维护，暂不可提交新生成任务，请稍后访问。'
+        });
+
+        const filteredWorkflows = computed(() => {
+          if (workflowFilter.value === 'OFFICIAL') {
+            return workflows.value.filter(w => w.isOfficial);
+          }
+          if (workflowFilter.value === 'USER') {
+            return workflows.value.filter(w => !w.isOfficial);
+          }
+          if (workflowFilter.value === 'ACTIVE') {
+            return workflows.value.filter(w => w.isActive);
+          }
+          if (workflowFilter.value === 'INACTIVE') {
+            return workflows.value.filter(w => !w.isActive);
+          }
+          return workflows.value;
+        });
         const keys = ref([]);
 
         const systemConfig = ref({
@@ -1639,8 +2002,253 @@
         };
 
         const loadTasks = async () => {
-          const res = await authFetch('/api/admin/tasks');
-          if (res.ok) allTasks.value = await res.json();
+          taskFilterLoading.value = true;
+          try {
+            const params = new URLSearchParams();
+            if (taskFilterStatus.value && taskFilterStatus.value !== 'ALL') {
+              params.append('status', taskFilterStatus.value);
+            }
+            if (taskFilterUser.value) {
+              params.append('user_id', taskFilterUser.value);
+            }
+            const res = await authFetch('/api/admin/tasks?' + params.toString());
+            if (res.ok) allTasks.value = await res.json();
+          } finally {
+            taskFilterLoading.value = false;
+          }
+        };
+
+        const adminCancelTask = async (taskId) => {
+          const ok = await confirmAction({
+            title: '强制取消任务',
+            message: `确定要强制中断并取消任务 [${taskId}] 吗？系统将自动向 RunningHub 发出中断请求，并全额退还该任务的算力币。`,
+            confirmText: '强制取消并退费',
+            type: 'danger'
+          });
+          if (!ok) return;
+
+          try {
+            const res = await authFetch(`/api/admin/tasks/${taskId}/cancel`, { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              showToastNotification(data.message || '任务已成功强制取消', 'success');
+              await loadTasks();
+            } else {
+              const err = await res.json();
+              showToastNotification('操作失败: ' + (err.detail || '未知错误'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('请求失败: ' + e.message, 'error');
+          }
+        };
+
+        const adminDeleteTask = async (taskId) => {
+          const ok = await confirmAction({
+            title: '清理任务记录',
+            message: `确定要彻底删除任务 [${taskId}] 的台账记录吗？此操作无法撤销。`,
+            confirmText: '确认清理',
+            type: 'danger'
+          });
+          if (!ok) return;
+
+          try {
+            const res = await authFetch(`/api/admin/tasks/${taskId}`, { method: 'DELETE' });
+            if (res.ok) {
+              showToastNotification('任务记录已成功清理', 'success');
+              allTasks.value = allTasks.value.filter(t => t.taskId !== taskId);
+            } else {
+              const err = await res.json();
+              showToastNotification('清理失败: ' + (err.detail || '未知错误'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('清理失败: ' + e.message, 'error');
+          }
+        };
+
+        const adminBatchCleanTasks = async (status) => {
+          const statusText = status === 'CANCELLED' ? '已取消' : (status === 'FAILED' ? '失败' : status);
+          const ok = await confirmAction({
+            title: `批量清理${statusText}任务`,
+            message: `确定要一键清理全站所有处于【${statusText}】状态的历史任务记录吗？这将彻底清空这些记录。`,
+            confirmText: '一键清空',
+            type: 'danger'
+          });
+          if (!ok) return;
+
+          try {
+            const res = await authFetch('/api/admin/tasks/clean-batch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ status })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              showToastNotification(data.message || '清理完成', 'success');
+              await loadTasks();
+            } else {
+              const err = await res.json();
+              showToastNotification('批量清理失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('网络请求失败', 'error');
+          }
+        };
+
+        const loadWorkflows = async () => {
+          try {
+            const res = await authFetch('/api/admin/workflows');
+            if (res.ok) {
+              workflows.value = await res.json();
+            }
+          } catch (e) {
+            console.error('Failed to load workflows', e);
+          }
+        };
+
+        const adminToggleWorkflowActive = async (wfId) => {
+          try {
+            const res = await authFetch(`/api/admin/workflows/${wfId}/toggle-active`, { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              showToastNotification(data.isActive ? '工作流已成功上架' : '工作流已下架停用', 'success');
+              await loadWorkflows();
+            }
+          } catch (e) {
+            showToastNotification('操作失败', 'error');
+          }
+        };
+
+        const adminToggleWorkflowPin = async (wfId) => {
+          try {
+            const res = await authFetch(`/api/admin/workflows/${wfId}/toggle-pin`, { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              showToastNotification(data.isPinned ? '工作流已成功置顶' : '已取消置顶', 'success');
+              await loadWorkflows();
+            }
+          } catch (e) {
+            showToastNotification('操作失败', 'error');
+          }
+        };
+
+        const adminToggleWorkflowOfficial = async (wfId) => {
+          try {
+            const res = await authFetch(`/api/admin/workflows/${wfId}/toggle-official`, { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              showToastNotification(data.isOfficial ? '已设为官方预设工作流' : '已改为用户自建工作流', 'success');
+              await loadWorkflows();
+            }
+          } catch (e) {
+            showToastNotification('操作失败', 'error');
+          }
+        };
+
+        const adminDeleteWorkflow = async (wf) => {
+          const ok = await confirmAction({
+            title: '删除工作流',
+            message: `确定要彻底删除工作流 [${wf.name || wf.id}] 吗？删除后前台所有相关用户将不可见。`,
+            confirmText: '确认删除',
+            type: 'danger'
+          });
+          if (!ok) return;
+
+          try {
+            const res = await authFetch(`/api/admin/workflows/${wf.id}`, { method: 'DELETE' });
+            if (res.ok) {
+              showToastNotification('工作流已成功删除', 'success');
+              workflows.value = workflows.value.filter(w => w.id !== wf.id);
+            }
+          } catch (e) {
+            showToastNotification('删除失败', 'error');
+          }
+        };
+
+        const loadSystemBroadcastAndMaintenance = async () => {
+          try {
+            const res = await authFetch('/api/config');
+            if (res.ok) {
+              const cfg = await res.json();
+              if (cfg.system) {
+                if (cfg.system.broadcast) {
+                  broadcastForm.value = {
+                    enabled: Boolean(cfg.system.broadcast.enabled),
+                    message: cfg.system.broadcast.message || '',
+                    level: cfg.system.broadcast.level || 'info'
+                  };
+                }
+                if (cfg.system.maintenance) {
+                  maintenanceForm.value = {
+                    enabled: Boolean(cfg.system.maintenance.enabled),
+                    message: cfg.system.maintenance.message || '系统正在维护中，暂停提交新任务，请稍后访问。'
+                  };
+                }
+              }
+            }
+          } catch (e) {
+            console.error('Failed to load system broadcast/maintenance', e);
+          }
+        };
+
+        const saveBroadcast = async () => {
+          try {
+            const res = await authFetch('/api/admin/system/broadcast', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(broadcastForm.value)
+            });
+            if (res.ok) {
+              showToastNotification('全站广播设置已立即生效', 'success');
+            } else {
+              showToastNotification('保存广播设置失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('网络请求异常', 'error');
+          }
+        };
+
+        const toggleMaintenance = async () => {
+          const willEnable = !maintenanceForm.value.enabled;
+          if (willEnable) {
+            const ok = await confirmAction({
+              title: '开启全站维护模式',
+              message: '开启维护模式后，所有普通用户将无法提交任何生成任务（管理员仍可正常测试调试）。确定开启吗？',
+              confirmText: '确认开启维护',
+              type: 'danger'
+            });
+            if (!ok) return;
+          }
+
+          try {
+            maintenanceForm.value.enabled = willEnable;
+            const res = await authFetch('/api/admin/system/maintenance', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(maintenanceForm.value)
+            });
+            if (res.ok) {
+              showToastNotification(willEnable ? '全站维护模式已开启（普通用户已拦截）' : '全站维护模式已解除（业务恢复正常）', 'success');
+            } else {
+              showToastNotification('设置维护模式失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('网络请求失败', 'error');
+          }
+        };
+
+        const saveMaintenanceMessage = async () => {
+          try {
+            const res = await authFetch('/api/admin/system/maintenance', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(maintenanceForm.value)
+            });
+            if (res.ok) {
+              showToastNotification('维护公告文案已更新', 'success');
+            }
+          } catch (e) {
+            showToastNotification('保存失败', 'error');
+          }
         };
 
         const loadKeys = async () => {
@@ -2164,6 +2772,25 @@
           announcements,
           annoModal,
           allTasks,
+          taskFilterStatus,
+          taskFilterUser,
+          taskFilterLoading,
+          adminCancelTask,
+          adminDeleteTask,
+          adminBatchCleanTasks,
+          workflows,
+          workflowFilter,
+          filteredWorkflows,
+          loadWorkflows,
+          adminToggleWorkflowActive,
+          adminToggleWorkflowPin,
+          adminToggleWorkflowOfficial,
+          adminDeleteWorkflow,
+          broadcastForm,
+          maintenanceForm,
+          saveBroadcast,
+          toggleMaintenance,
+          saveMaintenanceMessage,
           keys,
           systemConfig,
           editPointsModal,

@@ -83,6 +83,39 @@ async def notify_user(user_id: str, event_type: str, data: Dict[str, Any]):
 
 # ----------------- 数据加载与保存 -----------------
 
+def sort_workflows(workflows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """工作流排序：置顶排在最前 (按置顶时间倒序)，其次官方推荐，再次更新时间"""
+    return sorted(
+        workflows,
+        key=lambda w: (
+            1 if w.get("isPinned") else 0,
+            int(w.get("pinnedAt") or 0),
+            1 if w.get("isOfficial") else 0,
+            int(w.get("updatedAt") or 0)
+        ),
+        reverse=True
+    )
+
+def filter_workflows_for_user(workflows: List[Dict[str, Any]], current_user: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """多租户工作流隔离策略：管理员全量可见；普通用户仅可见上架的官方工作流 + 本人创建的上架工作流"""
+    sorted_all = sort_workflows(workflows)
+    if current_user and current_user.get("role") == "admin":
+        return sorted_all
+    
+    res = []
+    user_id_str = str(current_user["id"]) if current_user else ""
+    for w in sorted_all:
+        is_official = bool(w.get("isOfficial", False))
+        is_active = bool(w.get("isActive", True))
+        owner_id = str(w.get("ownerId", ""))
+        
+        if is_official and is_active:
+            res.append(w)
+        elif user_id_str and owner_id == user_id_str and is_active:
+            res.append(w)
+            
+    return res
+
 def load_config() -> Dict[str, Any]:
     cfg = {"activeKeyId": "", "apiKeys": [], "workflows": []}
     needs_save = False
@@ -904,6 +937,8 @@ def get_public_auth_config():
         "turnstileSiteKey": sys_cfg.get("turnstileSiteKey", ""),
         "allowRegistration": bool(sys_cfg.get("allowRegistration", True)),
         "requireLoginToGenerate": bool(sys_cfg.get("requireLoginToGenerate", False)),
+        "broadcast": sys_cfg.get("broadcast", {"enabled": False, "message": "", "level": "info"}),
+        "maintenance": sys_cfg.get("maintenance", {"enabled": False, "message": "系统维护中"}),
         "isFirstUser": len(users) == 0
     }
 
@@ -1403,13 +1438,15 @@ def get_config(current_user: Optional[Dict[str, Any]] = Depends(get_current_user
     
     base_res = {
         "hasKey": bool(active_key_str),
-        "workflows": cfg.get("workflows", []),
+        "workflows": filter_workflows_for_user(cfg.get("workflows", []), current_user),
         "system": get_system_config_safe(cfg) if is_admin else {
             "siteTitle": cfg.get("system", {}).get("siteTitle", "RunningHub 智能调度中心"),
             "allowRegistration": bool(cfg.get("system", {}).get("allowRegistration", True)),
             "requireLoginToGenerate": bool(cfg.get("system", {}).get("requireLoginToGenerate", True)),
             "defaultUserPoints": cfg.get("system", {}).get("defaultUserPoints", 100),
-            "hideAuxiliaryAudioChain": bool(cfg.get("system", {}).get("hideAuxiliaryAudioChain", True))
+            "hideAuxiliaryAudioChain": bool(cfg.get("system", {}).get("hideAuxiliaryAudioChain", True)),
+            "broadcast": cfg.get("system", {}).get("broadcast", {"enabled": False, "message": "", "level": "info"}),
+            "maintenance": cfg.get("system", {}).get("maintenance", {"enabled": False, "message": "系统维护中"})
         }
     }
     
@@ -1543,42 +1580,155 @@ def test_key(key_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
     return {"status": "ok", "valid": valid, "message": msg}
 
 @app.get("/api/workflows")
-def get_workflows():
+def get_workflows(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
+    """获取工作流列表（具备多租户隔离与置顶排序）"""
     cfg = load_config()
-    return cfg.get("workflows", [])
+    return filter_workflows_for_user(cfg.get("workflows", []), current_user)
 
 class WorkflowModel(BaseModel):
     id: str
     name: str
     description: Optional[str] = ""
-    category: Optional[str] = "通用"
+    category: Optional[str] = "官方预设"
     pointsCost: Optional[int] = 5
     defaultParams: Optional[Dict[str, Any]] = None
+    isOfficial: Optional[bool] = None
+    isActive: Optional[bool] = True
+    isPinned: Optional[bool] = False
 
 @app.post("/api/workflows")
 def add_or_update_workflow(wf: WorkflowModel, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
-    """添加或修改工作流"""
+    """添加或修改工作流（具备租户隔离与官方工作流防篡改防护）"""
     cfg = load_config()
     workflows = cfg.get("workflows", [])
-    existing = False
+    is_admin = current_user and current_user.get("role") == "admin"
+    
+    existing_idx = None
+    existing_wf = None
     for i, w in enumerate(workflows):
         if str(w.get("id")) == str(wf.id):
-            workflows[i] = wf.dict()
-            existing = True
+            existing_idx = i
+            existing_wf = w
             break
-    if not existing:
-        workflows.append(wf.dict())
+            
+    wf_data = wf.dict()
+    wf_data["updatedAt"] = int(time.time())
+    
+    if not is_admin:
+        if not current_user:
+            raise HTTPException(status_code=401, detail="请先登录后再保存自定义工作流")
+            
+        if existing_wf:
+            if existing_wf.get("isOfficial"):
+                raise HTTPException(status_code=403, detail="【官方预设工作流】受全平台保护，仅限管理员修改")
+            if str(existing_wf.get("ownerId", "")) != str(current_user["id"]):
+                raise HTTPException(status_code=403, detail="无权修改其他用户的私有工作流")
+                
+        wf_data["isOfficial"] = False
+        wf_data["ownerId"] = str(current_user["id"])
+        wf_data["ownerName"] = str(current_user.get("username", "用户"))
+        wf_data["isActive"] = True
+        wf_data["isPinned"] = False
+        if not wf_data.get("category") or wf_data.get("category") == "官方预设":
+            wf_data["category"] = "我的自建"
+    else:
+        if wf_data.get("isOfficial") is None:
+            wf_data["isOfficial"] = existing_wf.get("isOfficial", True) if existing_wf else True
+        if wf_data.get("isOfficial"):
+            wf_data["ownerId"] = None
+            wf_data["ownerName"] = "系统官方"
+        else:
+            if existing_wf and existing_wf.get("ownerId"):
+                wf_data["ownerId"] = existing_wf["ownerId"]
+                wf_data["ownerName"] = existing_wf.get("ownerName", "用户")
+            else:
+                wf_data["ownerId"] = str(current_user["id"]) if current_user else "admin"
+                wf_data["ownerName"] = current_user.get("username", "管理员") if current_user else "管理员"
+                
+    if existing_idx is not None:
+        workflows[existing_idx] = wf_data
+    else:
+        workflows.append(wf_data)
+        
     cfg["workflows"] = workflows
     save_config(cfg)
-    return {"status": "ok", "workflow": wf.dict()}
+    return {"status": "ok", "workflow": wf_data}
 
 @app.delete("/api/workflows/{workflow_id}")
 def delete_workflow(workflow_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
-    """删除工作流"""
+    """删除工作流（防越权：普通用户只能删除自己的工作流，禁止删除官方工作流）"""
     cfg = load_config()
-    cfg["workflows"] = [w for w in cfg.get("workflows", []) if str(w.get("id")) != str(workflow_id)]
+    workflows = cfg.get("workflows", [])
+    target = next((w for w in workflows if str(w.get("id")) == str(workflow_id)), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+        
+    is_admin = current_user and current_user.get("role") == "admin"
+    if not is_admin:
+        if not current_user:
+            raise HTTPException(status_code=401, detail="请先登录后再进行操作")
+        if target.get("isOfficial"):
+            raise HTTPException(status_code=403, detail="【官方预设工作流】全平台受保护，仅限管理员下架或删除")
+        if str(target.get("ownerId", "")) != str(current_user["id"]):
+            raise HTTPException(status_code=403, detail="无权删除非本人的私有工作流")
+            
+    cfg["workflows"] = [w for w in workflows if str(w.get("id")) != str(workflow_id)]
     save_config(cfg)
-    return {"status": "ok"}
+    return {"status": "ok", "message": f"工作流 {workflow_id} 已成功删除"}
+
+# ==================== 管理员工作流全权管控接口 ====================
+@app.get("/api/admin/workflows")
+def admin_list_workflows(_: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员全量工作流列表（包含官方与所有用户自建）"""
+    cfg = load_config()
+    return sort_workflows(cfg.get("workflows", []))
+
+@app.post("/api/admin/workflows/{workflow_id}/toggle-active")
+def admin_toggle_workflow_active(workflow_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """切换工作流上架/下架状态"""
+    cfg = load_config()
+    workflows = cfg.get("workflows", [])
+    target = next((w for w in workflows if str(w.get("id")) == str(workflow_id)), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    target["isActive"] = not bool(target.get("isActive", True))
+    target["updatedAt"] = int(time.time())
+    save_config(cfg)
+    return {"status": "ok", "workflow": target, "isActive": target["isActive"]}
+
+@app.post("/api/admin/workflows/{workflow_id}/toggle-pin")
+def admin_toggle_workflow_pin(workflow_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """切换工作流置顶状态"""
+    cfg = load_config()
+    workflows = cfg.get("workflows", [])
+    target = next((w for w in workflows if str(w.get("id")) == str(workflow_id)), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    is_pinned = not bool(target.get("isPinned", False))
+    target["isPinned"] = is_pinned
+    target["pinnedAt"] = int(time.time()) if is_pinned else 0
+    target["updatedAt"] = int(time.time())
+    save_config(cfg)
+    return {"status": "ok", "workflow": target, "isPinned": target["isPinned"]}
+
+@app.post("/api/admin/workflows/{workflow_id}/toggle-official")
+def admin_toggle_workflow_official(workflow_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """切换工作流官方/自建属性"""
+    cfg = load_config()
+    workflows = cfg.get("workflows", [])
+    target = next((w for w in workflows if str(w.get("id")) == str(workflow_id)), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    is_off = not bool(target.get("isOfficial", False))
+    target["isOfficial"] = is_off
+    if is_off:
+        target["ownerId"] = None
+        target["ownerName"] = "系统官方"
+        if not target.get("category") or target.get("category") == "我的自建":
+            target["category"] = "官方预设"
+    target["updatedAt"] = int(time.time())
+    save_config(cfg)
+    return {"status": "ok", "workflow": target, "isOfficial": target["isOfficial"]}
 
 def detect_silent_audio_subgraphs(nodes: Dict[str, Any]) -> Set[str]:
     """
@@ -2317,6 +2467,14 @@ async def generate_task(
 ):
     cfg = load_config()
     sys_cfg = cfg.get("system", {})
+    # 全站维护模式拦截
+    maint = sys_cfg.get("maintenance", {})
+    if maint.get("enabled"):
+        is_admin = current_user and current_user.get("role") == "admin"
+        if not is_admin:
+            maint_msg = maint.get("message") or "系统正在进行维护，暂停提交新任务，请稍后访问。"
+            raise HTTPException(status_code=503, detail=f"【系统维护中】{maint_msg}")
+
     require_login = bool(sys_cfg.get("requireLoginToGenerate", True))
     if require_login and not current_user:
         raise HTTPException(status_code=401, detail="当前系统已开启强制登录，请先登录后再提交生成任务")
@@ -2479,9 +2637,117 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
     return user_tasks
 
 @app.get("/api/admin/tasks")
-def admin_list_all_tasks(_: Dict[str, Any] = Depends(get_current_admin)):
-    """管理员全量任务审计视图"""
-    return db_load_tasks(is_admin=True, limit=500)
+def admin_list_all_tasks(
+    status: Optional[str] = None,
+    user_id: Optional[str] = None,
+    username: Optional[str] = None,
+    limit: int = 500,
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """管理员全量任务审计视图（支持按用户、状态进行过滤）"""
+    return db_load_tasks(user_id=user_id, status=status, is_admin=True, limit=limit, search_user=username)
+
+@app.post("/api/admin/tasks/{task_id}/cancel")
+async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员强制取消全站任意进行中任务，并自动执行退费与通知"""
+    task_id_str = str(task_id).strip()
+    t = db_get_task(task_id_str)
+    if not t:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    CANCELLED_TASKS.add(task_id_str)
+    
+    cloud_status = "已标记本地取消"
+    cfg = load_config()
+    api_key = get_active_api_key(cfg)
+    if api_key:
+        try:
+            cancel_url = f"{RUNNINGHUB_API_URL}/task/openapi/cancel"
+            headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
+            res = await asyncio.to_thread(
+                requests.post,
+                cancel_url,
+                json={"apiKey": api_key, "taskId": task_id_str},
+                headers=headers,
+                timeout=8
+            )
+            data = res.json()
+            cloud_status = data.get("msg") or "已通知 RunningHub 云端取消"
+        except Exception as e:
+            cloud_status = f"云端取消异常: {str(e)}"
+            
+    cost_val = int(t.get("cost", 0) or 0)
+    task_owner = str(t.get("userId") or "")
+    refund_msg = ""
+    if cost_val > 0 and task_owner and t.get("status") not in ("CANCELLED", "FAILED"):
+        r_ok, new_bal = db_refund_user_points(
+            user_id=task_owner,
+            amount=cost_val,
+            task_id=task_id_str,
+            reason=f"管理员强制取消任务全额退款 (任务ID: {task_id_str})"
+        )
+        if r_ok:
+            refund_msg = f"，已退还 {cost_val} 算力点至用户 (余额: {new_bal})"
+            
+    db_update_task(task_id_str, {
+        "status": "CANCELLED",
+        "error": f"管理员后台强制取消 ({cloud_status}){refund_msg}",
+        "errorMessage": f"管理员后台强制取消 ({cloud_status}){refund_msg}",
+        "updatedAt": int(time.time())
+    })
+    
+    return {
+        "status": "ok",
+        "message": f"任务已强制取消{refund_msg}",
+        "cloudStatus": cloud_status
+    }
+
+@app.delete("/api/admin/tasks/{task_id}")
+def admin_delete_task(task_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员清理/删除单条任务记录"""
+    db_delete_task(str(task_id).strip())
+    return {"status": "ok", "message": f"任务 {task_id} 记录已清理"}
+
+@app.post("/api/admin/tasks/clean-batch")
+def admin_clean_tasks_batch(payload: Dict[str, Any], _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员批量清理特定状态的任务记录（如已取消或失败任务）"""
+    status_target = payload.get("status")
+    if not status_target:
+        raise HTTPException(status_code=400, detail="缺少清理目标状态")
+    tasks = db_load_tasks(status=status_target, is_admin=True, limit=1000)
+    tids = [t["taskId"] for t in tasks if t.get("taskId")]
+    deleted_count = db_delete_tasks_batch(tids)
+    return {"status": "ok", "deletedCount": deleted_count, "message": f"已成功清理 {deleted_count} 条状态为 {status_target} 的任务记录"}
+
+# ==================== 全站实时广播与维护模式管控接口 ====================
+@app.post("/api/admin/system/broadcast")
+def admin_update_broadcast(payload: Dict[str, Any], _: Dict[str, Any] = Depends(get_current_admin)):
+    """更新全站实时广播通知"""
+    cfg = load_config()
+    sys_cfg = cfg.setdefault("system", {})
+    broadcast = {
+        "enabled": bool(payload.get("enabled", False)),
+        "message": str(payload.get("message", "")).strip(),
+        "level": str(payload.get("level", "info")),
+        "updatedAt": int(time.time())
+    }
+    sys_cfg["broadcast"] = broadcast
+    save_config(cfg)
+    return {"status": "ok", "broadcast": broadcast}
+
+@app.post("/api/admin/system/maintenance")
+def admin_update_maintenance(payload: Dict[str, Any], _: Dict[str, Any] = Depends(get_current_admin)):
+    """切换全站维护模式开关及通知文案"""
+    cfg = load_config()
+    sys_cfg = cfg.setdefault("system", {})
+    maint = {
+        "enabled": bool(payload.get("enabled", False)),
+        "message": str(payload.get("message", "系统正在维护中，暂停提交新任务，请稍后访问。")).strip(),
+        "updatedAt": int(time.time())
+    }
+    sys_cfg["maintenance"] = maint
+    save_config(cfg)
+    return {"status": "ok", "maintenance": maint}
 
 @app.get("/api/admin/gallery")
 def admin_get_gallery(

@@ -14,6 +14,15 @@ createApp({
 
     // ================= 用户鉴权与 Turnstile 状态 =================
     const currentUser = ref(null);
+        const isBroadcastDismissed = ref(false);
+    if (sessionStorage.getItem('rh_broadcast_dismissed') === 'true') {
+      isBroadcastDismissed.value = true;
+    }
+    const dismissBroadcast = () => {
+      isBroadcastDismissed.value = true;
+      sessionStorage.setItem('rh_broadcast_dismissed', 'true');
+    };
+
     const publicConfig = ref({
       siteTitle: 'RunningHub 智能创作平台',
       turnstileEnabled: false,
@@ -1851,6 +1860,8 @@ createApp({
       // 用户鉴权与管理
       currentUser,
       publicConfig,
+      isBroadcastDismissed,
+      dismissBroadcast,
       showAuthModal,
       authTab,
       authForm,

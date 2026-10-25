@@ -23,6 +23,42 @@
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-indigo-500 selection:text-white antialiased">
   <div id="app" v-cloak class="flex flex-col min-h-screen">
     
+        <!-- 全站实时广播通知条 -->
+    <div 
+      v-if="publicConfig.broadcast && publicConfig.broadcast.enabled && publicConfig.broadcast.message && !isBroadcastDismissed" 
+      class="w-full text-xs py-2 px-4 flex items-center justify-between border-b shadow-md transition-all duration-300 z-50 sticky top-0"
+      :class="{
+        'bg-indigo-950/95 border-indigo-700/60 text-indigo-200': !publicConfig.broadcast.level || publicConfig.broadcast.level === 'info',
+        'bg-amber-950/95 border-amber-700/60 text-amber-200': publicConfig.broadcast.level === 'warning',
+        'bg-rose-950/95 border-rose-700/60 text-rose-200': publicConfig.broadcast.level === 'critical'
+      }">
+      <div class="flex items-center gap-2 max-w-7xl mx-auto flex-1 min-w-0 pr-4">
+        <span class="text-sm shrink-0">📢</span>
+        <span class="font-bold shrink-0 tracking-wide uppercase px-1.5 py-0.5 rounded text-[10px] bg-black/40 border border-white/10">
+          全站广播
+        </span>
+        <span class="truncate font-medium">{{ publicConfig.broadcast.message }}</span>
+      </div>
+      <button 
+        @click="dismissBroadcast" 
+        class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-white/10 transition shrink-0 text-xs" 
+        title="关闭本次广播提示">
+        ✕
+      </button>
+    </div>
+
+    <!-- 全站维护模式警示条 -->
+    <div 
+      v-if="publicConfig.maintenance && publicConfig.maintenance.enabled" 
+      class="w-full text-xs py-2 px-4 bg-rose-950/95 border-b border-rose-800 text-rose-200 flex items-center justify-center gap-2 text-center shadow-lg font-medium sticky top-0 z-50">
+      <span class="text-sm">⚠️</span>
+      <span class="font-bold text-rose-300">系统维护模式已开启：</span>
+      <span>{{ publicConfig.maintenance.message || '系统正在进行云端节点升级维护，暂不可提交新任务，请稍后访问。' }}</span>
+      <span v-if="currentUser && currentUser.role === 'admin'" class="ml-2 px-2 py-0.5 rounded bg-rose-800 text-white text-[10px] font-bold">
+        管理员通道正常放行
+      </span>
+    </div>
+
     <!-- 顶部导航栏 -->
     <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-30 px-3 sm:px-6 lg:px-8 py-2.5 sm:py-3 flex items-center justify-between gap-2">
       <!-- 品牌 Logo 与标题 -->
@@ -786,9 +822,12 @@
           <!-- 立即生成大按钮 -->
           <button 
             @click="submitDynamicGeneration" 
-            :disabled="isGenerating || isLoadingSchema"
+            :disabled="isGenerating || isLoadingSchema || (publicConfig.maintenance && publicConfig.maintenance.enabled && (!currentUser || currentUser.role !== 'admin'))"
             class="w-full py-4 rounded-2xl bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-base shadow-lg shadow-indigo-600/30 active:scale-[0.99] transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
-            <span v-if="!isGenerating">
+            <span v-if="publicConfig.maintenance && publicConfig.maintenance.enabled && (!currentUser || currentUser.role !== 'admin')">
+              ⚠️ 平台维护中，暂停提交新任务
+            </span>
+            <span v-else-if="!isGenerating">
               🚀 立即以 [{{ selectedTaskType }} 任务] 模式运行云端生成 
               <span v-if="modifiedParamsCount > 0" class="text-xs font-normal opacity-90">
                 (已定制 {{ modifiedParamsCount }} 项参数)
@@ -1063,19 +1102,30 @@
             
             <div>
               <div class="flex items-start justify-between gap-2">
-                <span 
-                  :class="{
-                    'bg-purple-950/80 text-purple-300 border-purple-800/40': (wf.category || '视频生成') === '视频生成',
-                    'bg-indigo-950/80 text-indigo-300 border-indigo-800/40': wf.category === '图像精绘',
-                    'bg-emerald-950/80 text-emerald-300 border-emerald-800/40': wf.category === '声音音频',
-                    'bg-amber-950/80 text-amber-300 border-amber-800/40': wf.category === '画质增强'
-                  }"
-                  class="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border">
-                  {{ wf.category || '视频生成' }}
-                </span>
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span v-if="wf.isPinned" class="text-amber-400 text-xs" title="置顶工作流">📌</span>
+                  <span 
+                    :class="{
+                      'bg-purple-950/80 text-purple-300 border-purple-800/40': (wf.category || '视频生成') === '视频生成',
+                      'bg-indigo-950/80 text-indigo-300 border-indigo-800/40': wf.category === '图像精绘',
+                      'bg-emerald-950/80 text-emerald-300 border-emerald-800/40': wf.category === '声音音频',
+                      'bg-amber-950/80 text-amber-300 border-amber-800/40': wf.category === '画质增强',
+                      'bg-indigo-500/15 text-indigo-300 border-indigo-500/30': wf.category === '官方预设'
+                    }"
+                    class="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border">
+                    {{ wf.category || '官方预设' }}
+                  </span>
+                  <span v-if="wf.isOfficial" class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                    官方
+                  </span>
+                  <span v-else class="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+                    自建
+                  </span>
+                </div>
                 <button 
+                  v-if="!wf.isOfficial && currentUser && (currentUser.role === 'admin' || String(currentUser.id) === String(wf.ownerId))"
                   @click="deleteWorkflow(wf.id)" 
-                  title="移除工作流" 
+                  title="移除自建工作流" 
                   class="text-slate-600 hover:text-rose-400 text-xs p-1 transition opacity-0 group-hover:opacity-100">
                   🗑️
                 </button>
@@ -1090,7 +1140,12 @@
               
               <div class="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500">
                 <span class="font-mono">ID: {{ wf.id }}</span>
-                <span class="text-emerald-400/80 flex items-center gap-1">● 官方可用</span>
+                <span v-if="wf.isOfficial" class="text-indigo-400 flex items-center gap-1 font-semibold">
+                  <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span> 官方预设
+                </span>
+                <span v-else class="text-amber-400 flex items-center gap-1 font-semibold">
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span> 我的自建
+                </span>
               </div>
             </div>
 
