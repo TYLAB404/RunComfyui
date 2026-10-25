@@ -231,19 +231,45 @@ def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
         "updatedAt": d.get("updated_at")
     }
 
-def db_load_tasks(user_id: Optional[str] = None, is_admin: bool = False, limit: int = 100) -> List[Dict[str, Any]]:
+def db_load_tasks(
+    user_id: Optional[str] = None, 
+    status: Optional[str] = None,
+    is_admin: bool = False, 
+    limit: int = 200,
+    search_user: Optional[str] = None
+) -> List[Dict[str, Any]]:
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        if is_admin:
-            cursor.execute("SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?;", (limit,))
-        elif user_id:
-            cursor.execute(
-                "SELECT * FROM tasks WHERE user_id = ? ORDER BY created_at DESC LIMIT ?;", 
-                (str(user_id), limit)
-            )
-        else:
-            cursor.execute("SELECT * FROM tasks WHERE user_id = '' OR user_id IS NULL ORDER BY created_at DESC LIMIT ?;", (limit,))
+        clauses = []
+        params = []
         
+        if is_admin:
+            if user_id:
+                clauses.append("user_id = ?")
+                params.append(str(user_id))
+            elif search_user:
+                clauses.append("(user_id = ? OR username LIKE ?)")
+                params.extend([str(search_user), f"%{search_user}%"])
+        else:
+            if user_id:
+                clauses.append("user_id = ?")
+                params.append(str(user_id))
+            else:
+                clauses.append("(user_id = '' OR user_id IS NULL)")
+        
+        if status and status.upper() != "ALL":
+            st_upper = status.upper()
+            if st_upper in ("RUNNING", "QUEUED", "PENDING", "IN_PROGRESS"):
+                clauses.append("status IN ('QUEUED', 'RUNNING', 'PENDING')")
+            else:
+                clauses.append("status = ?")
+                params.append(st_upper)
+                
+        where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        sql = f"SELECT * FROM tasks {where_sql} ORDER BY created_at DESC LIMIT ?;"
+        params.append(limit)
+        
+        cursor.execute(sql, tuple(params))
         rows = cursor.fetchall()
         return [db_row_to_task(r) for r in rows]
 
@@ -326,6 +352,18 @@ def db_update_task(task_id: str, updates: Dict[str, Any]):
         sql = f"UPDATE tasks SET {', '.join(col_updates)} WHERE task_id = ?;"
         cursor.execute(sql, tuple(vals))
         conn.commit()
+
+def db_delete_tasks_batch(task_ids: List[str]) -> int:
+    """从数据库批量删除任务记录"""
+    if not task_ids:
+        return 0
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        placeholders = ",".join("?" for _ in task_ids)
+        cursor.execute(f"DELETE FROM tasks WHERE task_id IN ({placeholders});", tuple(str(tid) for tid in task_ids))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
 
 def db_delete_task(task_id: str):
     """从数据库删除单条任务"""
