@@ -380,7 +380,9 @@ async def sync_single_file_to_imgbed(
 
 async def sync_task_outputs_to_imgbed(task_id: str):
     """
-    后台任务：在任务生成成功后，平滑将各个成果流式备份到用户隔离图床文件夹并原子升级数据库链接
+    后台任务：在任务生成成功后，平滑将各个成果流式备份到用户隔离图床文件夹。
+    注意：用户的任务展示与下载直链必须严格保持为 RunningHub 原始链接 (url/remoteUrl)，
+    图床链接仅作为管理员数据归档备份存储在 imgbedUrl 中！
     """
     try:
         t = db_get_task(str(task_id))
@@ -400,11 +402,22 @@ async def sync_task_outputs_to_imgbed(task_id: str):
         new_outputs = []
         
         for out in outputs:
-            cur_url = out.get("url") or out.get("remoteUrl") or ""
-            if "imgbed.2364498.xyz" in cur_url or out.get("storage") == "imgbed":
-                new_outputs.append(out)
+            # 若已备份到图床，保留并跳过
+            if out.get("imgbedUrl"):
+                # 如果此前误写了 url，在此处自动修正回 remoteUrl
+                if "imgbed.2364498.xyz" in out.get("url", "") and out.get("remoteUrl"):
+                    out_fix = dict(out)
+                    out_fix["url"] = out["remoteUrl"]
+                    new_outputs.append(out_fix)
+                    updated = True
+                else:
+                    new_outputs.append(out)
                 continue
             
+            cur_url = out.get("remoteUrl") or out.get("url") or ""
+            if "imgbed.2364498.xyz" in cur_url and out.get("remoteUrl"):
+                cur_url = out.get("remoteUrl")
+                
             if not cur_url.startswith("http://") and not cur_url.startswith("https://"):
                 new_outputs.append(out)
                 continue
@@ -413,13 +426,20 @@ async def sync_task_outputs_to_imgbed(task_id: str):
             perm_url = await sync_single_file_to_imgbed(cur_url, fname, username, imgbed_cfg)
             if perm_url:
                 out_copy = dict(out)
-                out_copy["remoteUrl"] = cur_url # 保留原官方 CDN 直链作为永久兜底备份
-                out_copy["url"] = perm_url      # 升级为主展示直链
+                # 关键：用户的展示与下载直链始终保持为 RunningHub 原始直链！
+                if out.get("remoteUrl"):
+                    out_copy["url"] = out["remoteUrl"]
+                elif not out_copy.get("url") or "imgbed.2364498.xyz" in out_copy.get("url", ""):
+                    out_copy["url"] = cur_url
+                out_copy["remoteUrl"] = cur_url
+                # 专属管理员图床备份归档字段
+                out_copy["imgbedUrl"] = perm_url
                 out_copy["storage"] = "imgbed"
                 out_copy["imgbedFolder"] = f"{imgbed_cfg['rootFolder']}/{_sanitize_folder_name(username)}"
+                out_copy["imgbedSyncedAt"] = int(time.time())
                 new_outputs.append(out_copy)
                 updated = True
-                print(f"[ImgBed] Successfully synced output for Task {task_id} ({username}) -> {perm_url}")
+                print(f"[ImgBed] Successfully backed up output for Task {task_id} ({username}) -> {perm_url} (User keeps original RunningHub URL)")
             else:
                 new_outputs.append(out)
                 
@@ -2448,6 +2468,10 @@ def admin_get_gallery(
         created_at = t.get("createdAt", int(time.time()))
         for out in t.get("outputs", []):
             url = out.get("url") or out.get("remoteUrl")
+            # 确保用户直链绝不使用图床，优先采用原厂 RunningHub 链接
+            if url and "imgbed.2364498.xyz" in url and out.get("remoteUrl"):
+                url = out.get("remoteUrl")
+            imgbed_url = out.get("imgbedUrl") or (out.get("url") if "imgbed.2364498.xyz" in (out.get("url") or "") else "")
             if not url or url.startswith("data:"):
                 continue
             fname = out.get("filename") or os.path.basename(url.split("?")[0])
@@ -2468,17 +2492,19 @@ def admin_get_gallery(
             if file_type and file_type != "all" and ft != file_type:
                 continue
                 
-            out_storage = out.get("storage", "imgbed" if "imgbed.2364498.xyz" in url else "remote")
+            has_imgbed = bool(imgbed_url or out.get("storage") == "imgbed")
+            out_storage = "imgbed" if has_imgbed else "remote"
             if storage and storage != "all":
-                if storage == "imgbed" and out_storage != "imgbed":
+                if storage == "imgbed" and not has_imgbed:
                     continue
-                if storage == "remote" and out_storage == "imgbed":
+                if storage == "remote" and has_imgbed:
                     continue
                     
             items.append({
                 "filename": fname,
-                "url": url,
-                "remoteUrl": out.get("remoteUrl", url),
+                "url": url,                           # 用户的原始 RunningHub 直链
+                "remoteUrl": out.get("remoteUrl", url),# 用户的原始 RunningHub 直链
+                "imgbedUrl": imgbed_url,               # 管理员专属图床归档直链
                 "storage": out_storage,
                 "imgbedFolder": out.get("imgbedFolder", f"RunComfyui/{t_user}"),
                 "createdAt": created_at,
@@ -2517,9 +2543,8 @@ def admin_get_imgbed_status(_: Dict[str, Any] = Depends(get_current_admin)):
     synced_count = 0
     for t in tasks:
         for o in t.get("outputs", []):
-            u = o.get("url", "")
             total_outputs += 1
-            if "imgbed.2364498.xyz" in u or o.get("storage") == "imgbed":
+            if o.get("imgbedUrl") or "imgbed.2364498.xyz" in (o.get("url") or "") or o.get("storage") == "imgbed":
                 synced_count += 1
     
     safe_info.pop("rawAuthHeader", None)
@@ -2570,7 +2595,7 @@ async def admin_sync_all_to_imgbed(_: Dict[str, Any] = Depends(get_current_admin
             for t in tasks:
                 tid = str(t.get("taskId"))
                 outs = t.get("outputs", [])
-                needs_sync = any("imgbed.2364498.xyz" not in (o.get("url") or "") for o in outs)
+                needs_sync = any(not o.get("imgbedUrl") for o in outs)
                 if needs_sync:
                     await sync_task_outputs_to_imgbed(tid)
                     await asyncio.sleep(0.5)
