@@ -113,18 +113,62 @@ createApp({
     const showAllNodes = ref(false);
     const allNodesSearch = ref('');
 
-    // 实时下行通知系统 (SSE Toast)
-    const toastMessage = ref('');
-    const showToast = ref(false);
+    // 现代化交互通知系统 (Toast)
+    const toastState = ref({
+      show: false,
+      message: '',
+      type: 'info' // success, error, warning, info
+    });
     let toastTimer = null;
 
-    const showToastNotification = (msg) => {
-      toastMessage.value = msg;
-      showToast.value = true;
+    const showToastNotification = (msg, type = 'info') => {
       if (toastTimer) clearTimeout(toastTimer);
+      toastState.value = {
+        show: true,
+        message: String(msg),
+        type: type
+      };
       toastTimer = setTimeout(() => {
-        showToast.value = false;
-      }, 3500);
+        toastState.value.show = false;
+      }, 4000);
+    };
+
+    // 现代化自定义操作确认弹窗 (彻底替换原生黑框 confirm)
+    const confirmModal = ref({
+      show: false,
+      title: '操作确认',
+      message: '',
+      confirmText: '确定',
+      cancelText: '取消',
+      type: 'danger',
+      onConfirm: () => {},
+      onCancel: () => {}
+    });
+
+    const confirmAction = ({ title, message, confirmText = '确定', cancelText = '取消', type = 'danger' }) => {
+      return new Promise((resolve) => {
+        confirmModal.value = {
+          show: true,
+          title: title || '操作确认',
+          message: message || '确定要执行此操作吗？',
+          confirmText,
+          cancelText,
+          type,
+          onConfirm: () => {
+            confirmModal.value.show = false;
+            resolve(true);
+          },
+          onCancel: () => {
+            confirmModal.value.show = false;
+            resolve(false);
+          }
+        };
+      });
+    };
+
+    // 全局防穿透重写 window.alert，杜绝浏览器任何原生黑框
+    window.alert = (msg) => {
+      showToastNotification(msg, 'info');
     };
 
     const newWf = ref({
@@ -445,10 +489,10 @@ createApp({
           selectedWorkflowId.value = 'custom_upload';
           applyParsedSchema(data);
         } else {
-          alert('解析本地工作流失败: ' + (data.detail || JSON.stringify(data)));
+          showToastNotification('解析本地工作流失败: ' + (data.detail || JSON.stringify(data)), 'error');
         }
       } catch (err) {
-        alert('上传工作流文件发生异常: ' + err.message);
+        showToastNotification('上传工作流文件发生异常: ' + err.message, 'error');
       } finally {
         isLoadingSchema.value = false;
         if (e.target) e.target.value = '';
@@ -533,12 +577,12 @@ createApp({
           }
           nodeOverrides.value[imgNode.nodeId][imgNode.fieldName] = data.fileName;
         } else {
-          alert('图片上传失败: ' + (data.detail || '未知原因'));
+          showToastNotification('图片上传失败: ' + (data.detail || '未知原因'), 'error');
           imgNode.previewUrl = null;
           imgNode.uploadedFileName = '';
         }
       } catch (err) {
-        alert('图片上传发生异常: ' + err.message);
+        showToastNotification('图片上传发生异常: ' + err.message, 'error');
         imgNode.previewUrl = null;
         imgNode.uploadedFileName = '';
       } finally {
@@ -571,12 +615,12 @@ createApp({
           }
           nodeOverrides.value[vidNode.nodeId][vidNode.fieldName] = data.fileName;
         } else {
-          alert('视频上传失败: ' + (data.detail || '未知原因'));
+          showToastNotification('视频上传失败: ' + (data.detail || '未知原因'), 'error');
           vidNode.previewUrl = null;
           vidNode.uploadedFileName = '';
         }
       } catch (err) {
-        alert('视频上传发生异常: ' + err.message);
+        showToastNotification('视频上传发生异常: ' + err.message, 'error');
         vidNode.previewUrl = null;
         vidNode.uploadedFileName = '';
       } finally {
@@ -609,12 +653,12 @@ createApp({
           }
           nodeOverrides.value[audNode.nodeId][audNode.fieldName] = data.fileName;
         } else {
-          alert('音频上传失败: ' + (data.detail || '未知原因'));
+          showToastNotification('音频上传失败: ' + (data.detail || '未知原因'), 'error');
           audNode.previewUrl = null;
           audNode.uploadedFileName = '';
         }
       } catch (err) {
-        alert('音频上传发生异常: ' + err.message);
+        showToastNotification('音频上传发生异常: ' + err.message, 'error');
         audNode.previewUrl = null;
         audNode.uploadedFileName = '';
       } finally {
@@ -625,12 +669,12 @@ createApp({
     // 提交运行生成任务：严格遵循“未修改不注入”铁律，只提交用户确实更改过的参数！
     const submitDynamicGeneration = async () => {
       if (!config.value.hasKey) {
-        alert('当前平台算力引擎未就绪（未配置有效 API Key），请联系系统管理员配置启用');
+        showToastNotification('当前平台算力引擎未就绪（未配置有效 API Key），请联系系统管理员配置启用', 'warning');
         return;
       }
 
       if (!selectedWorkflowId.value) {
-        alert('请先选择一个工作流');
+        showToastNotification('请先选择一个工作流', 'warning');
         return;
       }
 
@@ -758,7 +802,7 @@ createApp({
       };
 
       if (publicConfig.value.requireLoginToGenerate && !currentUser.value) {
-        alert('当前系统已开启强制登录，请先登录或注册账号后再生成');
+        showToastNotification('当前系统已开启强制登录，请先登录或注册账号后再生成', 'warning');
         openAuthModal('signin');
         isGenerating.value = false;
         return;
@@ -776,11 +820,11 @@ createApp({
           await refreshTasks();
           await fetchCurrentUser();
         } else {
-          alert('任务创建失败: ' + (data.detail || JSON.stringify(data)));
+          showToastNotification('任务创建失败: ' + (data.detail || JSON.stringify(data)), 'error');
           isGenerating.value = false;
         }
       } catch (err) {
-        alert('提交任务请求异常: ' + err.message);
+        showToastNotification('提交任务请求异常: ' + err.message, 'error');
         isGenerating.value = false;
       }
     };
@@ -806,13 +850,13 @@ createApp({
           showKeyDropdown.value = false;
         }
       } catch (err) {
-        alert('切换密钥失败: ' + err.message);
+        showToastNotification('切换密钥失败: ' + err.message, 'error');
       }
     };
 
     const addNewKey = async () => {
       if (!newKeyForm.value.apiKey || !newKeyForm.value.apiKey.trim()) {
-        alert('请填入有效的 RunningHub API Key');
+        showToastNotification('请填入有效的 RunningHub API Key', 'warning');
         return;
       }
       isAddingKey.value = true;
@@ -827,29 +871,34 @@ createApp({
           newKeyForm.value = { name: '', apiKey: '', note: '', setActive: true };
           showKeyPlainText.value = false;
           await fetchConfig();
-          alert('✅ API Key 已安全落盘加密入库！');
+          showToastNotification('API Key 已安全加密入库！', 'success');
         } else {
-          alert('添加失败: ' + (data.detail || '未知错误'));
+          showToastNotification('添加失败: ' + (data.detail || '未知错误'), 'error');
         }
       } catch (err) {
-        alert('添加密钥异常: ' + err.message);
+        showToastNotification('添加密钥异常: ' + err.message, 'error');
       } finally {
         isAddingKey.value = false;
       }
     };
 
     const deleteKey = async (keyId, keyName) => {
-      if (!confirm(`确定要删除密钥【${keyName || keyId}】吗？删除后不可恢复。`)) {
-        return;
-      }
+      const ok = await confirmAction({
+        title: '删除 API 密钥',
+        message: `确定要删除密钥【${keyName || keyId}】吗？删除后将无法恢复。`,
+        confirmText: '确认删除',
+        type: 'danger'
+      });
+      if (!ok) return;
       try {
         const res = await authFetch(`/api/keys/${keyId}`, { method: 'DELETE' });
         const data = await res.json();
         if (data.status === 'ok') {
           await fetchConfig();
+          showToastNotification('API 密钥已成功删除', 'success');
         }
       } catch (err) {
-        alert('删除失败: ' + err.message);
+        showToastNotification('删除失败: ' + err.message, 'error');
       }
     };
 
@@ -876,9 +925,9 @@ createApp({
       if (!text) return;
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text);
-        alert('已复制脱敏 Key: ' + text);
+        showToastNotification('已复制脱敏 Key: ' + text, 'success');
       } else {
-        alert('脱敏 Key: ' + text);
+        showToastNotification('脱敏 Key: ' + text, 'info');
       }
     };
 
@@ -893,17 +942,17 @@ createApp({
         const data = await res.json();
         if (data.status === 'ok') {
           await fetchConfig();
-          alert('API Key 保存成功！');
+          showToastNotification('API Key 保存成功！', 'success');
         }
       } catch (err) {
-        alert('保存失败: ' + err.message);
+        showToastNotification('保存失败: ' + err.message, 'error');
       }
     };
 
     // 自动探测新填入的工作流
     const autoDetectWorkflow = async () => {
       if (!newWf.value.id) {
-        alert('请先输入工作流 ID');
+        showToastNotification('请先输入工作流 ID', 'warning');
         return;
       }
       isDetecting.value = true;
@@ -921,12 +970,12 @@ createApp({
           if (!newWf.value.description) {
             newWf.value.description = `共解析 ${data.totalNodes} 个节点，包含自适应提示词与全量可调参数。`;
           }
-          alert(`✅ 探测成功！\n成功识别到该工作流的真实拓扑架构（共 ${data.totalNodes} 个节点）。点击保存即可在工作台中自适应调参！`);
+          showToastNotification(`探测成功！已识别拓扑架构（共 ${data.totalNodes} 个节点）`, 'success');
         } else {
-          alert('云端探测失败: ' + (data.detail || '请确认工作流 ID 是否正确或已公开'));
+          showToastNotification('云端探测失败: ' + (data.detail || '请确认工作流 ID 是否正确或已公开'), 'error');
         }
       } catch (err) {
-        alert('探测请求发生错误: ' + err.message);
+        showToastNotification('探测请求发生错误: ' + err.message, 'error');
       } finally {
         isDetecting.value = false;
       }
@@ -936,7 +985,7 @@ createApp({
     const isAddingWorkflow = ref(false);
     const saveNewWorkflow = async () => {
       if (!newWf.value.id || !newWf.value.name) {
-        alert('请填写工作流 ID 与名称');
+        showToastNotification('请填写工作流 ID 与名称', 'warning');
         return;
       }
 
@@ -956,11 +1005,12 @@ createApp({
           selectedWorkflowId.value = addedId;
           await loadWorkflowSchema(addedId);
           activeTab.value = 'studio';
+          showToastNotification('工作流已成功添加并生效！', 'success');
         } else {
-          alert('添加失败: ' + (data.detail || JSON.stringify(data)));
+          showToastNotification('添加失败: ' + (data.detail || JSON.stringify(data)), 'error');
         }
       } catch (err) {
-        alert('保存请求发生网络异常: ' + err.message);
+        showToastNotification('保存请求发生网络异常: ' + err.message, 'error');
       } finally {
         isAddingWorkflow.value = false;
       }
@@ -968,12 +1018,19 @@ createApp({
 
     // 删除工作流
     const deleteWorkflow = async (id) => {
-      if (!confirm(`确定要移除工作流 ${id} 吗？`)) return;
+      const ok = await confirmAction({
+        title: '移除工作流',
+        message: `确定要将工作流 ${id} 从快捷列表中移除吗？`,
+        confirmText: '确认移除',
+        type: 'danger'
+      });
+      if (!ok) return;
       try {
         await authFetch(`/api/workflows/${id}`, { method: 'DELETE' });
         await fetchConfig();
+        showToastNotification('工作流已成功移除', 'success');
       } catch (err) {
-        alert('删除失败: ' + err.message);
+        showToastNotification('删除失败: ' + err.message, 'error');
       }
     };
 
@@ -991,12 +1048,19 @@ createApp({
 
     // 删除本地画廊文件
     const deleteGalleryItem = async (filename) => {
-      if (!confirm('确定删除这个生成成果吗？')) return;
+      const ok = await confirmAction({
+        title: '删除生成成果',
+        message: '确定删除这个生成成果吗？此操作无法撤销。',
+        confirmText: '确认删除',
+        type: 'danger'
+      });
+      if (!ok) return;
       try {
         await authFetch(`/api/gallery/${filename}`, { method: 'DELETE' });
+        showToastNotification('成果已成功删除', 'success');
         await refreshGallery();
       } catch (err) {
-        console.error(err);
+        showToastNotification('删除成果失败: ' + err.message, 'error');
       }
     };
 
@@ -1046,20 +1110,25 @@ createApp({
 
     const cancelTask = async (taskId) => {
       if (!taskId) return;
-      if (!confirm('确定要中途取消该任务吗？云端正在渲染的计算也将被终止。')) {
-        return;
-      }
+      const ok = await confirmAction({
+        title: '取消任务',
+        message: '确定要中途取消该任务吗？云端正在渲染的计算也将被终止，已扣除的算力点数将自动原路全额退还。',
+        confirmText: '确认取消',
+        type: 'danger'
+      });
+      if (!ok) return;
       try {
         const res = await authFetch(`/api/tasks/${taskId}/cancel`, { method: 'POST' });
         const data = await res.json();
         if (data.status === 'ok') {
           isGenerating.value = false;
+          showToastNotification('任务已终止，算力已退还', 'success');
           await refreshTasks();
         } else {
-          alert('取消失败: ' + (data.detail || data.message || '未知错误'));
+          showToastNotification('取消失败: ' + (data.detail || data.message || '未知错误'), 'error');
         }
       } catch (err) {
-        alert('取消请求异常: ' + err.message);
+        showToastNotification('取消请求异常: ' + err.message, 'error');
       }
     };
 
@@ -1125,8 +1194,10 @@ createApp({
             localStorage.removeItem('rh_auth_user');
             currentUser.value = null;
             const reason = payload.data?.reason || '您的账号已被管理员停用，已强制下线。';
-            alert(`⚠️ 安全通知：\n${reason}`);
-            window.location.href = '/sign-in';
+            showToastNotification(`安全通知：${reason}`, 'error');
+            setTimeout(() => {
+              window.location.href = '/sign-in';
+            }, 1800);
           }
 
           // 2. 核心：算力点数 0 延迟实时跳变 (POINTS_UPDATED)
@@ -1456,15 +1527,15 @@ createApp({
           body: JSON.stringify(payload)
         });
         if (res.ok) {
-          alert('系统与安全设置已成功保存！');
+          showToastNotification('系统与安全设置已成功保存！', 'success');
           await fetchAdminSystem();
           await fetchPublicConfig();
         } else {
           const err = await res.json();
-          alert('保存失败: ' + (err.detail || '未知错误'));
+          showToastNotification('保存失败: ' + (err.detail || '未知错误'), 'error');
         }
       } catch(err) {
-        alert('请求异常: ' + err.message);
+        showToastNotification('请求异常: ' + err.message, 'error');
       }
     };
 
@@ -1509,28 +1580,36 @@ createApp({
         });
         if (res.ok) {
           editingUser.value = null;
+          showToastNotification('用户信息修改成功！', 'success');
           await fetchAdminUsers();
         } else {
           const err = await res.json();
-          alert('修改失败: ' + (err.detail || '未知错误'));
+          showToastNotification('修改失败: ' + (err.detail || '未知错误'), 'error');
         }
       } catch(err) {
-        alert('修改失败: ' + err.message);
+        showToastNotification('修改失败: ' + err.message, 'error');
       }
     };
 
     const deleteUser = async (userId, username) => {
-      if (!confirm(`确定要彻底删除用户【${username}】吗？此操作无法撤销！`)) return;
+      const ok = await confirmAction({
+        title: '彻底删除用户',
+        message: `确定要彻底删除用户【${username}】吗？此操作无法撤销！`,
+        confirmText: '彻底删除',
+        type: 'danger'
+      });
+      if (!ok) return;
       try {
         const res = await authFetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
         if (res.ok) {
+          showToastNotification('用户已成功删除', 'success');
           await fetchAdminUsers();
         } else {
           const err = await res.json();
-          alert('删除失败: ' + (err.detail || '未知错误'));
+          showToastNotification('删除失败: ' + (err.detail || '未知错误'), 'error');
         }
       } catch(err) {
-        alert('删除失败: ' + err.message);
+        showToastNotification('删除失败: ' + err.message, 'error');
       }
     };
 
@@ -1587,8 +1666,10 @@ createApp({
     });
 
     return {
-      toastMessage,
-      showToast,
+      toastState,
+      showToastNotification,
+      confirmModal,
+      confirmAction,
       activeTab,
       switchTab,
       config,
