@@ -107,10 +107,19 @@ createApp({
         list = list.filter(w => 
           (w.name && w.name.toLowerCase().includes(q)) ||
           (w.id && String(w.id).toLowerCase().includes(q)) ||
-          (w.description && w.description.toLowerCase().includes(q))
+          (w.description && w.description.toLowerCase().includes(q)) ||
+          (w.ownerName && w.ownerName.toLowerCase().includes(q))
         );
       }
       return list;
+    });
+
+    const officialWorkflows = computed(() => {
+      return filteredWorkflows.value.filter(w => Boolean(w.isOfficial));
+    });
+
+    const userWorkflows = computed(() => {
+      return filteredWorkflows.value.filter(w => !Boolean(w.isOfficial));
     });
     const tasks = ref([]);
     const gallery = ref([]);
@@ -1785,6 +1794,8 @@ createApp({
       selectedWfCategory,
       workflowCategories,
       filteredWorkflows,
+      officialWorkflows,
+      userWorkflows,
       selectedWorkflowId,
       currentWorkflow,
       tasks,
