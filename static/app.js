@@ -562,6 +562,7 @@ createApp({
             lastGalleryHash = newHash;
             gallery.value = data;
           }
+          nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
         }
       } catch (err) {
         console.error('Failed to fetch gallery:', err);
@@ -1071,8 +1072,12 @@ createApp({
       window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
-    // 用户从个人画廊移除成果（仅对自己隐藏，管理员后台可见）
-    const deleteGalleryItem = async (filename) => {
+    // 用户从个人画廊移除成果（软删除，仅对自己隐藏，管理员后台可见）
+    const deleteGalleryItem = async (taskId, filename) => {
+      if (!filename && taskId) {
+        filename = taskId;
+        taskId = '';
+      }
       const ok = await confirmAction({
         title: '移除生成成果',
         message: '确定要从您的个人画廊中移除这个作品吗？移除后将不再显示。',
@@ -1081,18 +1086,56 @@ createApp({
       });
       if (!ok) return;
       try {
-        const res = await authFetch(`/api/gallery/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+        let url = `/api/gallery/${encodeURIComponent(filename)}`;
+        if (taskId) {
+          url = `/api/gallery/${encodeURIComponent(taskId)}/${encodeURIComponent(filename)}`;
+        }
+        const res = await authFetch(url, { method: 'DELETE' });
         if (!res.ok) {
           const errData = await res.json().catch(() => ({}));
           throw new Error(errData.detail || '删除失败');
         }
         // 关键：立即从前端响应式数组中移除，确保画廊卡片瞬间消失！
-        gallery.value = gallery.value.filter(g => g.filename !== filename && !g.url.includes(filename));
+        gallery.value = gallery.value.filter(g => {
+          if (taskId && g.taskId === taskId) {
+            return g.filename !== filename && !g.url.includes(filename);
+          }
+          return g.filename !== filename && !g.url.includes(filename);
+        });
         lastGalleryHash = '';
         showToastNotification('成果已从您的个人画廊中成功移除', 'success');
         await refreshGallery();
       } catch (err) {
         showToastNotification('移除成果失败: ' + err.message, 'error');
+      }
+    };
+
+    const formatDuration = (sec) => {
+      if (!sec || isNaN(sec)) return '00:00';
+      const s = Math.floor(sec);
+      const m = Math.floor(s / 60);
+      const rem = s % 60;
+      return `${m.toString().padStart(2, '0')}:${rem.toString().padStart(2, '0')}`;
+    };
+
+    const reusePromptToStudio = (prompt) => {
+      if (!prompt) return;
+      if (activeWorkflow.value && activeWorkflow.value.fields) {
+        if ('prompt' in activeWorkflow.value.fields) activeWorkflow.value.fields.prompt = prompt;
+        if ('positive_prompt' in activeWorkflow.value.fields) activeWorkflow.value.fields.positive_prompt = prompt;
+        if ('positive' in activeWorkflow.value.fields) activeWorkflow.value.fields.positive = prompt;
+      }
+      activeTab.value = 'studio';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      showToastNotification('提示词已填入工作台，可直接生成同款', 'success');
+    };
+
+    const copyToClipboard = async (text, msg = '已复制到剪贴板') => {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToastNotification(msg, 'success');
+      } catch {
+        showToastNotification('复制失败，请手动选择复制', 'error');
       }
     };
 
@@ -1790,6 +1833,10 @@ createApp({
       deleteGalleryItem,
       downloadMedia,
       openLightbox,
+      formatDuration,
+      reusePromptToStudio,
+      copyToClipboard,
+      formatTime,
       cancelTask,
       selectedTaskType,
       statusBadgeClass,
