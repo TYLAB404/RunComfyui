@@ -320,18 +320,39 @@ async def sync_single_file_to_imgbed(
     sep = "&" if "?" in upload_base else "?"
     upload_url = f"{upload_base}{sep}uploadFolder={urllib.parse.quote(target_folder)}"
 
-    # 1. 内存流式拉取远程文件（零落盘）
+    # 1. 内存流式拉取远程或本地文件（零硬盘写入）
     file_bytes = b""
     content_type = ""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=45)) as resp:
-                if resp.status == 200:
-                    file_bytes = await resp.read()
-                    content_type = resp.headers.get("Content-Type") or "application/octet-stream"
-    except Exception as e:
-        print(f"[ImgBed Warning] Stream fetch failed from {file_url}: {e}")
-        return None
+    if file_url.startswith("/outputs/") or file_url.startswith("outputs/"):
+        local_rel = file_url.lstrip("/")
+        if os.path.exists(local_rel):
+            try:
+                with open(local_rel, "rb") as fp:
+                    file_bytes = fp.read()
+            except Exception as e:
+                print(f"[ImgBed Warning] Local read failed for {file_url}: {e}")
+                return "EXPIRED"
+        else:
+            print(f"[ImgBed Notice] Local file missing at {file_url}, marking as expired")
+            return "EXPIRED"
+    elif file_url.startswith("http://") or file_url.startswith("https://"):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                    if resp.status == 200:
+                        file_bytes = await resp.read()
+                        content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+                    elif resp.status in (404, 403, 410):
+                        print(f"[ImgBed Notice] Remote source missing/expired (HTTP {resp.status}) at {file_url}")
+                        return "EXPIRED"
+                    else:
+                        print(f"[ImgBed Warning] Remote returned HTTP {resp.status} for {file_url}")
+                        return None
+        except Exception as e:
+            print(f"[ImgBed Warning] Stream fetch failed from {file_url}: {e}")
+            return None
+    else:
+        return "EXPIRED"
 
     if not file_bytes:
         return None
@@ -404,7 +425,6 @@ async def sync_task_outputs_to_imgbed(task_id: str):
         for out in outputs:
             # 若已备份到图床，保留并跳过
             if out.get("imgbedUrl"):
-                # 如果此前误写了 url，在此处自动修正回 remoteUrl
                 if "imgbed.2364498.xyz" in out.get("url", "") and out.get("remoteUrl"):
                     out_fix = dict(out)
                     out_fix["url"] = out["remoteUrl"]
@@ -413,28 +433,39 @@ async def sync_task_outputs_to_imgbed(task_id: str):
                 else:
                     new_outputs.append(out)
                 continue
+
+            # 若此前已标记为源端失效/已过期，无需反复无休止尝试重试
+            if out.get("sourceExpired"):
+                new_outputs.append(out)
+                continue
             
             cur_url = out.get("remoteUrl") or out.get("url") or ""
             if "imgbed.2364498.xyz" in cur_url and out.get("remoteUrl"):
                 cur_url = out.get("remoteUrl")
                 
-            if not cur_url.startswith("http://") and not cur_url.startswith("https://"):
+            if not cur_url:
                 new_outputs.append(out)
                 continue
                 
             fname = out.get("filename") or os.path.basename(cur_url.split("?")[0])
             perm_url = await sync_single_file_to_imgbed(cur_url, fname, username, imgbed_cfg)
-            if perm_url:
+            if perm_url == "EXPIRED":
                 out_copy = dict(out)
-                # 关键：用户的展示与下载直链始终保持为 RunningHub 原始直链！
+                out_copy["sourceExpired"] = True
+                out_copy["imgbedError"] = "原厂源端文件已失效/丢失 (404)"
+                new_outputs.append(out_copy)
+                updated = True
+                print(f"[ImgBed] Output marked as expired for Task {task_id} ({username})")
+            elif perm_url:
+                out_copy = dict(out)
                 if out.get("remoteUrl"):
                     out_copy["url"] = out["remoteUrl"]
                 elif not out_copy.get("url") or "imgbed.2364498.xyz" in out_copy.get("url", ""):
                     out_copy["url"] = cur_url
                 out_copy["remoteUrl"] = cur_url
-                # 专属管理员图床备份归档字段
                 out_copy["imgbedUrl"] = perm_url
                 out_copy["storage"] = "imgbed"
+                out_copy["sourceExpired"] = False
                 out_copy["imgbedFolder"] = f"{imgbed_cfg['rootFolder']}/{_sanitize_folder_name(username)}"
                 out_copy["imgbedSyncedAt"] = int(time.time())
                 new_outputs.append(out_copy)
@@ -2436,12 +2467,14 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
     else:
         user_tasks = []
 
-    if api_key:
-        for t in user_tasks:
-            tid = str(t.get("taskId"))
-            if t.get("status") in ["RUNNING", "QUEUED"] and tid not in ACTIVE_POLL_TASKS and tid not in CANCELLED_TASKS:
-                ACTIVE_POLL_TASKS.add(tid)
-                asyncio.create_task(poll_task_status(tid, api_key))
+    is_admin = bool(current_user and current_user.get("role") == "admin")
+    for t in user_tasks:
+        if not is_admin:
+            t["outputs"] = [o for o in t.get("outputs", []) if not o.get("userHidden") and not o.get("isTakedown")]
+        tid = str(t.get("taskId"))
+        if api_key and t.get("status") in ["RUNNING", "QUEUED"] and tid not in ACTIVE_POLL_TASKS and tid not in CANCELLED_TASKS:
+            ACTIVE_POLL_TASKS.add(tid)
+            asyncio.create_task(poll_task_status(tid, api_key))
     
     return user_tasks
 
@@ -2455,9 +2488,10 @@ def admin_get_gallery(
     username: Optional[str] = None,
     file_type: Optional[str] = None,
     storage: Optional[str] = None,
+    status: Optional[str] = None,
     _: Dict[str, Any] = Depends(get_current_admin)
 ):
-    """管理员全站画廊视图（支持按用户、媒体类型、存储介质多维聚合筛选）"""
+    """管理员全站画廊视图（支持按用户、媒体类型、存储介质、管控状态多维聚合筛选）"""
     tasks = db_load_tasks(is_admin=True, limit=500)
     items = []
     seen = set()
@@ -2468,7 +2502,6 @@ def admin_get_gallery(
         created_at = t.get("createdAt", int(time.time()))
         for out in t.get("outputs", []):
             url = out.get("url") or out.get("remoteUrl")
-            # 确保用户直链绝不使用图床，优先采用原厂 RunningHub 链接
             if url and "imgbed.2364498.xyz" in url and out.get("remoteUrl"):
                 url = out.get("remoteUrl")
             imgbed_url = out.get("imgbedUrl") or (out.get("url") if "imgbed.2364498.xyz" in (out.get("url") or "") else "")
@@ -2499,6 +2532,20 @@ def admin_get_gallery(
                     continue
                 if storage == "remote" and has_imgbed:
                     continue
+
+            is_takedown = bool(out.get("isTakedown"))
+            user_hidden = bool(out.get("userHidden"))
+            source_expired = bool(out.get("sourceExpired"))
+
+            if status and status != "all":
+                if status == "active" and (is_takedown or user_hidden):
+                    continue
+                elif status == "takedown" and not is_takedown:
+                    continue
+                elif status == "user_hidden" and not user_hidden:
+                    continue
+                elif status == "expired" and not source_expired:
+                    continue
                     
             items.append({
                 "filename": fname,
@@ -2506,6 +2553,9 @@ def admin_get_gallery(
                 "remoteUrl": out.get("remoteUrl", url),# 用户的原始 RunningHub 直链
                 "imgbedUrl": imgbed_url,               # 管理员专属图床归档直链
                 "storage": out_storage,
+                "isTakedown": is_takedown,
+                "userHidden": user_hidden,
+                "sourceExpired": source_expired,
                 "imgbedFolder": out.get("imgbedFolder", f"RunComfyui/{t_user}"),
                 "createdAt": created_at,
                 "fileType": ft,
@@ -2518,20 +2568,63 @@ def admin_get_gallery(
     items.sort(key=lambda x: x["createdAt"], reverse=True)
     return items
 
+@app.post("/api/admin/gallery/{task_id}/{filename}/takedown")
 @app.delete("/api/admin/gallery/{task_id}/{filename}")
-def admin_delete_gallery_item(task_id: str, filename: str, _: Dict[str, Any] = Depends(get_current_admin)):
-    """管理员强制下架违规/过期的生成成果"""
+def admin_takedown_gallery_item(task_id: str, filename: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员违规下架成果（从前台用户端彻底隐藏，保留在后台【已下架】分类中，支持随时一键恢复）"""
     t = db_get_task(str(task_id))
     if not t:
         raise HTTPException(status_code=404, detail="任务不存在")
     safe_name = os.path.basename(filename)
     outs = t.get("outputs", [])
-    new_outs = [o for o in outs if o.get("filename") != safe_name and os.path.basename(o.get("url", "").split("?")[0]) != safe_name]
-    update_task_record(str(task_id), {
-        "outputs": new_outs,
-        "updatedAt": int(time.time())
-    })
-    return {"status": "ok", "message": "该成果已从全站画廊中成功移除"}
+    modified = False
+    new_outs = []
+    for o in outs:
+        fname = o.get("filename") or os.path.basename(o.get("url", "").split("?")[0])
+        remote_fname = os.path.basename(o.get("remoteUrl", "").split("?")[0])
+        if safe_name in (fname, remote_fname) or (o.get("url") and safe_name in o.get("url")):
+            o_copy = dict(o)
+            o_copy["isTakedown"] = True
+            o_copy["takedownAt"] = int(time.time())
+            new_outs.append(o_copy)
+            modified = True
+        else:
+            new_outs.append(o)
+    if modified:
+        update_task_record(str(task_id), {
+            "outputs": new_outs,
+            "updatedAt": int(time.time())
+        })
+    return {"status": "ok", "message": "该成果已成功违规下架（对前台用户屏蔽，已归入后台【已违规下架】分类）"}
+
+@app.post("/api/admin/gallery/{task_id}/{filename}/restore")
+def admin_restore_gallery_item(task_id: str, filename: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员重新上架成果（恢复正常公开展示）"""
+    t = db_get_task(str(task_id))
+    if not t:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    safe_name = os.path.basename(filename)
+    outs = t.get("outputs", [])
+    modified = False
+    new_outs = []
+    for o in outs:
+        fname = o.get("filename") or os.path.basename(o.get("url", "").split("?")[0])
+        remote_fname = os.path.basename(o.get("remoteUrl", "").split("?")[0])
+        if safe_name in (fname, remote_fname) or (o.get("url") and safe_name in o.get("url")):
+            o_copy = dict(o)
+            o_copy["isTakedown"] = False
+            o_copy["userHidden"] = False
+            o_copy.pop("takedownAt", None)
+            new_outs.append(o_copy)
+            modified = True
+        else:
+            new_outs.append(o)
+    if modified:
+        update_task_record(str(task_id), {
+            "outputs": new_outs,
+            "updatedAt": int(time.time())
+        })
+    return {"status": "ok", "message": "该成果已重新上架，恢复正常前台展示"}
 
 @app.get("/api/admin/imgbed")
 def admin_get_imgbed_status(_: Dict[str, Any] = Depends(get_current_admin)):
@@ -2697,6 +2790,9 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
     for t in tasks:
         created_at = t.get("createdAt", int(time.time()))
         for out in t.get("outputs", []):
+            # 严格过滤：用户软删除的 (userHidden) 与 管理员下架的 (isTakedown) 前台不展示
+            if out.get("userHidden") or out.get("isTakedown"):
+                continue
             url = out.get("url") or out.get("remoteUrl")
             if not url or url.startswith("data:"):
                 continue
@@ -2728,51 +2824,42 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
 
 @app.delete("/api/gallery/{filename}")
 def delete_gallery_file(filename: str, current_user: Dict[str, Any] = Depends(get_current_user)):
-    """删除画廊成果（强制登录 + 严格所有权鉴权 + 单行更新消除写放大）"""
+    """用户软删除成果：仅对用户自身画廊与任务界面隐藏，管理员后台依然完整保留可见"""
     safe_name = os.path.basename(filename)
     user_id = str(current_user["id"])
     is_admin = current_user.get("role") == "admin"
     
-    # 查找归属于该用户（或管理员模式下任意用户）且包含该文件的任务
+    # 查找归属于该用户的任务（管理员模式下可查全部）
     user_tasks = db_load_tasks(limit=500) if is_admin else db_load_tasks(user_id=user_id, limit=500)
     found_and_updated = False
     
     for t in user_tasks:
         outs = t.get("outputs", [])
-        has_file = any(o.get("filename") == safe_name or os.path.basename(o.get("url", "").split("?")[0]) == safe_name for o in outs)
-        if has_file:
-            task_owner = str(t.get("userId") or "")
-            if not is_admin and task_owner != user_id:
-                raise HTTPException(status_code=403, detail="无权删除其他用户的成果文件")
-            
-            new_outs = [o for o in outs if o.get("filename") != safe_name and os.path.basename(o.get("url", "").split("?")[0]) != safe_name]
+        modified = False
+        new_outs = []
+        for o in outs:
+            fname = o.get("filename") or os.path.basename(o.get("url", "").split("?")[0])
+            remote_fname = os.path.basename(o.get("remoteUrl", "").split("?")[0])
+            if safe_name in (fname, remote_fname) or (o.get("url") and safe_name in o.get("url")):
+                task_owner = str(t.get("userId") or "")
+                if not is_admin and task_owner != user_id:
+                    raise HTTPException(status_code=403, detail="无权操作其他用户的成果文件")
+                o_copy = dict(o)
+                # 软删除标记：对用户前台隐藏，后台管理员完整保留
+                o_copy["userHidden"] = True
+                o_copy["userHiddenAt"] = int(time.time())
+                new_outs.append(o_copy)
+                modified = True
+                found_and_updated = True
+            else:
+                new_outs.append(o)
+        if modified:
             update_task_record(str(t.get("taskId")), {
                 "outputs": new_outs,
                 "updatedAt": int(time.time())
             })
-            found_and_updated = True
-
-    if not found_and_updated and not is_admin:
-        raise HTTPException(status_code=404, detail="文件不存在或无权操作")
-
-    # 本地文件安全清理
-    fpath = os.path.join(OUTPUTS_DIR, safe_name)
-    if os.path.exists(fpath):
-        try:
-            os.remove(fpath)
-        except Exception:
-            pass
             
-    return {"status": "ok"}
-    
-    safe_name = os.path.basename(filename)
-    fpath = os.path.join(OUTPUTS_DIR, safe_name)
-    if os.path.exists(fpath):
-        try:
-            os.remove(fpath)
-        except Exception:
-            pass
-    return {"status": "ok"}
+    return {"status": "ok", "message": "该成果已成功从您的画廊中移除（前台已隐藏）"}
 
 # ----------------- 独立前端门户路由 -----------------
 

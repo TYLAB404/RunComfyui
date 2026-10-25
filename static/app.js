@@ -1071,21 +1071,28 @@ createApp({
       window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
-    // 删除本地画廊文件
+    // 用户从个人画廊移除成果（仅对自己隐藏，管理员后台可见）
     const deleteGalleryItem = async (filename) => {
       const ok = await confirmAction({
-        title: '删除生成成果',
-        message: '确定删除这个生成成果吗？此操作无法撤销。',
-        confirmText: '确认删除',
+        title: '移除生成成果',
+        message: '确定要从您的个人画廊中移除这个作品吗？移除后将不再显示。',
+        confirmText: '确认移除',
         type: 'danger'
       });
       if (!ok) return;
       try {
-        await authFetch(`/api/gallery/${filename}`, { method: 'DELETE' });
-        showToastNotification('成果已成功删除', 'success');
+        const res = await authFetch(`/api/gallery/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          throw new Error(errData.detail || '删除失败');
+        }
+        // 关键：立即从前端响应式数组中移除，确保画廊卡片瞬间消失！
+        gallery.value = gallery.value.filter(g => g.filename !== filename && !g.url.includes(filename));
+        lastGalleryHash = '';
+        showToastNotification('成果已从您的个人画廊中成功移除', 'success');
         await refreshGallery();
       } catch (err) {
-        showToastNotification('删除成果失败: ' + err.message, 'error');
+        showToastNotification('移除成果失败: ' + err.message, 'error');
       }
     };
 
