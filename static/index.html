@@ -39,16 +39,16 @@
       <!-- 桌面端选项卡导航 (移动端自动收纳至底部原生浮动导航) -->
       <nav class="hidden md:flex items-center bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-xs sm:text-sm">
         <button 
+          @click="switchTab('workflows')"
+          :class="activeTab === 'workflows' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
+          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
+          <span>🗂</span> <span>创作中心</span>
+        </button>
+        <button 
           @click="switchTab('studio')"
           :class="activeTab === 'studio' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
           class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
           <span>🎨</span> <span>工作台</span>
-        </button>
-        <button 
-          @click="switchTab('workflows')"
-          :class="activeTab === 'workflows' ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-white'"
-          class="px-3 sm:px-4 py-1.5 rounded-lg transition font-medium flex items-center gap-1.5">
-          <span>🗂</span> <span>工作流库</span>
         </button>
         <button 
           @click="switchTab('tasks')"
@@ -234,18 +234,18 @@
     <!-- 移动端底部高灵敏悬浮导航栏 (解决手机端屏幕挤压错位) -->
     <nav class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 flex items-center justify-around py-2 px-1 shadow-2xl">
       <button 
+        @click="switchTab('workflows')" 
+        :class="activeTab === 'workflows' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
+        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
+        <span class="text-base">🗂</span>
+        <span>创作中心</span>
+      </button>
+      <button 
         @click="switchTab('studio')" 
         :class="activeTab === 'studio' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
         class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
         <span class="text-base">🎨</span>
         <span>工作台</span>
-      </button>
-      <button 
-        @click="switchTab('workflows')" 
-        :class="activeTab === 'workflows' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
-        class="flex flex-col items-center gap-0.5 text-[10px] py-1 px-2.5 transition active:scale-95">
-        <span class="text-base">🗂</span>
-        <span>工作流</span>
       </button>
       <button 
         @click="switchTab('tasks')" 
@@ -274,8 +274,68 @@
     <!-- 主体内容 (为移动端底部导航预留安全边距 pb-20 md:pb-6) -->
     <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 lg:p-6 pb-20 md:pb-6">
 
+      <!-- 全局文件上传隐式 Input -->
+      <input type="file" ref="workflowFileInput" accept=".json" @change="handleWorkflowFileSelected" class="hidden" />
+
       <!-- ================= TAB 1: 工作台 ================= -->
-      <div v-show="activeTab === 'studio'" class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div v-show="activeTab === 'studio'" class="space-y-6">
+        
+        <!-- 空状态：尚未选定工作流 -->
+        <div v-if="!selectedWorkflowId && !customWorkflow" class="max-w-xl mx-auto py-16 px-6 text-center bg-slate-900/70 border border-slate-800 rounded-3xl shadow-2xl space-y-5 my-8">
+          <div class="w-16 h-16 mx-auto rounded-2xl bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 flex items-center justify-center text-3xl shadow-inner">
+            🎨
+          </div>
+          <div class="space-y-2">
+            <h3 class="text-lg font-bold text-white">尚未选择创作工作流</h3>
+            <p class="text-xs text-slate-400 leading-relaxed max-w-md mx-auto">
+              调参工作台需要依托特定的工作流运行。请先在创作中心挑选官方模板，或直接上传本地 ComfyUI API JSON 文件。
+            </p>
+          </div>
+          <div class="flex items-center justify-center gap-3 pt-2">
+            <button 
+              @click="switchTab('workflows')" 
+              class="px-5 py-2.5 rounded-xl text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-950/50 transition flex items-center gap-1.5">
+              <span>🗂 前往创作中心挑选</span>
+              <span>➔</span>
+            </button>
+            <button 
+              @click="triggerUploadWorkflowFile" 
+              class="px-4 py-2.5 rounded-xl text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 transition flex items-center gap-1.5">
+              <span>📁 导入本地 JSON</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 已选定工作流：正常渲染工作台 -->
+        <div v-else class="space-y-5">
+          <!-- 顶部工作流面包屑与返回快捷栏 -->
+          <div class="flex items-center justify-between bg-slate-900/80 border border-slate-800 px-4 py-3 rounded-2xl shadow-sm backdrop-blur-sm">
+            <div class="flex items-center gap-3">
+              <button 
+                @click="switchTab('workflows')"
+                class="inline-flex items-center gap-1.5 text-xs font-medium text-slate-300 hover:text-white bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-xl border border-slate-700/80 transition shadow-sm">
+                <span>← 返回创作中心</span>
+              </button>
+              <div class="h-4 w-px bg-slate-800"></div>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] text-slate-400 hidden sm:inline">当前工作流：</span>
+                <span class="text-xs font-bold text-white truncate max-w-[200px] sm:max-w-none">{{ customWorkflow ? customWorkflow.name : (currentWorkflow ? currentWorkflow.name : '工作流') }}</span>
+                <span v-if="customWorkflow" class="text-[10px] bg-purple-950 text-purple-300 border border-purple-800/50 px-2 py-0.5 rounded-full font-mono">本地免ID</span>
+                <span v-else-if="selectedWorkflowId" class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800/50 px-2 py-0.5 rounded-full font-mono">ID: {{ selectedWorkflowId }}</span>
+                <span v-if="dynamicSchemaTotalNodes" class="text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 rounded-full hidden sm:inline">
+                  {{ dynamicSchemaTotalNodes }} 节点
+                </span>
+              </div>
+            </div>
+            <button 
+              @click="switchTab('workflows')" 
+              class="text-xs text-indigo-400 hover:text-indigo-300 font-medium px-2 py-1 transition flex items-center gap-1">
+              <span>更换工作流</span>
+              <span>➔</span>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
         <!-- 左侧动态参数调节面板 (7 cols) -->
         <div class="lg:col-span-7 space-y-5">
@@ -309,7 +369,6 @@
                 🔄 刷新
               </button>
             </div>
-            <input type="file" ref="workflowFileInput" accept=".json" @change="handleWorkflowFileSelected" class="hidden" />
             
             <div v-if="selectedWorkflowId === 'custom_upload'" class="flex items-center justify-between p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-800/40 text-xs text-indigo-300">
               <div class="flex items-center gap-2 truncate">
@@ -910,38 +969,150 @@
             </div>
           </div>
         </div>
-
       </div>
+    </div>
+  </div>
 
-      <!-- ================= TAB 2: 工作流管理库 ================= -->
+      <!-- ================= TAB 2: AI 创作中心 / 工作流精选 ================= -->
       <div v-show="activeTab === 'workflows'" class="space-y-6">
-        <div class="flex items-center justify-between">
-          <div>
-            <h2 class="text-lg font-bold">工作流模板库</h2>
-            <p class="text-xs text-slate-400">在此添加你的 RunningHub 工作流 ID，系统将自适应读取其真实节点结构</p>
+        
+        <!-- 1. Hero 头部欢迎与快捷上传看板 -->
+        <div class="relative overflow-hidden rounded-3xl bg-gradient-to-br from-indigo-950/40 via-slate-900 to-slate-950 border border-indigo-500/20 p-6 sm:p-8 shadow-2xl">
+          <div class="relative z-10 max-w-2xl space-y-2">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-medium">
+              <span>⚡</span> <span>智能模型与工作流调度</span>
+            </div>
+            <h2 class="text-xl sm:text-2xl lg:text-3xl font-extrabold text-white tracking-tight">
+              选择创作工作流，开启灵感渲染
+            </h2>
+            <p class="text-xs sm:text-sm text-slate-400 leading-relaxed">
+              选择官方预置的优质 ComfyUI 拓扑模板，或直接上传您的本地工作流。选定后将自动进入专注调参工作台。
+            </p>
           </div>
-          <button @click="showAddWorkflowModal = true" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow flex items-center gap-1.5">
-            <span>+</span> <span>添加新工作流</span>
+
+          <!-- 快捷操作双入口 -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-6">
+            <!-- 入口 1: 拖拽/导入本地工作流 JSON -->
+            <div 
+              @click="triggerUploadWorkflowFile"
+              class="group cursor-pointer rounded-2xl border-2 border-dashed border-indigo-500/40 hover:border-indigo-400 bg-slate-900/60 hover:bg-indigo-950/30 p-4 transition-all duration-300 flex items-center gap-4 shadow-sm hover:shadow-indigo-950/50">
+              <div class="w-12 h-12 rounded-xl bg-indigo-600/20 border border-indigo-500/30 flex items-center justify-center text-2xl group-hover:scale-110 transition flex-shrink-0">
+                📁
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2">
+                  <h4 class="text-sm font-bold text-white group-hover:text-indigo-300 transition">导入本地工作流 (JSON)</h4>
+                  <span class="text-[10px] bg-indigo-600 text-white px-1.5 py-0.5 rounded font-bold">免ID直跑</span>
+                </div>
+                <p class="text-xs text-slate-400 mt-0.5 truncate">点击选择或直接将 ComfyUI API JSON 拖至此处</p>
+              </div>
+            </div>
+
+            <!-- 入口 2: 接入新云端工作流 ID -->
+            <div 
+              @click="showAddWorkflowModal = true"
+              class="group cursor-pointer rounded-2xl border border-slate-700/80 hover:border-slate-600 bg-slate-900/60 hover:bg-slate-800/60 p-4 transition-all duration-300 flex items-center gap-4 shadow-sm">
+              <div class="w-12 h-12 rounded-xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center text-2xl group-hover:scale-110 transition flex-shrink-0">
+                ➕
+              </div>
+              <div class="flex-1 min-w-0">
+                <h4 class="text-sm font-bold text-white group-hover:text-purple-300 transition">接入云端工作流 ID</h4>
+                <p class="text-xs text-slate-400 mt-0.5 truncate">输入已发布的 RunningHub 工作流 ID 自动探测入库</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. 分类筛选与搜索过滤栏 -->
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-4">
+          <!-- 分类 Pills -->
+          <div class="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+            <button 
+              v-for="cat in workflowCategories" 
+              :key="cat"
+              @click="selectedWfCategory = cat"
+              :class="selectedWfCategory === cat ? 'bg-indigo-600 text-white shadow-md shadow-indigo-950/50' : 'bg-slate-900 text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-800'"
+              class="px-3.5 py-1.5 rounded-xl text-xs font-medium whitespace-nowrap transition">
+              {{ cat }}
+            </button>
+          </div>
+
+          <!-- 搜索输入框 -->
+          <div class="relative w-full sm:w-72">
+            <input 
+              v-model="workflowSearch" 
+              type="text" 
+              placeholder="搜索工作流名称 / ID / 描述..." 
+              class="w-full bg-slate-900/90 border border-slate-800 rounded-xl pl-9 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+            <span class="absolute left-3 top-2 text-slate-500 text-xs">🔍</span>
+            <button 
+              v-if="workflowSearch" 
+              @click="workflowSearch = ''" 
+              class="absolute right-3 top-2 text-slate-500 hover:text-slate-300 text-xs">✕</button>
+          </div>
+        </div>
+
+        <!-- 3. 工作流卡片精选列表 -->
+        <div v-if="filteredWorkflows.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+          <div 
+            v-for="wf in filteredWorkflows" 
+            :key="wf.id" 
+            class="group bg-slate-900/80 hover:bg-slate-900 border border-slate-800 hover:border-indigo-500/50 rounded-2xl p-5 shadow-lg hover:shadow-2xl hover:shadow-indigo-950/40 transition-all duration-300 flex flex-col justify-between relative">
+            
+            <div>
+              <div class="flex items-start justify-between gap-2">
+                <span 
+                  :class="{
+                    'bg-purple-950/80 text-purple-300 border-purple-800/40': (wf.category || '视频生成') === '视频生成',
+                    'bg-indigo-950/80 text-indigo-300 border-indigo-800/40': wf.category === '图像精绘',
+                    'bg-emerald-950/80 text-emerald-300 border-emerald-800/40': wf.category === '声音音频',
+                    'bg-amber-950/80 text-amber-300 border-amber-800/40': wf.category === '画质增强'
+                  }"
+                  class="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border">
+                  {{ wf.category || '视频生成' }}
+                </span>
+                <button 
+                  @click="deleteWorkflow(wf.id)" 
+                  title="移除工作流" 
+                  class="text-slate-600 hover:text-rose-400 text-xs p-1 transition opacity-0 group-hover:opacity-100">
+                  🗑️
+                </button>
+              </div>
+
+              <h3 class="text-base font-bold text-white group-hover:text-indigo-300 transition mt-3 tracking-tight">
+                {{ wf.name }}
+              </h3>
+              <p class="text-xs text-slate-400 mt-1.5 line-clamp-2 leading-relaxed">
+                {{ wf.description || '暂无描述' }}
+              </p>
+              
+              <div class="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500">
+                <span class="font-mono">ID: {{ wf.id }}</span>
+                <span class="text-emerald-400/80 flex items-center gap-1">● 官方可用</span>
+              </div>
+            </div>
+
+            <div class="mt-4 pt-2">
+              <button 
+                @click="selectAndGoToStudio(wf.id)" 
+                class="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-indigo-600 via-indigo-500 to-purple-600 hover:from-indigo-500 hover:to-purple-500 shadow-lg shadow-indigo-950/50 flex items-center justify-center gap-1.5 transition active:scale-98">
+                <span>⚡ 立即创作</span>
+                <span>➔</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 空搜索结果 -->
+        <div v-else class="py-16 text-center bg-slate-900/40 border border-slate-800/60 rounded-2xl p-8 space-y-3">
+          <div class="text-3xl text-slate-600">🔍</div>
+          <h4 class="text-sm font-semibold text-slate-300">没有找到匹配的工作流</h4>
+          <p class="text-xs text-slate-500">尝试更换分类标签或搜索关键词，或者点击下方接入新工作流</p>
+          <button @click="showAddWorkflowModal = true" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-medium">
+            + 接入新工作流
           </button>
         </div>
 
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          <div v-for="wf in workflows" :key="wf.id" class="bg-slate-900 border border-slate-800 rounded-2xl p-5 space-y-3 relative group hover:border-slate-700 transition">
-            <div class="flex items-start justify-between">
-              <div>
-                <span class="text-[10px] font-semibold text-indigo-400 bg-indigo-950/80 px-2 py-0.5 rounded-full border border-indigo-800/40">{{ wf.category || '视频生成' }}</span>
-                <h3 class="text-sm font-bold text-white mt-1">{{ wf.name }}</h3>
-              </div>
-              <button @click="deleteWorkflow(wf.id)" class="text-slate-600 hover:text-red-400 text-xs transition">删除</button>
-            </div>
-            <p class="text-xs text-slate-400 line-clamp-2">{{ wf.description || '暂无描述' }}</p>
-            <div class="text-[11px] font-mono text-slate-500">ID: {{ wf.id }}</div>
-            <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between">
-              <button @click="selectAndGoToStudio(wf.id)" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium">使用此工作流 ➔</button>
-              <button @click="inspectWorkflow(wf.id)" class="text-xs text-slate-400 hover:text-slate-200">🔍 深度探测节点</button>
-            </div>
-          </div>
-        </div>
       </div>
 
       <!-- ================= TAB 3: 任务列表 ================= -->
