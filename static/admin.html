@@ -840,6 +840,82 @@
         </div>
       </div>
 
+      <!-- 全局操作确认模态弹窗 Confirm Modal (替代浏览器原生黑框 confirm) -->
+      <div 
+        v-if="confirmModal.show" 
+        class="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md transition-all duration-300">
+        <div 
+          class="bg-slate-900/95 border border-slate-700/80 rounded-2xl p-6 max-w-md w-full shadow-2xl shadow-black/90 text-slate-100 transform transition-all scale-100">
+          <div class="flex items-start gap-4">
+            <div 
+              :class="confirmModal.type === 'danger' ? 'bg-rose-500/15 border border-rose-500/30 text-rose-400' : 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-400'"
+              class="w-11 h-11 rounded-2xl flex items-center justify-center text-lg flex-shrink-0 shadow-inner">
+              <span v-if="confirmModal.type === 'danger'">🗑️</span>
+              <span v-else>💡</span>
+            </div>
+            <div class="flex-1">
+              <h3 class="text-base font-bold text-white tracking-tight">{{ confirmModal.title }}</h3>
+              <p class="text-xs text-slate-300 mt-2 leading-relaxed whitespace-pre-line">{{ confirmModal.message }}</p>
+            </div>
+          </div>
+          <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-slate-800/80">
+            <button 
+              @click="confirmModal.onCancel"
+              class="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-700/90 border border-slate-700/50 transition">
+              {{ confirmModal.cancelText || '取消' }}
+            </button>
+            <button 
+              @click="confirmModal.onConfirm"
+              :class="confirmModal.type === 'danger' ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-950/50' : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-950/50'"
+              class="px-5 py-2 rounded-xl text-xs font-semibold text-white shadow-lg transition flex items-center gap-1.5">
+              <span>{{ confirmModal.confirmText || '确定' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 醒目顶部居中全站通知浮层 Toast -->
+      <transition 
+        enter-active-class="transition duration-300 ease-out transform" 
+        enter-from-class="-translate-y-6 opacity-0 scale-95" 
+        enter-to-class="translate-y-0 opacity-100 scale-100" 
+        leave-active-class="transition duration-200 ease-in transform" 
+        leave-from-class="translate-y-0 opacity-100 scale-100" 
+        leave-to-class="-translate-y-6 opacity-0 scale-95">
+        <div 
+          v-if="toastState.show" 
+          class="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] pointer-events-auto">
+          <div 
+            :class="{
+              'border-emerald-500/50 bg-slate-900/95 text-emerald-300 shadow-emerald-950/40': toastState.type === 'success',
+              'border-rose-500/50 bg-slate-900/95 text-rose-300 shadow-rose-950/40': toastState.type === 'error',
+              'border-amber-500/50 bg-slate-900/95 text-amber-300 shadow-amber-950/40': toastState.type === 'warning',
+              'border-indigo-500/50 bg-slate-900/95 text-indigo-300 shadow-indigo-950/40': toastState.type === 'info'
+            }"
+            class="border px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-xl flex items-center gap-3 text-xs min-w-[280px] max-w-lg transition-all duration-300">
+            <span 
+              :class="{
+                'bg-emerald-500/20 text-emerald-400': toastState.type === 'success',
+                'bg-rose-500/20 text-rose-400': toastState.type === 'error',
+                'bg-amber-500/20 text-amber-400': toastState.type === 'warning',
+                'bg-indigo-500/20 text-indigo-400': toastState.type === 'info'
+              }"
+              class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
+              <span v-if="toastState.type === 'success'">✓</span>
+              <span v-else-if="toastState.type === 'error'">✕</span>
+              <span v-else-if="toastState.type === 'warning'">!</span>
+              <span v-else>ℹ</span>
+            </span>
+            <span class="font-medium text-slate-100 flex-1 leading-normal">{{ toastState.message }}</span>
+            <button 
+              @click="toastState.show = false" 
+              class="text-slate-400 hover:text-white transition ml-2 text-sm leading-none p-1">
+              ✕
+            </button>
+          </div>
+        </div>
+      </transition>
+
     </template>
 
   </div>
@@ -854,6 +930,52 @@
         const activeSection = ref('overview');
         const loading = ref(false);
         const savingSettings = ref(false);
+
+        // 现代化交互通知与确认系统
+        const toastState = ref({ show: false, message: '', type: 'info' });
+        let toastTimer = null;
+        const showToastNotification = (msg, type = 'info') => {
+          if (toastTimer) clearTimeout(toastTimer);
+          toastState.value = { show: true, message: String(msg), type };
+          toastTimer = setTimeout(() => { toastState.value.show = false; }, 4000);
+        };
+
+        const confirmModal = ref({
+          show: false,
+          title: '操作确认',
+          message: '',
+          confirmText: '确定',
+          cancelText: '取消',
+          type: 'danger',
+          onConfirm: () => {},
+          onCancel: () => {}
+        });
+
+        const confirmAction = ({ title, message, confirmText = '确定', cancelText = '取消', type = 'danger' }) => {
+          return new Promise((resolve) => {
+            confirmModal.value = {
+              show: true,
+              title: title || '操作确认',
+              message: message || '确定要执行此操作吗？',
+              confirmText,
+              cancelText,
+              type,
+              onConfirm: () => {
+                confirmModal.value.show = false;
+                resolve(true);
+              },
+              onCancel: () => {
+                confirmModal.value.show = false;
+                resolve(false);
+              }
+            };
+          });
+        };
+
+        // 全局杜绝黑框 alert
+        window.alert = (msg) => {
+          showToastNotification(msg, 'info');
+        };
 
         // 管理员独立网关专属登录状态
         const adminLoginForm = ref({ identifier: '', password: '' });
@@ -1075,7 +1197,7 @@
         const submitSaveAnnouncement = async () => {
           const form = annoModal.value.form;
           if (!form.title.trim() || !form.content.trim()) {
-            alert('标题和内容均不能为空');
+            showToastNotification('标题和内容均不能为空', 'warning');
             return;
           }
           try {
@@ -1088,12 +1210,13 @@
             });
             if (res.ok) {
               annoModal.value.show = false;
+              showToastNotification('公告已成功保存！', 'success');
               await loadAnnouncements();
             } else {
-              alert('保存失败');
+              showToastNotification('保存失败', 'error');
             }
           } catch(e) {
-            alert('保存异常');
+            showToastNotification('保存异常: ' + e.message, 'error');
           }
         };
 
@@ -1106,17 +1229,26 @@
             });
             if (res.ok) await loadAnnouncements();
           } catch (e) {
-            alert('操作失败');
+            showToastNotification('操作失败', 'error');
           }
         };
 
         const deleteAnnouncement = async (id) => {
-          if (!confirm('确定删除此公告吗？')) return;
+          const ok = await confirmAction({
+            title: '删除公告',
+            message: '确定删除此公告吗？此操作无法撤销。',
+            confirmText: '确认删除',
+            type: 'danger'
+          });
+          if (!ok) return;
           try {
             const res = await authFetch(`/api/admin/announcements/${id}`, { method: 'DELETE' });
-            if (res.ok) await loadAnnouncements();
+            if (res.ok) {
+              showToastNotification('公告已删除', 'success');
+              await loadAnnouncements();
+            }
           } catch (e) {
-            alert('删除失败');
+            showToastNotification('删除失败', 'error');
           }
         };
 
@@ -1133,14 +1265,14 @@
               const newCfg = saved.system || saved;
               systemConfig.value = { ...systemConfig.value, ...newCfg };
               if (!silent) {
-                alert('✓ 系统与安全配置已成功更新并落盘！');
+                showToastNotification('系统与安全配置已成功更新并落盘！', 'success');
               }
             } else {
               const err = await res.json().catch(() => ({}));
-              alert('配置更新失败: ' + (err.detail || res.statusText || ''));
+              showToastNotification('配置更新失败: ' + (err.detail || res.statusText || ''), 'error');
             }
           } catch (e) {
-            alert('保存异常: ' + e.message);
+            showToastNotification('保存异常: ' + e.message, 'error');
           } finally {
             savingSettings.value = false;
           }
@@ -1164,25 +1296,35 @@
             });
             if (res.ok) {
               editPointsModal.value.show = false;
+              showToastNotification('算力点数已更新', 'success');
               await loadUsers();
             }
           } catch (e) {
-            alert('点数修改失败');
+            showToastNotification('点数修改失败: ' + e.message, 'error');
           }
         };
 
         const toggleUserRole = async (u) => {
           const newRole = u.role === 'admin' ? 'user' : 'admin';
-          if (!confirm(`确定将用户 ${u.username} 的权限修改为【${newRole === 'admin' ? '超级管理员' : '普通用户'}】吗？`)) return;
+          const ok = await confirmAction({
+            title: '修改权限',
+            message: `确定将用户 ${u.username} 的权限修改为【${newRole === 'admin' ? '超级管理员' : '普通用户'}】吗？`,
+            confirmText: '确认修改',
+            type: 'warning'
+          });
+          if (!ok) return;
           try {
             const res = await authFetch(`/api/admin/users/${u.id}`, {
               method: 'PUT',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ role: newRole })
             });
-            if (res.ok) await loadUsers();
+            if (res.ok) {
+              showToastNotification('用户权限已更新', 'success');
+              await loadUsers();
+            }
           } catch (e) {
-            alert('角色修改失败');
+            showToastNotification('角色修改失败: ' + e.message, 'error');
           }
         };
 
@@ -1193,9 +1335,12 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ isActive: !u.isActive })
             });
-            if (res.ok) await loadUsers();
+            if (res.ok) {
+              showToastNotification('用户状态已更新', 'success');
+              await loadUsers();
+            }
           } catch (e) {
-            alert('状态更新失败');
+            showToastNotification('状态更新失败: ' + e.message, 'error');
           }
         };
 
@@ -1205,7 +1350,7 @@
 
         const submitResetPassword = async () => {
           if (!resetPwdModal.value.newPassword || resetPwdModal.value.newPassword.length < 6) {
-            alert('密码长度至少 6 位');
+            showToastNotification('密码长度至少 6 位', 'warning');
             return;
           }
           try {
@@ -1215,11 +1360,11 @@
               body: JSON.stringify({ newPassword: resetPwdModal.value.newPassword })
             });
             if (res.ok) {
-              alert('✓ 密码已成功重置！');
+              showToastNotification('密码已成功重置！', 'success');
               resetPwdModal.value.show = false;
             }
           } catch (e) {
-            alert('重置密码失败');
+            showToastNotification('重置密码失败: ' + e.message, 'error');
           }
         };
 
@@ -1235,29 +1380,42 @@
             if (res.ok) {
               showAddKeyModal.value = false;
               newKeyForm.value = { name: '', apiKey: '' };
+              showToastNotification('API 密钥已添加并安全加密', 'success');
               await loadKeys();
             }
           } catch (e) {
-            alert('密钥添加失败');
+            showToastNotification('密钥添加失败: ' + e.message, 'error');
           }
         };
 
         const setActiveKey = async (keyId) => {
           try {
             const res = await authFetch(`/api/keys/${keyId}/activate`, { method: 'POST' });
-            if (res.ok) await loadKeys();
+            if (res.ok) {
+              showToastNotification('已切换活跃 API Key', 'success');
+              await loadKeys();
+            }
           } catch (e) {
-            alert('切换失败');
+            showToastNotification('切换失败: ' + e.message, 'error');
           }
         };
 
         const deleteKey = async (keyId) => {
-          if (!confirm('确定删除此 API 密钥吗？')) return;
+          const ok = await confirmAction({
+            title: '删除 API 密钥',
+            message: '确定删除此 API 密钥吗？删除后将无法恢复。',
+            confirmText: '确认删除',
+            type: 'danger'
+          });
+          if (!ok) return;
           try {
             const res = await authFetch(`/api/keys/${keyId}`, { method: 'DELETE' });
-            if (res.ok) await loadKeys();
+            if (res.ok) {
+              showToastNotification('API 密钥已删除', 'success');
+              await loadKeys();
+            }
           } catch (e) {
-            alert('删除失败');
+            showToastNotification('删除失败: ' + e.message, 'error');
           }
         };
 
@@ -1281,6 +1439,10 @@
         });
 
         return {
+          toastState,
+          showToastNotification,
+          confirmModal,
+          confirmAction,
           authChecked,
           currentUser,
           activeSection,

@@ -1429,19 +1429,79 @@
       </div>
     </div>
 
-    <!-- 实时系统通知浮层 Toast (算力变动/系统提示秒级下发) -->
+    <!-- 全局操作确认模态弹窗 Confirm Modal (替代浏览器原生黑框 confirm) -->
+    <div 
+      v-if="confirmModal.show" 
+      class="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md transition-all duration-300">
+      <div 
+        class="bg-slate-900/95 border border-slate-700/80 rounded-2xl p-6 max-w-md w-full shadow-2xl shadow-black/90 text-slate-100 transform transition-all scale-100 animate-in fade-in">
+        <div class="flex items-start gap-4">
+          <div 
+            :class="confirmModal.type === 'danger' ? 'bg-rose-500/15 border border-rose-500/30 text-rose-400' : 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-400'"
+            class="w-11 h-11 rounded-2xl flex items-center justify-center text-lg flex-shrink-0 shadow-inner">
+            <span v-if="confirmModal.type === 'danger'">🗑️</span>
+            <span v-else>💡</span>
+          </div>
+          <div class="flex-1">
+            <h3 class="text-base font-bold text-white tracking-tight">{{ confirmModal.title }}</h3>
+            <p class="text-xs text-slate-300 mt-2 leading-relaxed whitespace-pre-line">{{ confirmModal.message }}</p>
+          </div>
+        </div>
+        <div class="flex items-center justify-end gap-3 mt-6 pt-4 border-t border-slate-800/80">
+          <button 
+            @click="confirmModal.onCancel"
+            class="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white bg-slate-800/80 hover:bg-slate-700/90 border border-slate-700/50 transition">
+            {{ confirmModal.cancelText || '取消' }}
+          </button>
+          <button 
+            @click="confirmModal.onConfirm"
+            :class="confirmModal.type === 'danger' ? 'bg-rose-600 hover:bg-rose-500 shadow-rose-950/50' : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-950/50'"
+            class="px-5 py-2 rounded-xl text-xs font-semibold text-white shadow-lg transition flex items-center gap-1.5">
+            <span>{{ confirmModal.confirmText || '确定' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 醒目顶部居中全站通知浮层 Toast (替换浏览器原生黑框 alert，多态状态与图标) -->
     <transition 
       enter-active-class="transition duration-300 ease-out transform" 
-      enter-from-class="-translate-y-4 opacity-0" 
-      enter-to-class="translate-y-0 opacity-100" 
+      enter-from-class="-translate-y-6 opacity-0 scale-95" 
+      enter-to-class="translate-y-0 opacity-100 scale-100" 
       leave-active-class="transition duration-200 ease-in transform" 
-      leave-from-class="translate-y-0 opacity-100" 
-      leave-to-class="-translate-y-4 opacity-0">
+      leave-from-class="translate-y-0 opacity-100 scale-100" 
+      leave-to-class="-translate-y-6 opacity-0 scale-95">
       <div 
-        v-if="showToast" 
-        class="fixed top-20 right-6 z-50 bg-slate-900/95 border border-indigo-500/50 text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 backdrop-blur-xl text-xs">
-        <span class="text-indigo-400 text-sm">⚡</span>
-        <span class="font-medium text-slate-100">{{ toastMessage }}</span>
+        v-if="toastState.show" 
+        class="fixed top-6 left-1/2 -translate-x-1/2 z-[9999] pointer-events-auto">
+        <div 
+          :class="{
+            'border-emerald-500/50 bg-slate-900/95 text-emerald-300 shadow-emerald-950/40': toastState.type === 'success',
+            'border-rose-500/50 bg-slate-900/95 text-rose-300 shadow-rose-950/40': toastState.type === 'error',
+            'border-amber-500/50 bg-slate-900/95 text-amber-300 shadow-amber-950/40': toastState.type === 'warning',
+            'border-indigo-500/50 bg-slate-900/95 text-indigo-300 shadow-indigo-950/40': toastState.type === 'info'
+          }"
+          class="border px-5 py-3 rounded-2xl shadow-2xl backdrop-blur-xl flex items-center gap-3 text-xs min-w-[280px] max-w-lg transition-all duration-300">
+          <span 
+            :class="{
+              'bg-emerald-500/20 text-emerald-400': toastState.type === 'success',
+              'bg-rose-500/20 text-rose-400': toastState.type === 'error',
+              'bg-amber-500/20 text-amber-400': toastState.type === 'warning',
+              'bg-indigo-500/20 text-indigo-400': toastState.type === 'info'
+            }"
+            class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0">
+            <span v-if="toastState.type === 'success'">✓</span>
+            <span v-else-if="toastState.type === 'error'">✕</span>
+            <span v-else-if="toastState.type === 'warning'">!</span>
+            <span v-else>ℹ</span>
+          </span>
+          <span class="font-medium text-slate-100 flex-1 leading-normal">{{ toastState.message }}</span>
+          <button 
+            @click="toastState.show = false" 
+            class="text-slate-400 hover:text-white transition ml-2 text-sm leading-none p-1">
+            ✕
+          </button>
+        </div>
       </div>
     </transition>
 
