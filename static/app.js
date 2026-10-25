@@ -66,7 +66,7 @@ createApp({
     const editingUser = ref(null);
     const editUserForm = ref({ role: 'user', points: 100, isActive: true, newPassword: '' });
 
-    const activeTab = ref('studio');
+    const activeTab = ref('workflows');
     const config = ref({ hasKey: false, activeKeyId: '', activeKeyName: '', activeMaskedKey: '', workflows: [] });
     const keys = ref([]);
     const activeKeyId = ref('');
@@ -82,6 +82,27 @@ createApp({
 
     const workflows = ref([]);
     const selectedWorkflowId = ref('');
+
+    // 工作流市场/创作中心 过滤与分类状态
+    const workflowSearch = ref('');
+    const selectedWfCategory = ref('全部');
+    const workflowCategories = ref(['全部', '视频生成', '图像精绘', '声音音频', '画质增强']);
+
+    const filteredWorkflows = computed(() => {
+      let list = workflows.value || [];
+      if (selectedWfCategory.value !== '全部') {
+        list = list.filter(w => (w.category || '视频生成') === selectedWfCategory.value);
+      }
+      if (workflowSearch.value && workflowSearch.value.trim()) {
+        const q = workflowSearch.value.trim().toLowerCase();
+        list = list.filter(w => 
+          (w.name && w.name.toLowerCase().includes(q)) ||
+          (w.id && String(w.id).toLowerCase().includes(q)) ||
+          (w.description && w.description.toLowerCase().includes(q))
+        );
+      }
+      return list;
+    });
     const tasks = ref([]);
     const gallery = ref([]);
     const isGenerating = ref(false);
@@ -325,8 +346,7 @@ createApp({
         activeKeyName.value = data.activeKeyName || '';
         activeMaskedKey.value = data.activeMaskedKey || '';
 
-        if (workflows.value.length > 0 && !selectedWorkflowId.value) {
-          selectedWorkflowId.value = workflows.value[0].id;
+        if (workflows.value.length > 0 && selectedWorkflowId.value) {
           await loadWorkflowSchema(selectedWorkflowId.value);
         }
       } catch (err) {
@@ -488,6 +508,9 @@ createApp({
           };
           selectedWorkflowId.value = 'custom_upload';
           applyParsedSchema(data);
+          activeTab.value = 'studio';
+          showToastNotification(`成功解析本地工作流【${data.workflowName}】（共 ${data.totalNodes} 个节点）`, 'success');
+          window.scrollTo({ top: 0, behavior: 'smooth' });
         } else {
           showToastNotification('解析本地工作流失败: ' + (data.detail || JSON.stringify(data)), 'error');
         }
@@ -1041,9 +1064,11 @@ createApp({
     };
 
     const selectAndGoToStudio = async (id) => {
+      customWorkflow.value = null;
       selectedWorkflowId.value = id;
       await loadWorkflowSchema(id);
       activeTab.value = 'studio';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     // 删除本地画廊文件
@@ -1690,6 +1715,10 @@ createApp({
       testKey,
       copyMasked,
       workflows,
+      workflowSearch,
+      selectedWfCategory,
+      workflowCategories,
+      filteredWorkflows,
       selectedWorkflowId,
       currentWorkflow,
       tasks,
