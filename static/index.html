@@ -1216,148 +1216,109 @@
         </div>
 
         <!-- 类似图二的现代轻量卡片架构 -->
+        <!-- 规范统一的现代化成果画廊网格 -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div 
             v-for="item in gallery" 
             :key="item.taskId + '_' + item.filename" 
-            class="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-slate-700/80 rounded-3xl p-4 flex flex-col sm:flex-row gap-4 shadow-xl transition duration-200 group">
+            class="bg-slate-900/90 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 flex flex-col sm:flex-row gap-4 shadow-lg transition duration-200">
             
-            <!-- 左侧媒体展示区 (带圆角和时间徽标，类似图二) -->
-            <div class="relative w-full sm:w-48 h-56 sm:h-auto rounded-2xl overflow-hidden bg-black/60 flex-shrink-0 flex items-center justify-center">
-              <!-- 音频 -->
-              <div v-if="item.fileType === 'audio' || isAudioOutput(item)" class="w-full h-full flex flex-col items-center justify-center p-3 bg-slate-950/90 text-center gap-2">
+            <!-- 左侧媒体预览区: 统一规格尺寸 (宽高固定一致，图片/视频 cover 填充，点击查看原图原片) -->
+            <div class="relative w-full sm:w-44 h-44 rounded-xl overflow-hidden bg-black/80 flex-shrink-0 flex items-center justify-center cursor-pointer group" @click="openLightbox(item.url)">
+              <!-- 音频成果 -->
+              <div v-if="item.fileType === 'audio' || isAudioOutput(item)" class="w-full h-full flex flex-col items-center justify-center p-3 bg-slate-950 text-center gap-2">
                 <span class="text-3xl text-indigo-400">🎵</span>
-                <span class="text-[10px] text-slate-300 font-mono truncate max-w-full px-1">{{ item.filename }}</span>
-                <audio :src="item.url" controls class="w-full h-7 mt-1 scale-90"></audio>
+                <span class="text-[10px] text-slate-400 font-mono truncate max-w-full px-1">{{ item.filename }}</span>
+                <audio :src="item.url" controls class="w-full h-7 mt-1 scale-90" @click.stop></audio>
               </div>
               
-              <!-- 视频 -->
-              <video 
-                v-else-if="item.fileType === 'video' || isVideoUrl(item.url)" 
-                :src="item.url" 
-                controls 
-                preload="metadata"
-                class="w-full h-full object-cover">
-              </video>
+              <!-- 视频成果 -->
+              <div v-else-if="item.fileType === 'video' || isVideoUrl(item.url)" class="relative w-full h-full">
+                <video 
+                  :src="item.url" 
+                  preload="metadata"
+                  class="w-full h-full object-cover">
+                </video>
+                <div class="absolute inset-0 bg-black/25 group-hover:bg-black/10 flex items-center justify-center transition">
+                  <div class="w-10 h-10 rounded-full bg-black/60 backdrop-blur-sm border border-white/20 flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition">
+                    <i data-lucide="play" class="w-5 h-5 fill-white/80 translate-x-0.5"></i>
+                  </div>
+                </div>
+              </div>
               
-              <!-- 图片 -->
+              <!-- 图像成果 -->
               <img 
                 v-else 
                 :src="item.url" 
                 :alt="item.positivePrompt || item.filename"
                 loading="lazy"
-                class="w-full h-full object-cover cursor-pointer hover:scale-105 transition duration-300"
-                @click="openLightbox(item.url)">
-
-              <!-- 左上角耗时微标 (如 图二的 ⏱ 00:42) -->
-              <div class="absolute top-2.5 left-2.5 px-2 py-0.5 rounded-full bg-black/75 backdrop-blur-md text-[11px] font-mono text-white flex items-center gap-1 border border-white/10 shadow-sm">
-                <i data-lucide="clock" class="w-3 h-3 text-indigo-400"></i>
-                <span>{{ formatDuration(item.duration) }}</span>
-              </div>
+                class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
 
               <!-- 右上角类型微标 -->
-              <div class="absolute top-2.5 right-2.5">
+              <div class="absolute top-2 right-2 pointer-events-none">
                 <span 
-                  class="px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider shadow-sm" 
-                  :class="item.fileType === 'video' ? 'bg-indigo-600/90 text-white' : item.fileType === 'audio' ? 'bg-emerald-600/90 text-white' : 'bg-slate-800/90 text-slate-200 border border-slate-700'">
+                  class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider backdrop-blur-md shadow-sm" 
+                  :class="item.fileType === 'video' ? 'bg-indigo-600/90 text-white' : item.fileType === 'audio' ? 'bg-emerald-600/90 text-white' : 'bg-black/60 text-slate-200 border border-white/10'">
                   {{ item.fileType || 'IMAGE' }}
                 </span>
               </div>
             </div>
 
-            <!-- 右侧结构化信息区 (类似图二) -->
-            <div class="flex-1 flex flex-col justify-between py-0.5 space-y-3 min-w-0">
+            <!-- 右侧规范信息区 (规整排版，去除冗余标注) -->
+            <div class="flex-1 flex flex-col justify-between min-w-0 py-0.5">
               <div>
-                <!-- 状态指示行: ✔ 生成的图像 / 视频 -->
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
-                    <i data-lucide="check-circle-2" class="w-4 h-4"></i>
-                    <span>生成的{{ item.fileType === 'video' ? '视频' : item.fileType === 'audio' ? '音频' : '图像' }}</span>
-                  </div>
-                  <span class="text-[11px] font-mono text-slate-500">{{ formatTime(item.createdAt) }}</span>
+                <!-- 顶部元信息行：创建时间与文件大小规范标注 -->
+                <div class="flex items-center justify-between text-xs font-mono text-slate-400">
+                  <span>{{ formatTime(item.createdAt) }}</span>
+                  <span v-if="item.size > 0" class="text-[11px] font-mono text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700/50">
+                    {{ formatFileSize(item.size) }}
+                  </span>
                 </div>
 
-                <!-- 提示词大字展示 (核心内容，类似图二的大标题) -->
+                <!-- 提示词大字展示 (核心主干信息) -->
                 <h3 
-                  class="text-white font-bold text-sm sm:text-base leading-snug mt-1.5 line-clamp-2 select-all tracking-tight" 
+                  class="text-white font-bold text-sm leading-snug mt-2 line-clamp-2 select-all tracking-tight" 
                   :title="item.positivePrompt || item.filename">
                   {{ item.positivePrompt || item.filename }}
                 </h3>
 
-                <!-- 属性标签药丸行 (Pill Badges, 类似图二的 gpt-image-2-web / 消耗 / 尺寸) -->
+                <!-- 属性标签药丸行 (工作流名称、消耗代币、耗时) -->
                 <div class="flex flex-wrap items-center gap-1.5 mt-2.5">
-                  <!-- 工作流名称标签 -->
-                  <span class="px-2.5 py-0.5 rounded-xl text-[11px] font-medium bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 truncate max-w-[170px]" :title="item.workflowName">
-                    {{ item.workflowName || 'ComfyUI 工作流' }}
+                  <span class="px-2.5 py-0.5 rounded-lg text-[11px] font-medium bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 truncate max-w-[170px]" :title="item.workflowName">
+                    {{ item.workflowName || 'ComfyUI 流程' }}
                   </span>
-
-                  <!-- 耗币标签 -->
                   <span v-if="item.cost || item.consumeCoins" class="px-2 py-0.5 rounded-lg text-[11px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                     {{ item.cost || item.consumeCoins }} 币
                   </span>
-
-                  <!-- 文件名标签 -->
-                  <span class="px-2 py-0.5 rounded-lg text-[10px] font-mono bg-slate-800 text-slate-400 border border-slate-700/60 truncate max-w-[150px]" :title="item.filename">
-                    {{ item.filename }}
-                  </span>
-                </div>
-
-                <!-- 详细元数据行: 耗时 / 任务ID -->
-                <div class="flex items-center gap-3 text-xs text-slate-400 mt-2 font-mono">
-                  <span class="flex items-center gap-1 text-[11px]">
-                    <i data-lucide="timer" class="w-3 h-3 text-slate-500"></i>
-                    耗时: {{ item.duration || 0 }}s
-                  </span>
-                  <span class="flex items-center gap-1 text-[11px] truncate max-w-[130px]" :title="item.taskId">
-                    <i data-lucide="hash" class="w-3 h-3 text-slate-500"></i>
-                    ID: {{ item.taskId }}
+                  <span v-if="item.duration" class="px-2 py-0.5 rounded-lg text-[11px] font-mono text-slate-400 bg-slate-800 border border-slate-700/60">
+                    耗时: {{ item.duration }}s
                   </span>
                 </div>
               </div>
 
-              <!-- 底部操作按钮栏 (类似图二底部一排动作: 下载、复制提示词、做同款、删除) -->
-              <div class="pt-3 border-t border-slate-800/80 flex items-center justify-between">
-                <div class="text-[11px] text-slate-500 font-mono">
-                  {{ item.size > 0 ? (item.size / 1024 / 1024).toFixed(2) + ' MB' : '云端直链' }}
-                </div>
+              <!-- 底部操作与任务 ID 对齐行 (仅保留核心下载与删除) -->
+              <div class="pt-3 border-t border-slate-800/80 flex items-center justify-between mt-3">
+                <span class="text-[10px] font-mono text-slate-500 truncate max-w-[130px]" :title="item.taskId">
+                  ID: {{ item.taskId }}
+                </span>
 
                 <div class="flex items-center gap-2">
-                  <!-- 下载按钮 -->
+                  <!-- 原图/原片下载按钮 -->
                   <button 
                     @click="downloadMedia(item.url, item.filename)" 
-                    title="下载原图/文件"
-                    class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center gap-1.5 text-xs border border-slate-700">
-                    <i data-lucide="download" class="w-3.5 h-3.5"></i>
-                    <span class="hidden sm:inline">下载</span>
+                    title="下载作品文件"
+                    class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white transition flex items-center gap-1.5 text-xs border border-slate-700 shadow-sm">
+                    <i data-lucide="download" class="w-3.5 h-3.5 text-indigo-400"></i>
+                    <span>下载</span>
                   </button>
 
-                  <!-- 复制提示词按钮 -->
-                  <button 
-                    v-if="item.positivePrompt"
-                    @click="copyToClipboard(item.positivePrompt, '提示词已成功复制到剪贴板')" 
-                    title="复制完整提示词"
-                    class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition flex items-center gap-1.5 text-xs border border-slate-700">
-                    <i data-lucide="copy" class="w-3.5 h-3.5"></i>
-                    <span class="hidden sm:inline">复制词</span>
-                  </button>
-
-                  <!-- 做同款按钮 (一键将提示词填入工作台) -->
-                  <button 
-                    v-if="item.positivePrompt"
-                    @click="reusePromptToStudio(item.positivePrompt)" 
-                    title="填入工作台再生成同款"
-                    class="px-2.5 py-1.5 rounded-xl bg-indigo-600/20 hover:bg-indigo-600 text-indigo-300 hover:text-white transition flex items-center gap-1.5 text-xs border border-indigo-500/30">
-                    <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
-                    <span class="hidden sm:inline">做同款</span>
-                  </button>
-
-                  <!-- 删除按钮 (软删除，瞬间消失) -->
+                  <!-- 移出个人画廊 (软删除) -->
                   <button 
                     @click="deleteGalleryItem(item.taskId, item.filename)" 
                     title="从个人画廊移除此作品"
-                    class="px-2.5 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-600 text-rose-400 hover:text-white transition flex items-center gap-1.5 text-xs border border-rose-800/40">
+                    class="px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-600 text-rose-300 hover:text-white transition flex items-center gap-1.5 text-xs border border-rose-800/40 shadow-sm">
                     <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                    <span class="hidden sm:inline">删除</span>
+                    <span>删除</span>
                   </button>
                 </div>
               </div>
