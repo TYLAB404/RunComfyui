@@ -3566,6 +3566,8 @@ def serve_admin_page():
 
 # ----------------- 卡密发行与兑换充值 API 路由 -----------------
 
+_REDEEM_COOLDOWN = {}
+
 class RedeemCDKeyRequest(BaseModel):
     code: str
 
@@ -3587,15 +3589,13 @@ async def user_redeem_cdkey(
     if not clean_code:
         raise HTTPException(status_code=400, detail="请输入有效的卡密兑换码")
 
-    client_ip = request.client.host if request.client else "unknown"
-    user_rate_key = f"redeem_user_{current_user['id']}"
-    ip_rate_key = f"redeem_ip_{client_ip}"
-
-    if is_redeem_rate_limited(user_rate_key) or is_redeem_rate_limited(ip_rate_key):
-        raise HTTPException(
-            status_code=429, 
-            detail="连续输错次数过多，为保障账户资产安全，卡密兑换功能已暂时锁定 15 分钟，请稍后再试"
-        )
+    # 轻量防刷与防重放 (1.5 秒冷却间隔，取消粗暴的 15 分钟冻结，保障打错字的买家丝滑重试)
+    cooldown_key = f"redeem_cd_{current_user['id']}"
+    now_ts = time.time()
+    last_attempt = _REDEEM_COOLDOWN.get(cooldown_key, 0)
+    if now_ts - last_attempt < 1.5:
+        raise HTTPException(status_code=429, detail="操作过于频繁，请稍等 1 秒后再试")
+    _REDEEM_COOLDOWN[cooldown_key] = now_ts
 
     ok, new_balance, msg = db_redeem_cdkey(
         raw_code=clean_code,
@@ -3604,12 +3604,7 @@ async def user_redeem_cdkey(
     )
 
     if not ok:
-        record_failed_redeem_attempt(user_rate_key)
-        record_failed_redeem_attempt(ip_rate_key)
         raise HTTPException(status_code=400, detail=msg)
-
-    clear_failed_redeem_attempts(user_rate_key)
-    clear_failed_redeem_attempts(ip_rate_key)
 
     await notify_user(
         user_id=current_user["id"],
