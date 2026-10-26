@@ -189,6 +189,18 @@
               <span class="text-[10px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded-full font-mono">{{ workflows.length }}</span>
             </button>
 
+                        <!-- 卡密发行与核销对账 (全新) -->
+            <button 
+              @click="activeSection = 'cdkeys'" 
+              :class="activeSection === 'cdkeys' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
+              class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
+              <div class="flex items-center gap-3">
+                <i data-lucide="ticket" class="w-4 h-4"></i>
+                <span>卡密发行与对账</span>
+              </div>
+              <span class="text-[10px] bg-emerald-950 text-emerald-400 px-1.5 py-0.5 rounded-full font-mono font-bold">{{ cdkeyStats.unusedCount || 0 }}</span>
+            </button>
+
             <button 
               @click="activeSection = 'keys'" 
               :class="activeSection === 'keys' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
@@ -1039,6 +1051,30 @@
                 </button>
               </div>
 
+                            <!-- 动态并发池调度运行看板 (Key Pool Mutex Live Status) -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
+                  <div class="text-[11px] text-slate-400 font-medium">总并发槽位数</div>
+                  <div class="text-xl font-bold text-white mt-1 font-mono">{{ keyPoolStats.totalKeys || keys.length }} <span class="text-[10px] text-slate-500 font-sans">个账号</span></div>
+                  <div class="text-[10px] text-indigo-400 mt-1">每个普通号独立单线程</div>
+                </div>
+                <div class="p-3.5 rounded-xl bg-slate-950/80 border border-emerald-500/30 bg-emerald-500/5">
+                  <div class="text-[11px] text-emerald-400 font-medium">空闲待命中 (Idle)</div>
+                  <div class="text-xl font-bold text-emerald-300 mt-1 font-mono">{{ keyPoolStats.freeKeys ?? keys.length }} <span class="text-[10px] text-emerald-500/70 font-sans">槽位</span></div>
+                  <div class="text-[10px] text-emerald-400/80 mt-1">随时毫秒级接客调度</div>
+                </div>
+                <div class="p-3.5 rounded-xl bg-slate-950/80 border border-rose-500/30 bg-rose-500/5">
+                  <div class="text-[11px] text-rose-400 font-medium">GPU 计算中 (Busy)</div>
+                  <div class="text-xl font-bold text-rose-300 mt-1 font-mono">{{ keyPoolStats.busyKeys || 0 }} <span class="text-[10px] text-rose-500/70 font-sans">占用</span></div>
+                  <div class="text-[10px] text-rose-400/80 mt-1">单线程互斥锁保护</div>
+                </div>
+                <div class="p-3.5 rounded-xl bg-slate-950/80 border border-amber-500/30 bg-amber-500/5">
+                  <div class="text-[11px] text-amber-400 font-medium">排队等待中 (Waiting)</div>
+                  <div class="text-xl font-bold text-amber-300 mt-1 font-mono">{{ keyPoolStats.waitingTasks || 0 }} <span class="text-[10px] text-amber-500/70 font-sans">任务</span></div>
+                  <div class="text-[10px] text-amber-400/80 mt-1">释放时毫秒级抢占补位</div>
+                </div>
+              </div>
+
               <!-- 密钥列表表格 -->
               <div class="overflow-x-auto">
                 <table class="w-full text-left text-xs">
@@ -1056,13 +1092,23 @@
                       <td class="py-3 px-3 font-semibold text-white">{{ k.name }}</td>
                       <td class="py-3 px-3 font-mono text-indigo-300">{{ k.maskedKey }}</td>
                       <td class="py-3 px-3">
-                        <span v-if="k.isActive" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
-                          正在生效调用
-                        </span>
-                        <span v-else class="text-[10px] text-slate-500">备用密钥</span>
+                        <div class="flex items-center gap-2">
+                          <span v-if="getKeyPoolItem(k.id)?.isBusy" class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center gap-1 animate-pulse">
+                            <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                            <span>GPU 渲染中 ({{ getKeyPoolItem(k.id)?.busyDuration }}s)</span>
+                          </span>
+                          <span v-else class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            <span>空闲待命</span>
+                          </span>
+                          <span v-if="k.isActive" class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            默认主Key
+                          </span>
+                        </div>
                       </td>
                       <td class="py-3 px-3 text-slate-400">{{ formatTimestamp(k.createdAt) }}</td>
                       <td class="py-3 px-3 text-right space-x-1">
+                        <button v-if="getKeyPoolItem(k.id)?.isBusy" @click="resetKeyInPool(k.id)" title="若异常卡死可一键强制重置" class="px-2 py-1 rounded bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-[11px]">重置空闲</button>
                         <button v-if="!k.isActive" @click="setActiveKey(k.id)" class="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px]">设为默认</button>
                         <button @click="deleteKey(k.id)" class="px-2 py-1 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 text-[11px]">删除</button>
                       </td>
@@ -1074,6 +1120,156 @@
             </div>
 
           </section>
+
+          
+          <!-- 8. 卡密发行与兑换对账管理视图 (CDKeys) -->
+          <section v-if="activeSection === 'cdkeys'" class="space-y-5">
+            
+            <!-- 统计看板 -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+              <div class="p-4 rounded-2xl bg-slate-900/90 border border-slate-800">
+                <div class="text-[11px] text-slate-400 font-medium">待发售 / 未使用库存</div>
+                <div class="text-2xl font-bold text-emerald-400 mt-1 font-mono">{{ cdkeyStats.unusedCount || 0 }} <span class="text-xs text-slate-500 font-sans">张</span></div>
+                <div class="text-[10px] text-slate-500 mt-1">可导入闲管家/发卡网库存</div>
+              </div>
+
+              <div class="p-4 rounded-2xl bg-slate-900/90 border border-slate-800">
+                <div class="text-[11px] text-slate-400 font-medium">已兑换核销张数</div>
+                <div class="text-2xl font-bold text-indigo-400 mt-1 font-mono">{{ cdkeyStats.usedCount || 0 }} <span class="text-xs text-slate-500 font-sans">张</span></div>
+                <div class="text-[10px] text-slate-500 mt-1">已被买家用户充值消费</div>
+              </div>
+
+              <div class="p-4 rounded-2xl bg-slate-900/90 border border-slate-800">
+                <div class="text-[11px] text-slate-400 font-medium">累计发行算力总量</div>
+                <div class="text-2xl font-bold text-white mt-1 font-mono">{{ cdkeyStats.totalPointsIssued || 0 }} <span class="text-xs text-indigo-400 font-sans">点</span></div>
+                <div class="text-[10px] text-slate-500 mt-1">全平台已发行流通算力总和</div>
+              </div>
+
+              <div class="p-4 rounded-2xl bg-slate-900/90 border border-slate-800">
+                <div class="text-[11px] text-slate-400 font-medium">已作废卡密数</div>
+                <div class="text-2xl font-bold text-rose-400 mt-1 font-mono">{{ cdkeyStats.voidCount || 0 }} <span class="text-xs text-slate-500 font-sans">张</span></div>
+                <div class="text-[10px] text-slate-500 mt-1">已被管理员拉黑失效</div>
+              </div>
+            </div>
+
+            <!-- 操作工具栏 -->
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div class="flex items-center gap-2 w-full sm:w-auto">
+                <button 
+                  @click="openGenerateCdkeyModal" 
+                  class="px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-xs font-bold text-white shadow-md shadow-emerald-600/25 flex items-center gap-1.5 transition active:scale-95">
+                  <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                  <span>批量发行新卡密</span>
+                </button>
+                <button 
+                  @click="exportAndCopyUnusedCdkeys" 
+                  class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-200 hover:text-white flex items-center gap-1.5 transition">
+                  <i data-lucide="copy" class="w-4 h-4"></i>
+                  <span>一键复制所有未核销卡密</span>
+                </button>
+              </div>
+
+              <div class="flex items-center gap-2 w-full sm:w-auto justify-end">
+                <!-- 状态筛选 -->
+                <select 
+                  v-model="cdkeyFilter" 
+                  @change="loadCdkeys(1)"
+                  class="bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500">
+                  <option value="ALL">全部状态</option>
+                  <option value="UNUSED">仅未核销 (待发售)</option>
+                  <option value="USED">仅已核销 (已使用)</option>
+                  <option value="VOID">仅已作废</option>
+                </select>
+
+                <!-- 搜索框 -->
+                <div class="relative flex-1 sm:w-56">
+                  <input 
+                    type="text" 
+                    v-model="cdkeySearch" 
+                    @keyup.enter="loadCdkeys(1)"
+                    placeholder="按卡密 / 兑换人 / 备注搜索..." 
+                    class="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 placeholder:text-slate-500">
+                  <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5"></i>
+                </div>
+              </div>
+            </div>
+
+            <!-- 卡密流水表格 -->
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl overflow-hidden shadow-xl">
+              <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs">
+                  <thead>
+                    <tr class="border-b border-slate-800 bg-slate-950/60 text-slate-400 font-semibold">
+                      <th class="py-3 px-4">卡密兑换码 (CD-Key)</th>
+                      <th class="py-3 px-3">面额点数</th>
+                      <th class="py-3 px-3">当前状态</th>
+                      <th class="py-3 px-3">核销兑换人</th>
+                      <th class="py-3 px-3">发行时间 / 核销时间</th>
+                      <th class="py-3 px-3">批次备注</th>
+                      <th class="py-3 px-4 text-right">管理操作</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-slate-800/60">
+                    <tr v-if="cdkeyLoading" class="text-center py-8">
+                      <td colspan="7" class="py-8 text-slate-500">正在拉取卡密数据...</td>
+                    </tr>
+                    <tr v-else-if="cdkeyList.length === 0" class="text-center py-8">
+                      <td colspan="7" class="py-8 text-slate-500">暂无符合条件的卡密记录，点击上方【批量发行新卡密】开始发卡</td>
+                    </tr>
+                    <tr v-for="c in cdkeyList" :key="c.code" class="hover:bg-slate-800/30 transition">
+                      <td class="py-3 px-4 font-mono font-bold text-white flex items-center gap-2">
+                        <span>{{ c.code }}</span>
+                        <button @click="copyToClipboard(c.code)" title="复制卡密" class="p-1 text-slate-500 hover:text-white transition">
+                          <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+                        </button>
+                      </td>
+                      <td class="py-3 px-3 font-mono font-bold text-emerald-400">+{{ c.points }} 点</td>
+                      <td class="py-3 px-3">
+                        <span v-if="c.isVoid" class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30">已作废</span>
+                        <span v-else-if="c.isUsed" class="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">已核销</span>
+                        <span v-else class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">未使用 (有效)</span>
+                      </td>
+                      <td class="py-3 px-3">
+                        <span v-if="c.isUsed" class="text-slate-200 font-medium">{{ c.usedByUsername || c.usedByUserId }}</span>
+                        <span v-else class="text-slate-600">-</span>
+                      </td>
+                      <td class="py-3 px-3 text-slate-400 text-[11px]">
+                        <div>创建: {{ formatTimestamp(c.createdAt) }}</div>
+                        <div v-if="c.isUsed" class="text-indigo-400/80">核销: {{ formatTimestamp(c.usedAt) }}</div>
+                      </td>
+                      <td class="py-3 px-3 text-slate-400 max-w-[150px] truncate" :title="c.remark">{{ c.remark || '-' }}</td>
+                      <td class="py-3 px-4 text-right space-x-1.5 whitespace-nowrap">
+                        <button 
+                          v-if="!c.isUsed && !c.isVoid" 
+                          @click="voidCdkey(c.code)" 
+                          class="px-2 py-1 rounded bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-[11px] transition">作废</button>
+                        <button 
+                          @click="deleteCdkey(c.code)" 
+                          class="px-2 py-1 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 text-[11px] transition">删除</button>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              <!-- 分页控件 -->
+              <div v-if="cdkeyTotal > cdkeyPageSize" class="p-3.5 border-t border-slate-800 flex items-center justify-between text-xs text-slate-400">
+                <div>共 {{ cdkeyTotal }} 张卡密，当前第 {{ cdkeyPage }} 页</div>
+                <div class="flex gap-1.5">
+                  <button 
+                    :disabled="cdkeyPage <= 1" 
+                    @click="loadCdkeys(cdkeyPage - 1)" 
+                    class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white transition">上一页</button>
+                  <button 
+                    :disabled="cdkeyPage * cdkeyPageSize >= cdkeyTotal" 
+                    @click="loadCdkeys(cdkeyPage + 1)" 
+                    class="px-3 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-white transition">下一页</button>
+                </div>
+              </div>
+            </div>
+
+          </section>
+
 
           <!-- 7. 全站画廊与自建图床资产管控视图 (Gallery & Imgbed) -->
           <section v-if="activeSection === 'gallery'" class="space-y-6">
@@ -1630,7 +1826,124 @@
         </div>
       </div>
 
-      <!-- 全局操作确认模态弹窗 Confirm Modal (替代浏览器原生黑框 confirm) -->
+      
+    <!-- 💳 管理员批量发行卡密弹窗 (Generate CDKeys Modal) -->
+    <div v-if="showGenerateCdkeyModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+      <div class="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-7 max-w-lg w-full shadow-2xl text-slate-100 relative">
+        <div class="flex justify-between items-center pb-4 border-b border-slate-800">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20">
+              <i data-lucide="ticket" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-base text-white">批量发行密码学卡密</h3>
+              <p class="text-[11px] text-slate-400">采用 CSPRNG 密码学真随机，生成高熵防爆破格式 (XXXX-XXXX-XXXX-XXXX)</p>
+            </div>
+          </div>
+          <button @click="closeGenerateCdkeyModal" class="w-7 h-7 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition">✕</button>
+        </div>
+
+        <!-- 表单输入阶段 -->
+        <div v-if="generatedCdkeys.length === 0" class="py-5 space-y-4 text-xs">
+          <div>
+            <label class="text-slate-300 font-medium block mb-1.5">单张面额点数</label>
+            <div class="flex gap-2 mb-2">
+              <button 
+                type="button" 
+                v-for="p in [50, 100, 200, 500]" 
+                :key="p" 
+                @click="generateCdkeyForm.points = p"
+                :class="generateCdkeyForm.points === p ? 'bg-indigo-600 text-white font-bold border-indigo-500' : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'"
+                class="flex-1 py-1.5 rounded-xl border transition text-center text-xs">
+                {{ p }} 点
+              </button>
+            </div>
+            <input 
+              type="number" 
+              v-model.number="generateCdkeyForm.points" 
+              min="1" 
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white font-mono focus:outline-none focus:border-indigo-500">
+          </div>
+
+          <div>
+            <label class="text-slate-300 font-medium block mb-1.5">生成张数 (单次上限 500 张)</label>
+            <div class="flex gap-2 mb-2">
+              <button 
+                type="button" 
+                v-for="c in [10, 20, 50, 100]" 
+                :key="c" 
+                @click="generateCdkeyForm.count = c"
+                :class="generateCdkeyForm.count === c ? 'bg-emerald-600 text-white font-bold border-emerald-500' : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'"
+                class="flex-1 py-1.5 rounded-xl border transition text-center text-xs">
+                {{ c }} 张
+              </button>
+            </div>
+            <input 
+              type="number" 
+              v-model.number="generateCdkeyForm.count" 
+              min="1" 
+              max="500" 
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white font-mono focus:outline-none focus:border-emerald-500">
+          </div>
+
+          <div>
+            <label class="text-slate-300 font-medium block mb-1.5">批次备注（用于区分渠道与对账）</label>
+            <input 
+              type="text" 
+              v-model="generateCdkeyForm.remark" 
+              placeholder="例如: 闲鱼9.9元单 2026-10-26" 
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white focus:outline-none focus:border-indigo-500">
+          </div>
+
+          <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 text-[11px] text-slate-400 space-y-1">
+            <p class="text-slate-300 font-medium">💡 发卡操作指南：</p>
+            <p>1. 点击生成后，系统将即刻入库，并自动弹出一键复制窗口；</p>
+            <p>2. 直接将复制的纯文本卡密，粘贴至闲管家或发卡网商品库存即可开始全自动销售。</p>
+          </div>
+        </div>
+
+        <!-- 生成完成展示阶段 -->
+        <div v-else class="py-5 space-y-3 text-xs">
+          <div class="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <i data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i>
+              <span class="font-bold">成功生成 {{ generatedCdkeys.length }} 张卡密（单张面额 {{ generateCdkeyForm.points }} 点）！</span>
+            </div>
+            <button 
+              @click="copyAllGeneratedCdkeys" 
+              class="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold flex items-center gap-1 transition">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+              <span>一键复制全部纯文本</span>
+            </button>
+          </div>
+
+          <div>
+            <label class="text-slate-400 block mb-1">卡密明细清单 (每行一张)：</label>
+            <textarea 
+              readonly 
+              :value="generatedCdkeys.join('\n')" 
+              rows="8" 
+              class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs text-emerald-400 select-all focus:outline-none"></textarea>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2.5 pt-3 border-t border-slate-800">
+          <button @click="closeGenerateCdkeyModal" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs transition">
+            {{ generatedCdkeys.length > 0 ? '完成并返回' : '取消' }}
+          </button>
+          <button 
+            v-if="generatedCdkeys.length === 0"
+            @click="submitGenerateCdkeys" 
+            :disabled="generatingCdkeys || generateCdkeyForm.points <= 0 || generateCdkeyForm.count <= 0"
+            class="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5">
+            <i v-if="generatingCdkeys" data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+            <span>{{ generatingCdkeys ? '正在写入数据库...' : '确认批量发行' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 全局操作确认模态弹窗 Confirm Modal (替代浏览器原生黑框 confirm) -->
       <div 
         v-if="confirmModal.show" 
         class="fixed inset-0 z-[9998] flex items-center justify-center p-4 bg-black/75 backdrop-blur-md transition-all duration-300">
@@ -1779,7 +2092,7 @@
           security: '云端防御 & Cloudflare Turnstile',
           tasks: '全局任务流水审计',
           workflows: '工作流资产调度与上下架治理',
-          keys: 'API 密钥池调度',
+          keys: 'API 密钥池与并发调度', cdkeys: '卡密发行与核销对账台账',
           gallery: '全站画廊与自建图床资产管控'
         };
 
@@ -2732,6 +3045,182 @@
           }
         };
 
+        
+        // ================= 卡密发行与对账台账状态 =================
+        const cdkeyStats = ref({ unusedCount: 0, usedCount: 0, voidCount: 0, totalPointsIssued: 0 });
+        const cdkeyList = ref([]);
+        const cdkeyFilter = ref('ALL');
+        const cdkeySearch = ref('');
+        const cdkeyPage = ref(1);
+        const cdkeyPageSize = ref(50);
+        const cdkeyTotal = ref(0);
+        const cdkeyLoading = ref(false);
+        const showGenerateCdkeyModal = ref(false);
+        const generateCdkeyForm = ref({ points: 100, count: 20, remark: '' });
+        const generatedCdkeys = ref([]);
+        const generatingCdkeys = ref(false);
+
+        // Key Pool 实时并发状态
+        const keyPoolStats = ref({ totalKeys: 0, busyKeys: 0, freeKeys: 0, waitingTasks: 0 });
+        const keyPoolItems = ref([]);
+
+        const getKeyPoolItem = (keyId) => {
+          return keyPoolItems.value.find(k => k.id === keyId);
+        };
+
+        const loadKeyPoolStatus = async () => {
+          try {
+            const res = await authFetch('/api/admin/key-pool/status');
+            if (res.ok) {
+              const data = await res.json();
+              keyPoolStats.value = data.stats || {};
+              keyPoolItems.value = data.keys || [];
+            }
+          } catch (e) {
+            console.error('Failed to load key pool status:', e);
+          }
+        };
+
+        const resetKeyInPool = async (keyId) => {
+          try {
+            const res = await authFetch(`/api/admin/key-pool/${keyId}/reset`, { method: 'POST' });
+            if (res.ok) {
+              showToastNotification('已强制重置 Key 为空闲状态', 'success');
+              await loadKeyPoolStatus();
+            }
+          } catch (e) {
+            showToastNotification('重置失败: ' + e.message, 'error');
+          }
+        };
+
+        const loadCdkeys = async (page = 1) => {
+          cdkeyPage.value = page;
+          cdkeyLoading.value = true;
+          try {
+            const q = new URLSearchParams({
+              status: cdkeyFilter.value,
+              page: String(page),
+              pageSize: String(cdkeyPageSize.value),
+              search: cdkeySearch.value.trim()
+            });
+            const res = await authFetch(`/api/admin/cdkeys?${q.toString()}`);
+            if (res.ok) {
+              const data = await res.json();
+              cdkeyList.value = data.items || [];
+              cdkeyTotal.value = data.total || 0;
+              cdkeyStats.value = {
+                unusedCount: data.unusedCount || 0,
+                usedCount: data.usedCount || 0,
+                voidCount: data.voidCount || 0,
+                totalPointsIssued: data.totalPointsIssued || 0
+              };
+            }
+          } catch (e) {
+            showToastNotification('加载卡密失败: ' + e.message, 'error');
+          } finally {
+            cdkeyLoading.value = false;
+            setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 50);
+          }
+        };
+
+        const openGenerateCdkeyModal = () => {
+          const today = new Date().toISOString().split('T')[0];
+          generateCdkeyForm.value = { points: 100, count: 20, remark: `闲鱼发卡 ${today}` };
+          generatedCdkeys.value = [];
+          showGenerateCdkeyModal.value = true;
+          setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 50);
+        };
+
+        const closeGenerateCdkeyModal = () => {
+          showGenerateCdkeyModal.value = false;
+          generatedCdkeys.value = [];
+          loadCdkeys(1);
+        };
+
+        const submitGenerateCdkeys = async () => {
+          generatingCdkeys.value = true;
+          try {
+            const res = await authFetch('/api/admin/cdkeys/generate', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(generateCdkeyForm.value)
+            });
+            const data = await res.json();
+            if (res.ok) {
+              generatedCdkeys.value = data.codes || [];
+              showToastNotification(`成功发行 ${data.count} 张卡密！`, 'success');
+            } else {
+              showToastNotification(data.detail || '生成失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('请求失败: ' + e.message, 'error');
+          } finally {
+            generatingCdkeys.value = false;
+            setTimeout(() => { if (window.lucide) window.lucide.createIcons(); }, 50);
+          }
+        };
+
+        const copyAllGeneratedCdkeys = () => {
+          const text = generatedCdkeys.value.join('\n');
+          copyToClipboard(text);
+          showToastNotification(`已成功复制 ${generatedCdkeys.value.length} 张卡密纯文本至剪贴板，可直接粘贴到闲管家！`, 'success');
+        };
+
+        const exportAndCopyUnusedCdkeys = async () => {
+          try {
+            const res = await authFetch('/api/admin/cdkeys/export');
+            if (res.ok) {
+              const data = await res.json();
+              if (data.count === 0) {
+                showToastNotification('当前没有未使用的卡密', 'warning');
+                return;
+              }
+              copyToClipboard(data.rawText);
+              showToastNotification(`已复制 ${data.count} 张有效未核销卡密，直接粘贴到闲管家库存！`, 'success');
+            }
+          } catch (e) {
+            showToastNotification('导出失败: ' + e.message, 'error');
+          }
+        };
+
+        const voidCdkey = async (code) => {
+          const ok = await confirmAction({
+            title: '作废卡密',
+            message: `确定作废卡密 ${code} 吗？作废后用户将无法再兑换充值。`,
+            confirmText: '确认作废',
+            type: 'danger'
+          });
+          if (!ok) return;
+          try {
+            const res = await authFetch(`/api/admin/cdkeys/${encodeURIComponent(code)}/void`, { method: 'POST' });
+            if (res.ok) {
+              showToastNotification(`卡密 ${code} 已作废`, 'success');
+              await loadCdkeys(cdkeyPage.value);
+            }
+          } catch (e) {
+            showToastNotification('作废失败: ' + e.message, 'error');
+          }
+        };
+
+        const deleteCdkey = async (code) => {
+          const ok = await confirmAction({
+            title: '删除卡密记录',
+            message: `确定彻底删除卡密 ${code} 的记录吗？`,
+            confirmText: '确认删除',
+            type: 'danger'
+          });
+          if (!ok) return;
+          try {
+            const res = await authFetch(`/api/admin/cdkeys/${encodeURIComponent(code)}`, { method: 'DELETE' });
+            if (res.ok) {
+              showToastNotification(`卡密记录已删除`, 'success');
+              await loadCdkeys(cdkeyPage.value);
+            }
+          } catch (e) {
+            showToastNotification('删除失败: ' + e.message, 'error');
+          }
+        };
+
         const formatTimestamp = (ts) => {
           if (!ts) return '-';
           const d = new Date(ts * 1000);
@@ -2752,6 +3241,31 @@
         });
 
         return {
+                    cdkeyStats,
+          cdkeyList,
+          cdkeyFilter,
+          cdkeySearch,
+          cdkeyPage,
+          cdkeyPageSize,
+          cdkeyTotal,
+          cdkeyLoading,
+          showGenerateCdkeyModal,
+          generateCdkeyForm,
+          generatedCdkeys,
+          generatingCdkeys,
+          keyPoolStats,
+          keyPoolItems,
+          getKeyPoolItem,
+          loadKeyPoolStatus,
+          resetKeyInPool,
+          loadCdkeys,
+          openGenerateCdkeyModal,
+          closeGenerateCdkeyModal,
+          submitGenerateCdkeys,
+          copyAllGeneratedCdkeys,
+          exportAndCopyUnusedCdkeys,
+          voidCdkey,
+          deleteCdkey,
           toastState,
           showToastNotification,
           confirmModal,
