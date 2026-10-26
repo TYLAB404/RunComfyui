@@ -398,16 +398,14 @@ class KeyPoolManager:
 KEY_POOL_MANAGER = KeyPoolManager()
 
 async def key_pool_watchdog_loop():
-    """看门狗防死锁守护协程：每 20 秒自检一次，自动释放已结束/异常卡死任务占用的 Key"""
+    """纯状态对账守护协程：每 20 秒自检一次，仅同步已完成/取消的任务释放，绝不按死时间强掐正在运行的长任务"""
     while True:
         await asyncio.sleep(20)
         try:
-            now = time.time()
             async with KEY_POOL_MANAGER._lock:
                 for kid, st in KEY_POOL_MANAGER._states.items():
                     if st.get("is_busy"):
                         tid = st.get("task_id")
-                        busy_since = st.get("busy_since") or now
                         if tid:
                             task = db_get_task(tid)
                             if task and task.get("status") in ("SUCCESS", "FAILED", "CANCELLED"):
@@ -415,13 +413,6 @@ async def key_pool_watchdog_loop():
                                 st["is_busy"] = False
                                 st["task_id"] = None
                                 st["busy_since"] = None
-                                continue
-                        # 超过 15 分钟（对齐 RunningHub 官方单任务最大硬性时限 900 秒）强行回收，保障全系统不死锁
-                        if now - busy_since > 900:
-                            print(f"[Watchdog Warning] Key {kid} held by task {tid} reached RunningHub 15m timeout limit, force releasing!")
-                            st["is_busy"] = False
-                            st["task_id"] = None
-                            st["busy_since"] = None
         except Exception as e:
             print(f"[Watchdog Error] {e}")
 
@@ -977,11 +968,31 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                         return
                     else:
                         fail_data = data.get("data")
-                        err_msg = msg or "任务执行异常"
+                        raw_err = str(msg or "")
+                        err_msg = raw_err or "任务执行异常"
+                        is_timeout = False
+
+                        # 深度精准识别 RunningHub 云端超时错误码 (806, 807, 810) 与各类超时关键词
+                        if code in (806, 807, 810) or any(k in raw_err.lower() for k in ["timeout", "time_out", "超时", "timed out", "timedout"]):
+                            is_timeout = True
+
                         if isinstance(fail_data, dict):
                             failed_reason = fail_data.get("failedReason")
-                            if isinstance(failed_reason, dict) and failed_reason.get("exception_message"):
-                                err_msg = f"云端节点 #{failed_reason.get('node_id', '')} ({failed_reason.get('node_name', '')}) 报错: {failed_reason.get('exception_message', '')}"
+                            if isinstance(failed_reason, dict):
+                                exp_msg = str(failed_reason.get("exception_message") or "")
+                                if any(k in exp_msg.lower() for k in ["timeout", "time_out", "超时", "timed out"]):
+                                    is_timeout = True
+                                err_msg = f"云端节点 #{failed_reason.get('node_id', '')} ({failed_reason.get('node_name', '')}) 报错: {exp_msg}"
+                            elif isinstance(failed_reason, str):
+                                if any(k in failed_reason.lower() for k in ["timeout", "time_out", "超时", "timed out"]):
+                                    is_timeout = True
+                                err_msg = failed_reason
+
+                        if is_timeout:
+                            err_msg = "云端渲染超时：该任务计算量极大，已达到 RunningHub 云端单任务运行上限。系统已为您全额退还扣除的算力点数。"
+                            display_status = "云端渲染超时 (已全额退还算力)"
+                        else:
+                            display_status = f"执行失败: {err_msg[:40]}"
 
                         # 自动退还用户扣除的算力点数 (P0-5 计费闭环)
                         if cur_t and cur_t.get("userId") and cur_t.get("cost"):
@@ -991,14 +1002,14 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                                     user_id=cur_t["userId"],
                                     amount=cost_val,
                                     task_id=str(task_id),
-                                    reason=f"任务渲染失败全额退还算力 ({task_id})"
+                                    reason=f"任务渲染超时/失败全额退还算力 ({task_id})"
                                 )
                                 update_task_record(str(task_id), {"cost": 0})
 
                         update_task_record(str(task_id), {
                             "status": "FAILED",
                             "error": err_msg,
-                            "statusText": f"执行失败: {err_msg[:40]}",
+                            "statusText": display_status,
                             "duration": int(time.time() - start_time),
                             "updatedAt": int(time.time())
                         })
