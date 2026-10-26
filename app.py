@@ -416,9 +416,9 @@ async def key_pool_watchdog_loop():
                                 st["task_id"] = None
                                 st["busy_since"] = None
                                 continue
-                        # 超过 20 分钟强行回收，保障全系统不死锁
-                        if now - busy_since > 1200:
-                            print(f"[Watchdog Warning] Key {kid} held by task {tid} timed out (>20m), force releasing!")
+                        # 超过 15 分钟（对齐 RunningHub 官方单任务最大硬性时限 900 秒）强行回收，保障全系统不死锁
+                        if now - busy_since > 900:
+                            print(f"[Watchdog Warning] Key {kid} held by task {tid} reached RunningHub 15m timeout limit, force releasing!")
                             st["is_busy"] = False
                             st["task_id"] = None
                             st["busy_since"] = None

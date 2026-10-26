@@ -3236,8 +3236,15 @@
           }
         };
 
+        // 自动静默轮询看板：当管理员在 'keys' 页面时，每 2.5 秒自动同步一次并发池状态，指示灯原地实时变绿，无需手动刷新！
+        let keyPoolLiveTimer = null;
         onMounted(() => {
           checkAdminAuth();
+          keyPoolLiveTimer = setInterval(() => {
+            if (activeSection.value === 'keys' || activeSection.value === 'overview') {
+              loadKeyPoolStatus();
+            }
+          }, 2500);
         });
 
         return {
