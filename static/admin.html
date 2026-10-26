@@ -191,7 +191,7 @@
 
                         <!-- 卡密发行与核销对账 (全新) -->
             <button 
-              @click="activeSection = 'cdkeys'" 
+              @click="activeSection = 'cdkeys'; loadCdkeys(1)" 
               :class="activeSection === 'cdkeys' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
               class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
               <div class="flex items-center gap-3">
@@ -2286,7 +2286,8 @@
               loadTasks(),
               loadKeys(),
               loadAdminGallery(),
-              loadImgbedInfo()
+              loadImgbedInfo(),
+              loadCdkeys(1)
             ]);
           } finally {
             loading.value = false;
