@@ -47,6 +47,63 @@ createApp({
     const showUserDropdown = ref(false);
     const turnstileWidgetId = ref(null);
 
+    
+    // ================= 卡密兑换与充值状态 =================
+    const showRedeemModal = ref(false);
+    const redeemCode = ref('');
+    const redeemLoading = ref(false);
+    const redeemError = ref('');
+    const redeemSuccess = ref('');
+
+    const openRedeemModal = () => {
+      showRedeemModal.value = true;
+      redeemCode.value = '';
+      redeemError.value = '';
+      redeemSuccess.value = '';
+    };
+
+    const closeRedeemModal = () => {
+      showRedeemModal.value = false;
+    };
+
+    const submitRedeemCDKey = async () => {
+      const code = (redeemCode.value || '').trim();
+      if (!code) {
+        redeemError.value = '请输入卡密兑换码';
+        return;
+      }
+      redeemLoading.value = true;
+      redeemError.value = '';
+      redeemSuccess.value = '';
+
+      try {
+        const res = await authFetch('/api/user/redeem-cdkey', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          redeemError.value = data.detail || '兑换失败，请检查卡密有效性';
+        } else {
+          redeemSuccess.value = data.message || `兑换成功！已充值至 ${data.newPoints} 点`;
+          if (currentUser.value) {
+            currentUser.value.points = data.newPoints;
+          }
+          showToast(data.message || '卡密兑换成功！', 'success');
+          redeemCode.value = '';
+          // 2 秒后自动关闭弹窗
+          setTimeout(() => {
+            if (showRedeemModal.value) closeRedeemModal();
+          }, 2000);
+        }
+      } catch (err) {
+        redeemError.value = '网络请求失败，请稍后重试';
+      } finally {
+        redeemLoading.value = false;
+      }
+    };
+
     // 修改密码弹窗状态
     const showChangePwdModal = ref(false);
     const pwdForm = ref({ oldPassword: '', newPassword: '', confirmPassword: '' });
@@ -1881,6 +1938,14 @@ createApp({
       authSuccessMsg,
       showUserDropdown,
       turnstileWidgetId,
+            showRedeemModal,
+      redeemCode,
+      redeemLoading,
+      redeemError,
+      redeemSuccess,
+      openRedeemModal,
+      closeRedeemModal,
+      submitRedeemCDKey,
       showChangePwdModal,
       pwdForm,
       pwdLoading,

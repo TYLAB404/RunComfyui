@@ -19,10 +19,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from security import encrypt_key, decrypt_key, mask_key, verify_key_with_runninghub
 from database import (
-    db_save_task, db_update_task, db_load_tasks, db_get_task, db_delete_task,
-    db_get_announcements, db_save_announcement, db_update_announcement, db_delete_announcement,
-    db_deduct_user_points, db_refund_user_points, db_bump_token_version,
-    is_rate_limited, record_failed_attempt, clear_failed_attempts
+    init_database, get_db_connection, db_save_task, db_update_task,
+    db_get_task, db_delete_task, db_load_tasks, db_deduct_user_points,
+    db_refund_user_points, db_bump_token_version, db_get_announcements,
+    db_save_announcement, db_update_announcement, db_delete_announcement,
+    db_delete_tasks_batch, is_rate_limited, record_failed_attempt, clear_failed_attempts,
+    db_generate_cdkeys, db_redeem_cdkey, db_list_cdkeys, db_void_cdkey,
+    db_delete_cdkey, db_get_unused_cdkeys_export, is_redeem_rate_limited,
+    record_failed_redeem_attempt, clear_failed_redeem_attempts
 )
 from auth import (
     load_users, save_users, sanitize_user, get_user_by_id, get_user_by_identifier,
@@ -31,6 +35,11 @@ from auth import (
 )
 
 app = FastAPI(title="RunningHub Web Controller", version="1.0.0")
+
+@app.on_event("startup")
+async def app_startup_watchdogs():
+    asyncio.create_task(key_pool_watchdog_loop())
+
 
 # 生产级安全 CORS 配置：严禁 wildcard * 与 allow_credentials=True 混用
 _CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS")
@@ -256,6 +265,166 @@ def get_imgbed_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         "isolateByUser": bool(sys_cfg.get("imgbedIsolateByUser", True)),
         "concurrency": int(sys_cfg.get("imgbedConcurrency", 3))
     }
+
+
+# ----------------- RunningHub 多 API Key 轮询调度器与并发互斥管理器 -----------------
+
+class KeyPoolManager:
+    """
+    RunningHub 多 API Key 轮询调度器与单并发互斥池
+    - 针对个人普通账号单并发限制，实现毫秒级空闲探测与互斥加锁
+    - 结合系统配置的多个 Key，自动将单线程账号池化为多并发集群
+    - 内置超时看门狗，杜绝死锁与僵死占用
+    """
+    def __init__(self):
+        self._states: Dict[str, Dict[str, Any]] = {}
+        self._lock = asyncio.Lock()
+        self._waiters: List[asyncio.Event] = []
+
+    def _get_all_keys(self) -> List[Dict[str, Any]]:
+        cfg = load_config()
+        return cfg.get("apiKeys", [])
+
+    async def acquire_free_key(self, task_id: str) -> Optional[Tuple[str, str, str]]:
+        """
+        原子挑选一个空闲的 API Key。
+        返回 (key_id, raw_key, key_name)。如果当前全部忙碌，返回 None。
+        """
+        async with self._lock:
+            all_keys = self._get_all_keys()
+            if not all_keys:
+                return None
+            
+            for k in all_keys:
+                kid = k.get("id")
+                st = self._states.setdefault(kid, {"is_busy": False, "task_id": None, "busy_since": None})
+                if not st["is_busy"]:
+                    raw = decrypt_key(k.get("keyEncrypted", ""))
+                    if raw:
+                        st["is_busy"] = True
+                        st["task_id"] = str(task_id)
+                        st["busy_since"] = time.time()
+                        return kid, raw, k.get("name", "未命名密钥")
+            return None
+
+    async def wait_for_free_key(self, task_id: str, timeout: float = 300.0) -> Optional[Tuple[str, str, str]]:
+        """
+        若当前没有空闲 Key，注册等待唤醒事件，一旦有 Key 释放立即响应
+        """
+        start = time.time()
+        while time.time() - start < timeout:
+            key_info = await self.acquire_free_key(task_id)
+            if key_info:
+                return key_info
+            
+            ev = asyncio.Event()
+            async with self._lock:
+                self._waiters.append(ev)
+            
+            try:
+                await asyncio.wait_for(ev.wait(), timeout=min(3.0, max(0.5, timeout - (time.time() - start))))
+            except (asyncio.TimeoutError, TimeoutError):
+                pass
+            finally:
+                async with self._lock:
+                    if ev in self._waiters:
+                        self._waiters.remove(ev)
+        return None
+
+    async def release_key(self, key_id: str, task_id: Optional[str] = None):
+        """释放占用的 Key，并通知排队等待的任务"""
+        async with self._lock:
+            if key_id in self._states:
+                st = self._states[key_id]
+                if task_id is None or st.get("task_id") == str(task_id):
+                    st["is_busy"] = False
+                    st["task_id"] = None
+                    st["busy_since"] = None
+            
+            for w in self._waiters:
+                w.set()
+            self._waiters.clear()
+
+    async def release_key_by_task_id(self, task_id: str):
+        """按任务 ID 寻找并释放占用的 Key"""
+        async with self._lock:
+            for kid, st in self._states.items():
+                if st.get("task_id") == str(task_id):
+                    st["is_busy"] = False
+                    st["task_id"] = None
+                    st["busy_since"] = None
+            for w in self._waiters:
+                w.set()
+            self._waiters.clear()
+
+    def get_pool_status(self) -> List[Dict[str, Any]]:
+        """获取所有 Key 的实时运行与并发互斥状态"""
+        all_keys = self._get_all_keys()
+        now = time.time()
+        res = []
+        for k in all_keys:
+            kid = k.get("id")
+            raw = decrypt_key(k.get("keyEncrypted", ""))
+            st = self._states.get(kid, {"is_busy": False, "task_id": None, "busy_since": None})
+            is_busy = bool(st.get("is_busy"))
+            busy_duration = int(now - st["busy_since"]) if (is_busy and st.get("busy_since")) else 0
+            res.append({
+                "id": kid,
+                "name": k.get("name", "未命名密钥"),
+                "maskedKey": mask_key(raw),
+                "isBusy": is_busy,
+                "currentTaskId": st.get("task_id") if is_busy else None,
+                "busyDuration": busy_duration,
+                "note": k.get("note", "")
+            })
+        return res
+
+    async def reset_key(self, key_id: str):
+        """管理员手动重置/解锁某个 Key"""
+        await self.release_key(key_id)
+
+    def get_queue_stats(self) -> Dict[str, Any]:
+        all_keys = self._get_all_keys()
+        total_keys = len(all_keys)
+        busy_keys = sum(1 for k in all_keys if self._states.get(k.get("id"), {}).get("is_busy"))
+        waiting_tasks = len(self._waiters)
+        return {
+            "totalKeys": total_keys,
+            "busyKeys": busy_keys,
+            "freeKeys": max(0, total_keys - busy_keys),
+            "waitingTasks": waiting_tasks
+        }
+
+KEY_POOL_MANAGER = KeyPoolManager()
+
+async def key_pool_watchdog_loop():
+    """看门狗防死锁守护协程：每 20 秒自检一次，自动释放已结束/异常卡死任务占用的 Key"""
+    while True:
+        await asyncio.sleep(20)
+        try:
+            now = time.time()
+            async with KEY_POOL_MANAGER._lock:
+                for kid, st in KEY_POOL_MANAGER._states.items():
+                    if st.get("is_busy"):
+                        tid = st.get("task_id")
+                        busy_since = st.get("busy_since") or now
+                        if tid:
+                            task = db_get_task(tid)
+                            if task and task.get("status") in ("SUCCESS", "FAILED", "CANCELLED"):
+                                print(f"[Watchdog] Task {tid} finished ({task.get('status')}), auto-releasing key {kid}")
+                                st["is_busy"] = False
+                                st["task_id"] = None
+                                st["busy_since"] = None
+                                continue
+                        # 超过 20 分钟强行回收，保障全系统不死锁
+                        if now - busy_since > 1200:
+                            print(f"[Watchdog Warning] Key {kid} held by task {tid} timed out (>20m), force releasing!")
+                            st["is_busy"] = False
+                            st["task_id"] = None
+                            st["busy_since"] = None
+        except Exception as e:
+            print(f"[Watchdog Error] {e}")
+
 
 def get_active_api_key(cfg: Optional[Dict[str, Any]] = None) -> str:
     """获取当前激活的 API Key 明文（解密后仅供后端调用 RunningHub 内部使用，不向前端暴露）"""
@@ -674,7 +843,7 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
         pass
 
 
-async def poll_task_status(task_id: str, api_key: str):
+async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = None):
     """后台异步轮询任务输出，并在完成后单行更新状态与计费流水"""
     start_time = time.time()
     outputs_url = f"{RUNNINGHUB_API_URL}/task/openapi/outputs"
@@ -699,13 +868,13 @@ async def poll_task_status(task_id: str, api_key: str):
                 code = data.get("code")
                 msg = data.get("msg")
 
-                # 813 状态表示云端排队中
+                # 813 状态表示云端 GPU 正在分配算力排队中 (此时云端 100% 不计费)
                 if code == 813:
                     queue_duration = int(time.time() - start_time)
                     update_task_record(str(task_id), {
                         "status": "QUEUED",
                         "duration": queue_duration,
-                        "statusText": f"云端排队调度中 (已等待 {queue_duration}s)",
+                        "statusText": f"已接入 GPU 通道 · 云端调度中 ({queue_duration}s · 排队不扣费)",
                         "updatedAt": int(time.time())
                     })
 
@@ -839,6 +1008,8 @@ async def poll_task_status(task_id: str, api_key: str):
                 pass
     finally:
         ACTIVE_POLL_TASKS.discard(str(task_id))
+        if key_id:
+            await KEY_POOL_MANAGER.release_key(key_id, str(task_id))
 
 
 
@@ -2462,6 +2633,136 @@ class GenerateRequest(BaseModel):
     taskType: Optional[str] = "Standard"
     customPrompt: Optional[Dict[str, Any]] = None
 
+
+async def dispatch_queued_task(
+    local_task_id: str, 
+    req: GenerateRequest, 
+    current_user: Optional[Dict[str, Any]], 
+    task_cost: int, 
+    is_custom_proxy: bool, 
+    task_type: str
+):
+    """后台异步排队调度执行器：当通道释放时，自动认领并下发至 RunningHub"""
+    try:
+        # 等待空闲 Key，最长等待 15 分钟
+        key_info = await KEY_POOL_MANAGER.wait_for_free_key(local_task_id, timeout=900.0)
+        
+        # 检查是否在排队过程中被用户主动取消
+        if local_task_id in CANCELLED_TASKS:
+            if key_info:
+                await KEY_POOL_MANAGER.release_key(key_info[0], local_task_id)
+            return
+
+        if not key_info:
+            # 等待超时，自动退款并标记失败
+            if current_user:
+                db_refund_user_points(current_user["id"], task_cost, task_id=local_task_id, reason="排队超时无可用通道，已全额退还算力")
+            update_task_record(local_task_id, {
+                "status": "FAILED",
+                "error": "本地通道繁忙排队超时",
+                "statusText": "排队超时未获取到可用 GPU 通道，已自动全额退还算力",
+                "cost": 0,
+                "updatedAt": int(time.time())
+            })
+            return
+
+        key_id, api_key, key_name = key_info
+        update_task_record(local_task_id, {
+            "statusText": "已成功分配 GPU 通道，正在向云端提交渲染任务...",
+            "updatedAt": int(time.time())
+        })
+
+        if is_custom_proxy:
+            prompt_dict = copy.deepcopy(req.customPrompt or {})
+            for item in req.nodeInfoList:
+                nid = str(item.get("nodeId"))
+                fname = item.get("fieldName")
+                fval = item.get("fieldValue")
+                if nid in prompt_dict and "inputs" in prompt_dict[nid]:
+                    prompt_dict[nid]["inputs"][fname] = fval
+
+            proxy_payload = {
+                "prompt": prompt_dict,
+                "client_id": str(uuid.uuid4())
+            }
+            remote_task_id, last_err = await submit_proxy_prompt_async(api_key, proxy_payload)
+            if not remote_task_id:
+                await KEY_POOL_MANAGER.release_key(key_id, local_task_id)
+                if current_user:
+                    db_refund_user_points(current_user["id"], task_cost, task_id=local_task_id, reason=f"原生代理提交失败退还: {last_err}")
+                update_task_record(local_task_id, {
+                    "status": "FAILED",
+                    "error": str(last_err),
+                    "statusText": f"云端原生代理提交失败: {str(last_err)[:40]}",
+                    "cost": 0,
+                    "updatedAt": int(time.time())
+                })
+                return
+            real_task_id = str(remote_task_id)
+            net_wss_url = None
+        else:
+            payload = {
+                "apiKey": api_key,
+                "workflowId": str(req.workflowId),
+                "nodeInfoList": req.nodeInfoList,
+                "taskType": task_type
+            }
+            headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
+            try:
+                res = await asyncio.to_thread(
+                    requests.post,
+                    f"{RUNNINGHUB_API_URL}/task/openapi/create",
+                    json=payload,
+                    headers=headers,
+                    timeout=25
+                )
+                data = res.json()
+            except Exception as e:
+                await KEY_POOL_MANAGER.release_key(key_id, local_task_id)
+                if current_user:
+                    db_refund_user_points(current_user["id"], task_cost, task_id=local_task_id, reason="云端网络波动创建失败全额退款")
+                update_task_record(local_task_id, {
+                    "status": "FAILED",
+                    "error": str(e),
+                    "statusText": "云端接口连接失败，已自动退还算力",
+                    "cost": 0,
+                    "updatedAt": int(time.time())
+                })
+                return
+
+            if data.get("code") != 0:
+                await KEY_POOL_MANAGER.release_key(key_id, local_task_id)
+                if current_user:
+                    db_refund_user_points(current_user["id"], task_cost, task_id=local_task_id, reason=f"云端拒绝任务退还: {data.get('msg')}")
+                update_task_record(local_task_id, {
+                    "status": "FAILED",
+                    "error": data.get("msg") or "创建任务失败",
+                    "statusText": f"云端拒绝任务: {data.get('msg')}",
+                    "cost": 0,
+                    "updatedAt": int(time.time())
+                })
+                return
+
+            real_task_id = str(data.get("data", {}).get("taskId"))
+            net_wss_url = data.get("data", {}).get("netWssUrl")
+
+        # 将 local_task_id 替换或映射至 real_task_id
+        if real_task_id != local_task_id:
+            with get_db_connection() as conn:
+                conn.execute("UPDATE tasks SET task_id = ? WHERE task_id = ?;", (real_task_id, local_task_id))
+                conn.commit()
+            async with KEY_POOL_MANAGER._lock:
+                if key_id in KEY_POOL_MANAGER._states:
+                    KEY_POOL_MANAGER._states[key_id]["task_id"] = real_task_id
+
+        ACTIVE_POLL_TASKS.add(real_task_id)
+        asyncio.create_task(poll_task_status(real_task_id, api_key, key_id=key_id))
+        if net_wss_url:
+            asyncio.create_task(listen_websocket_stream(net_wss_url, real_task_id, api_key))
+    except Exception as e:
+        print(f"[Dispatch Queued Task Exception] {e}")
+
+
 @app.post("/api/generate")
 async def generate_task(
     req: GenerateRequest, 
@@ -2482,9 +2783,9 @@ async def generate_task(
     if require_login and not current_user:
         raise HTTPException(status_code=401, detail="当前系统已开启强制登录，请先登录后再提交生成任务")
 
-    api_key = get_active_api_key(cfg)
-    if not api_key:
-        raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中添加启用密钥")
+    all_configured_keys = KEY_POOL_MANAGER._get_all_keys()
+    if not all_configured_keys:
+        raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入后台添加启用密钥")
 
     is_custom_proxy = bool(req.customPrompt or str(req.workflowId).startswith("custom_"))
 
@@ -2501,19 +2802,74 @@ async def generate_task(
             reason=f"生成任务算力扣减 ({req.workflowName or req.workflowId})"
         )
         if not ok:
-            raise HTTPException(status_code=402, detail=f"算力点数不足：本次生成需 {task_cost} 点，您当前账户仅剩 {remaining} 点，请联系管理员充值")
+            raise HTTPException(status_code=402, detail=f"算力点数不足：本次生成需 {task_cost} 点，您当前账户仅剩 {remaining} 点，请兑换卡密或充值")
         points_deducted = True
 
     # 规范化算力档位：Standard (标准极速独享通道) vs Lite (经济共享排队通道)
     task_type = "Lite" if req.taskType and req.taskType.strip().lower() == "lite" else "Standard"
 
+    temp_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+
+    # 从多 Key 轮询池中原子抢占一个空闲 Key
+    key_info = await KEY_POOL_MANAGER.acquire_free_key(temp_id)
+    if not key_info:
+        # 若所有 Key 均在忙碌，先尝试等待 2.0 秒，看是否有短任务立即结束
+        key_info = await KEY_POOL_MANAGER.wait_for_free_key(temp_id, timeout=2.0)
+
+    user_id = current_user["id"] if current_user else ""
+    user_name = current_user["username"] if current_user else "匿名访客"
+
+    # 情况 A: 当前所有通道全忙，进入本地智能排队模式（毫秒级极速响应，不卡死，不超时）
+    if not key_info:
+        busy_cnt, total_cnt = KEY_POOL_MANAGER.get_busy_count()
+        queue_pos = KEY_POOL_MANAGER.get_queue_stats()["waitingTasks"] + 1
+        
+        task_record = {
+            "taskId": temp_id,
+            "workflowId": str(req.workflowId),
+            "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
+            "taskType": "Proxy-Native" if is_custom_proxy else task_type,
+            "userId": user_id,
+            "username": user_name,
+            "positivePrompt": req.positivePrompt or "",
+            "negativePrompt": req.negativePrompt or "",
+            "cost": task_cost if points_deducted else 0,
+            "status": "QUEUED",
+            "statusText": f"通道全满（{busy_cnt}/{total_cnt} 运行中），排队第 {queue_pos} 位等待空闲通道",
+            "createdAt": int(time.time()),
+            "updatedAt": int(time.time()),
+            "duration": 0,
+            "consumeCoins": "0",
+            "outputs": [],
+            "nodeInfoList": req.nodeInfoList
+        }
+        db_save_task(task_record)
+
+        if current_user:
+            try:
+                u_info = get_user_by_id(user_id)
+                if u_info:
+                    update_user_fields(user_id, {"taskCount": u_info.get("taskCount", 0) + 1})
+            except Exception:
+                pass
+
+        # 启动后台排队监听协程
+        asyncio.create_task(dispatch_queued_task(temp_id, req, current_user, task_cost, is_custom_proxy, task_type))
+
+        return {
+            "status": "ok",
+            "taskId": temp_id,
+            "task": task_record,
+            "isQueued": True
+        }
+
+    # 情况 B: 成功获得空闲 Key，立即向云端下发任务
+    key_id, api_key, key_name = key_info
     task_id = None
     net_wss_url = None
 
     if is_custom_proxy:
-        # 模式 A: 用户上传的本地 ComfyUI 工作流，通过 RunningHub 原生 Proxy 代理通道免 ID 直接运行
         prompt_dict = copy.deepcopy(req.customPrompt or {})
-        # 将用户在前端面板上修改过的字段参数反写回 prompt 节点结构
         for item in req.nodeInfoList:
             nid = str(item.get("nodeId"))
             fname = item.get("fieldName")
@@ -2528,14 +2884,13 @@ async def generate_task(
         }
 
         task_id, last_err = await submit_proxy_prompt_async(api_key, proxy_payload)
-
         if not task_id:
+            await KEY_POOL_MANAGER.release_key(key_id, temp_id)
             print(f"[Proxy Prompt Failed] Reason: {last_err}")
             if points_deducted and current_user:
                 db_refund_user_points(current_user["id"], task_cost, reason=f"原生代理提交失败退还: {last_err}")
             raise HTTPException(status_code=400, detail=f"提交至云端 ComfyUI 原生代理引擎失败: {last_err}")
     else:
-        # 模式 B: 传统的 RunningHub 云端已保存模板工作流 (通过 workflowId 调度)
         payload = {
             "apiKey": api_key,
             "workflowId": str(req.workflowId),
@@ -2554,12 +2909,13 @@ async def generate_task(
             )
             data = res.json()
         except Exception as e:
-            # 异常退还已扣减点数
+            await KEY_POOL_MANAGER.release_key(key_id, temp_id)
             if points_deducted and current_user:
                 db_refund_user_points(current_user["id"], task_cost, reason="调用云端引擎失败全额退款")
             raise HTTPException(status_code=500, detail=f"调用 RunningHub 创建任务失败: {str(e)}")
 
         if data.get("code") != 0:
+            await KEY_POOL_MANAGER.release_key(key_id, temp_id)
             if points_deducted and current_user:
                 db_refund_user_points(current_user["id"], task_cost, reason=f"云端拒绝任务退还: {data.get('msg')}")
             raise HTTPException(status_code=400, detail=data.get("msg") or "创建任务失败")
@@ -2567,8 +2923,10 @@ async def generate_task(
         task_id = data.get("data", {}).get("taskId")
         net_wss_url = data.get("data", {}).get("netWssUrl")
 
-    user_id = current_user["id"] if current_user else ""
-    user_name = current_user["username"] if current_user else "匿名访客"
+    # 更新 key 占用的正式 task_id
+    async with KEY_POOL_MANAGER._lock:
+        if key_id in KEY_POOL_MANAGER._states:
+            KEY_POOL_MANAGER._states[key_id]["task_id"] = str(task_id)
 
     task_record = {
         "taskId": str(task_id),
@@ -2576,7 +2934,6 @@ async def generate_task(
         "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
         "taskType": "Proxy-Native" if is_custom_proxy else task_type,
         "userId": user_id,
-        "username": user_name,
         "username": user_name,
         "positivePrompt": req.positivePrompt or "",
         "negativePrompt": req.negativePrompt or "",
@@ -2590,10 +2947,8 @@ async def generate_task(
         "nodeInfoList": req.nodeInfoList
     }
 
-    # 单行原子写入任务，彻底根除 O(N) 写入放大
     db_save_task(task_record)
 
-    # 若为登录用户，累加其生成任务计数
     if current_user:
         try:
             u_info = get_user_by_id(user_id)
@@ -2602,9 +2957,8 @@ async def generate_task(
         except Exception:
             pass
 
-    # 启动后台双轨守护：以独立协程登记并启动轮询与 WebSocket，彻底解决 BackgroundTasks 串行阻塞与重复轮询
     ACTIVE_POLL_TASKS.add(str(task_id))
-    asyncio.create_task(poll_task_status(str(task_id), api_key))
+    asyncio.create_task(poll_task_status(str(task_id), api_key, key_id=key_id))
     if net_wss_url:
         asyncio.create_task(listen_websocket_stream(net_wss_url, str(task_id), api_key))
 
@@ -2659,6 +3013,7 @@ async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_
         raise HTTPException(status_code=404, detail="任务不存在")
     
     CANCELLED_TASKS.add(task_id_str)
+    await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
     
     cloud_status = "已标记本地取消"
     cfg = load_config()
@@ -2998,6 +3353,7 @@ async def cancel_task_endpoint(task_id: str, current_user: Optional[Dict[str, An
             raise HTTPException(status_code=403, detail="无权操作其他用户的任务")
 
     CANCELLED_TASKS.add(task_id_str)
+    await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
 
     cfg = load_config()
     api_key = get_active_api_key(cfg)
@@ -3197,6 +3553,162 @@ def serve_admin_page():
 # 挂载静态文件
 app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
+
+# ----------------- 卡密发行与兑换充值 API 路由 -----------------
+
+class RedeemCDKeyRequest(BaseModel):
+    code: str
+
+class GenerateCDKeysRequest(BaseModel):
+    points: int
+    count: int
+    remark: Optional[str] = ""
+
+@app.post("/api/user/redeem-cdkey")
+async def user_redeem_cdkey(
+    req: RedeemCDKeyRequest,
+    request: Request,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    用户自主核销卡密兑换点数（高安全防线：防撞库限频 + 密码学清洗 + 数据库级原子核销）
+    """
+    clean_code = (req.code or "").strip().upper()
+    if not clean_code:
+        raise HTTPException(status_code=400, detail="请输入有效的卡密兑换码")
+
+    client_ip = request.client.host if request.client else "unknown"
+    user_rate_key = f"redeem_user_{current_user['id']}"
+    ip_rate_key = f"redeem_ip_{client_ip}"
+
+    if is_redeem_rate_limited(user_rate_key) or is_redeem_rate_limited(ip_rate_key):
+        raise HTTPException(
+            status_code=429, 
+            detail="连续输错次数过多，为保障账户资产安全，卡密兑换功能已暂时锁定 15 分钟，请稍后再试"
+        )
+
+    ok, new_balance, msg = db_redeem_cdkey(
+        raw_code=clean_code,
+        user_id=current_user["id"],
+        username=current_user["username"]
+    )
+
+    if not ok:
+        record_failed_redeem_attempt(user_rate_key)
+        record_failed_redeem_attempt(ip_rate_key)
+        raise HTTPException(status_code=400, detail=msg)
+
+    clear_failed_redeem_attempts(user_rate_key)
+    clear_failed_redeem_attempts(ip_rate_key)
+
+    await notify_user(
+        user_id=current_user["id"],
+        event_type="POINTS_UPDATED",
+        data={"points": new_balance, "reason": f"卡密兑换到账 ({clean_code})"}
+    )
+
+    return {
+        "status": "ok",
+        "message": msg,
+        "newPoints": new_balance,
+        "code": clean_code
+    }
+
+@app.post("/api/admin/cdkeys/generate")
+async def admin_generate_cdkeys(
+    req: GenerateCDKeysRequest,
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """管理员批量发行密码学高熵卡密"""
+    if req.points <= 0:
+        raise HTTPException(status_code=400, detail="卡密面额点数必须大于 0")
+    if req.count <= 0 or req.count > 500:
+        raise HTTPException(status_code=400, detail="单次生成数量必须在 1 ~ 500 张之间")
+
+    codes = db_generate_cdkeys(
+        points=req.points,
+        count=req.count,
+        remark=req.remark or ""
+    )
+
+    return {
+        "status": "ok",
+        "count": len(codes),
+        "points": req.points,
+        "remark": req.remark or "",
+        "codes": codes
+    }
+
+@app.get("/api/admin/cdkeys")
+async def admin_list_cdkeys(
+    status: Optional[str] = "ALL",
+    page: Optional[int] = 1,
+    pageSize: Optional[int] = 50,
+    search: Optional[str] = "",
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """管理员分页查询卡密对账流水（支持按状态、用户、卡密号过滤）"""
+    return db_list_cdkeys(
+        status_filter=status or "ALL",
+        page=max(1, int(page or 1)),
+        page_size=min(200, max(10, int(pageSize or 50))),
+        search=search or ""
+    )
+
+@app.post("/api/admin/cdkeys/{code}/void")
+async def admin_void_cdkey(
+    code: str,
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """管理员作废未核销的卡密"""
+    ok = db_void_cdkey(code)
+    if not ok:
+        raise HTTPException(status_code=400, detail="卡密不存在或已被使用，无法作废")
+    return {"status": "ok", "message": f"卡密 {code} 已成功作废"}
+
+@app.delete("/api/admin/cdkeys/{code}")
+async def admin_delete_cdkey(
+    code: str,
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """管理员物理删除卡密记录"""
+    ok = db_delete_cdkey(code)
+    if not ok:
+        raise HTTPException(status_code=404, detail="卡密不存在")
+    return {"status": "ok", "message": f"卡密 {code} 已删除"}
+
+@app.get("/api/admin/cdkeys/export")
+async def admin_export_unused_cdkeys(
+    remark: Optional[str] = "",
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """导出未使用的卡密明细（供直接批量粘贴至闲管家/发卡网）"""
+    items = db_get_unused_cdkeys_export(remark=remark or "")
+    text_lines = [item["code"] for item in items]
+    return {
+        "count": len(items),
+        "rawText": "\n".join(text_lines),
+        "items": items
+    }
+
+@app.get("/api/admin/key-pool/status")
+async def admin_get_key_pool_status(_: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员实时查看 RunningHub Key 并发轮询池运行状态"""
+    stats = KEY_POOL_MANAGER.get_queue_stats()
+    items = KEY_POOL_MANAGER.get_pool_status()
+    return {
+        "status": "ok",
+        "stats": stats,
+        "keys": items
+    }
+
+@app.post("/api/admin/key-pool/{key_id}/reset")
+async def admin_reset_key_in_pool(key_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员紧急一键释放被占用的 Key"""
+    await KEY_POOL_MANAGER.reset_key(key_id)
+    return {"status": "ok", "message": f"Key {key_id} 运行状态已强制重置为空闲"}
+
 
 if __name__ == "__main__":
     import uvicorn

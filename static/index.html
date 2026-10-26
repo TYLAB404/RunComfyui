@@ -111,6 +111,16 @@
 
       <!-- 右侧 用户登录状态 + 密钥状态 -->
       <div class="flex items-center gap-2 sm:gap-3 flex-shrink-0">
+                <!-- 🎁 顶部卡密兑换快捷入口 -->
+        <button 
+          v-if="currentUser"
+          @click="openRedeemModal"
+          title="卡密充值兑换点数"
+          class="hidden sm:flex items-center gap-1.5 text-xs bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white px-3 py-1.5 rounded-full font-semibold shadow-md shadow-emerald-600/25 transition active:scale-95">
+          <span>🎁</span>
+          <span>卡密兑换</span>
+        </button>
+
         <!-- 未登录状态：跳转独立登录/注册门户 -->
         <a 
           v-if="!currentUser"
@@ -152,6 +162,11 @@
 
             <div class="py-1">
               
+                            <button 
+                @click="openRedeemModal(); showUserDropdown = false" 
+                class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-emerald-400 flex items-center gap-2 transition font-medium">
+                <span>🎁</span> <span>卡密兑换充值</span>
+              </button>
               <button 
                 @click="openChangePwdModal" 
                 class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-slate-300 flex items-center gap-2 transition">
@@ -1836,6 +1851,70 @@
             class="px-5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-semibold shadow flex items-center gap-1.5 transition">
             <span v-if="isAddingWorkflow" class="animate-spin text-xs">⏳</span>
             <span>{{ isAddingWorkflow ? '正在保存...' : '确认添加并保存' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+        <!-- 🎁 卡密与兑换码充值弹窗 (Redeem CDKey Modal) -->
+    <div v-if="showRedeemModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+      <div class="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl text-slate-100 relative overflow-hidden">
+        <div class="absolute -top-24 -right-24 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
+
+        <div class="flex justify-between items-center pb-4 border-b border-slate-800">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20 text-lg">
+              🎁
+            </div>
+            <div>
+              <h3 class="font-bold text-base text-white tracking-wide">卡密兑换充值</h3>
+              <p class="text-[11px] text-slate-400">输入 16 位卡密兑换码，即刻充值算力</p>
+            </div>
+          </div>
+          <button @click="closeRedeemModal" class="w-7 h-7 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition">✕</button>
+        </div>
+
+        <div class="py-5 space-y-4 text-xs">
+          <div>
+            <label class="text-slate-300 font-medium block mb-1.5 flex items-center justify-between">
+              <span>兑换码 (CD-Key)</span>
+              <span class="text-[10px] text-emerald-400">自动去除空格并转大写</span>
+            </label>
+            <input 
+              type="text" 
+              v-model="redeemCode" 
+              placeholder="例如: 5EQN-N64H-2MWA-VKVV" 
+              @keyup.enter="submitRedeemCDKey"
+              class="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-white font-mono text-center tracking-widest text-sm focus:outline-none focus:border-emerald-500 uppercase placeholder:text-slate-600 placeholder:tracking-normal placeholder:font-sans">
+          </div>
+
+          <div v-if="redeemError" class="p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 flex items-center gap-2">
+            <span>⚠️</span>
+            <span class="flex-1">{{ redeemError }}</span>
+          </div>
+
+          <div v-if="redeemSuccess" class="p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 flex items-center gap-2">
+            <span>🎉</span>
+            <span class="flex-1">{{ redeemSuccess }}</span>
+          </div>
+
+          <div class="p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] text-slate-400 space-y-1">
+            <div class="text-slate-300 font-medium flex items-center gap-1">
+              <span>🛡️</span> <span>安全保障须知</span>
+            </div>
+            <p>• 卡密一经核销立即充值至当前登录账户，全天 24 小时秒级到账。</p>
+            <p>• 接口已开启严格防爆破限频保护，连续输错 5 次将临时锁定 15 分钟。</p>
+          </div>
+        </div>
+
+        <div class="flex justify-end gap-2.5 pt-3 border-t border-slate-800">
+          <button @click="closeRedeemModal" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs transition">关闭</button>
+          <button 
+            @click="submitRedeemCDKey" 
+            :disabled="redeemLoading || !redeemCode.trim()"
+            class="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 active:scale-95">
+            <span v-if="redeemLoading" class="animate-spin text-xs">⏳</span>
+            <span>{{ redeemLoading ? '正在核销中...' : '立即核销兑换' }}</span>
           </button>
         </div>
       </div>

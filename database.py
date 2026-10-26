@@ -3,6 +3,7 @@ import sqlite3
 import json
 import time
 from typing import Optional, List, Dict, Any, Tuple
+import secrets
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -28,6 +29,24 @@ def record_failed_attempt(key: str):
 
 def clear_failed_attempts(key: str):
     _LOGIN_ATTEMPTS.pop(key, None)
+
+# 卡密兑换防爆破限频字典 (15分钟内连续输错 5 次锁定 15 分钟)
+_REDEEM_ATTEMPTS: Dict[str, List[float]] = {}
+
+def is_redeem_rate_limited(key: str, max_attempts: int = 5, window_seconds: int = 900) -> bool:
+    now = time.time()
+    attempts = [t for t in _REDEEM_ATTEMPTS.get(key, []) if now - t < window_seconds]
+    _REDEEM_ATTEMPTS[key] = attempts
+    return len(attempts) >= max_attempts
+
+def record_failed_redeem_attempt(key: str):
+    now = time.time()
+    attempts = _REDEEM_ATTEMPTS.setdefault(key, [])
+    _REDEEM_ATTEMPTS[key] = [t for t in attempts if now - t < 900] + [now]
+
+def clear_failed_redeem_attempts(key: str):
+    _REDEEM_ATTEMPTS.pop(key, None)
+
 
 # ----------------- SQLite 高并发连接池 (WAL模式) -----------------
 
@@ -135,6 +154,25 @@ def init_database():
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_points_user_id ON points_ledger (user_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_points_created_at ON points_ledger (created_at DESC);")
+
+        # 5. 卡密与兑换码发行核销表 (CDKeys) - 银行级防爆破与原子核销
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS cdkeys (
+            code TEXT PRIMARY KEY,
+            points INTEGER NOT NULL,
+            is_used INTEGER NOT NULL DEFAULT 0,
+            is_void INTEGER NOT NULL DEFAULT 0,
+            used_by_user_id TEXT DEFAULT '',
+            used_by_username TEXT DEFAULT '',
+            created_at INTEGER NOT NULL,
+            used_at INTEGER DEFAULT 0,
+            remark TEXT DEFAULT ''
+        );
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cdkeys_is_used ON cdkeys (is_used);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cdkeys_is_void ON cdkeys (is_void);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cdkeys_created_at ON cdkeys (created_at DESC);")
+
 
         # 5. 自动无损增量同步字段 (避免 SQLite 重建表)
         def _add_col_if_missing(tbl, col, def_sql):
@@ -526,6 +564,178 @@ def db_delete_announcement(anno_id: str):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM announcements WHERE id = ?;", (str(anno_id),))
         conn.commit()
+
+
+# ----------------- 卡密发行、核销与对账 (CDKeys) -----------------
+
+CDKEY_CHARS = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"  # 排除 0, O, 1, I 等易混淆字符
+
+def generate_secure_cdkey_code() -> str:
+    """生成 16 位密码学真随机高熵卡密 (格式: XXXX-XXXX-XXXX-XXXX)"""
+    parts = []
+    for _ in range(4):
+        part = "".join(secrets.choice(CDKEY_CHARS) for _ in range(4))
+        parts.append(part)
+    return "-".join(parts)
+
+def db_generate_cdkeys(points: int, count: int, remark: str = "") -> List[str]:
+    """批量生成高熵卡密并写入数据库"""
+    if points <= 0 or count <= 0:
+        return []
+    count = min(count, 500)
+    now = int(time.time())
+    generated = []
+    
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        for _ in range(count):
+            code = generate_secure_cdkey_code()
+            cursor.execute("""
+            INSERT OR IGNORE INTO cdkeys (code, points, is_used, is_void, used_by_user_id, used_by_username, created_at, used_at, remark)
+            VALUES (?, ?, 0, 0, '', '', ?, 0, ?);
+            """, (code, points, now, (remark or "").strip()))
+            generated.append(code)
+        conn.commit()
+    return generated
+
+def db_redeem_cdkey(raw_code: str, user_id: str, username: str) -> Tuple[bool, int, str]:
+    """
+    原子核销卡密：
+    1. 输入清洗 (大写、去首尾空格)
+    2. 原子排他条件更新 UPDATE ... WHERE is_used = 0 AND is_void = 0
+    3. 成功后原子增加用户积分并记录流水台账
+    """
+    code = (raw_code or "").strip().upper()
+    if not code:
+        return False, 0, "卡密兑换码不能为空"
+
+    now = int(time.time())
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT points, is_used, is_void FROM cdkeys WHERE code = ?;", (code,))
+        row = cursor.fetchone()
+        if not row:
+            return False, 0, "卡密不存在，请仔细核对是否输错"
+        
+        pts, is_used, is_void = row[0], bool(row[1]), bool(row[2])
+        if is_void:
+            return False, 0, "该卡密已被系统管理员作废"
+        if is_used:
+            return False, 0, "该卡密已被使用，无法重复兑换"
+
+        # 原子排他核销（高并发重放攻击彻底拦截）
+        cursor.execute("""
+        UPDATE cdkeys 
+        SET is_used = 1, used_by_user_id = ?, used_by_username = ?, used_at = ? 
+        WHERE code = ? AND is_used = 0 AND is_void = 0;
+        """, (str(user_id), str(username), now, code))
+        
+        if cursor.rowcount == 0:
+            return False, 0, "卡密已被并发核销，请勿重复提交"
+
+        # 原子增加用户积分
+        cursor.execute("UPDATE users SET points = points + ? WHERE id = ?;", (pts, str(user_id)))
+        cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
+        u_row = cursor.fetchone()
+        new_balance = u_row[0] if u_row else pts
+
+        # 记录积分流水对账台账
+        ledger_id = f"led_{now}_{os.urandom(3).hex()}"
+        cursor.execute("""
+        INSERT INTO points_ledger (id, user_id, task_id, amount, balance_after, reason, created_at)
+        VALUES (?, ?, '', ?, ?, ?, ?);
+        """, (ledger_id, str(user_id), pts, new_balance, f"卡密兑换充值 ({code})", now))
+
+        conn.commit()
+        return True, new_balance, f"兑换成功！已为您充值 {pts} 点算力"
+
+def db_list_cdkeys(status_filter: str = "ALL", page: int = 1, page_size: int = 50, search: str = "") -> Dict[str, Any]:
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        clauses = []
+        params = []
+
+        if status_filter == "UNUSED":
+            clauses.append("is_used = 0 AND is_void = 0")
+        elif status_filter == "USED":
+            clauses.append("is_used = 1")
+        elif status_filter == "VOID":
+            clauses.append("is_void = 1")
+
+        if search:
+            search_pattern = f"%{search.strip()}%"
+            clauses.append("(code LIKE ? OR used_by_username LIKE ? OR remark LIKE ?)")
+            params.extend([search_pattern, search_pattern, search_pattern])
+
+        where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+
+        cursor.execute("SELECT COUNT(*) FROM cdkeys WHERE is_used = 0 AND is_void = 0;")
+        unused_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM cdkeys WHERE is_used = 1;")
+        used_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM cdkeys WHERE is_void = 1;")
+        void_count = cursor.fetchone()[0]
+        cursor.execute("SELECT COALESCE(SUM(points), 0) FROM cdkeys;")
+        total_points_issued = cursor.fetchone()[0]
+
+        cursor.execute(f"SELECT COUNT(*) FROM cdkeys {where_sql};", tuple(params))
+        filtered_total = cursor.fetchone()[0]
+
+        offset = max(0, (page - 1) * page_size)
+        cursor.execute(
+            f"SELECT * FROM cdkeys {where_sql} ORDER BY created_at DESC LIMIT ? OFFSET ?;",
+            tuple(params + [page_size, offset])
+        )
+        rows = cursor.fetchall()
+        items = []
+        for r in rows:
+            items.append({
+                "code": r["code"],
+                "points": r["points"],
+                "isUsed": bool(r["is_used"]),
+                "isVoid": bool(r["is_void"]),
+                "usedByUserId": r["used_by_user_id"],
+                "usedByUsername": r["used_by_username"],
+                "createdAt": r["created_at"],
+                "usedAt": r["used_at"],
+                "remark": r["remark"]
+            })
+
+        return {
+            "total": filtered_total,
+            "page": page,
+            "pageSize": page_size,
+            "unusedCount": unused_count,
+            "usedCount": used_count,
+            "voidCount": void_count,
+            "totalPointsIssued": total_points_issued,
+            "items": items
+        }
+
+def db_void_cdkey(code: str) -> bool:
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE cdkeys SET is_void = 1 WHERE code = ? AND is_used = 0;", (code.strip().upper(),))
+        conn.commit()
+        return cursor.rowcount > 0
+
+def db_delete_cdkey(code: str) -> bool:
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM cdkeys WHERE code = ?;", (code.strip().upper(),))
+        conn.commit()
+        return cursor.rowcount > 0
+
+def db_get_unused_cdkeys_export(remark: str = "") -> List[Dict[str, Any]]:
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if remark:
+            cursor.execute("SELECT code, points, remark, created_at FROM cdkeys WHERE is_used = 0 AND is_void = 0 AND remark = ? ORDER BY created_at DESC;", (remark.strip(),))
+        else:
+            cursor.execute("SELECT code, points, remark, created_at FROM cdkeys WHERE is_used = 0 AND is_void = 0 ORDER BY created_at DESC LIMIT 500;")
+        rows = cursor.fetchall()
+        return [{"code": r["code"], "points": r["points"], "remark": r["remark"], "createdAt": r["created_at"]} for r in rows]
+
 
 # 执行数据库自动初始化
 init_database()
