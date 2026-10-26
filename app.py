@@ -3561,9 +3561,7 @@ def serve_admin_page():
         return FileResponse(admin_path)
     return RedirectResponse(url="/")
 
-# 挂载静态文件
-app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
-app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
+
 
 
 # ----------------- 卡密发行与兑换充值 API 路由 -----------------
@@ -3719,6 +3717,11 @@ async def admin_reset_key_in_pool(key_id: str, _: Dict[str, Any] = Depends(get_c
     """管理员紧急一键释放被占用的 Key"""
     await KEY_POOL_MANAGER.reset_key(key_id)
     return {"status": "ok", "message": f"Key {key_id} 运行状态已强制重置为空闲"}
+
+
+# 挂载静态文件
+app.mount("/outputs", StaticFiles(directory=OUTPUTS_DIR), name="outputs")
+app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
 
 
 if __name__ == "__main__":
