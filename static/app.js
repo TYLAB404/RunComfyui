@@ -90,7 +90,7 @@ createApp({
           if (currentUser.value) {
             currentUser.value.points = data.newPoints;
           }
-          showToast(data.message || '卡密兑换成功！', 'success');
+          showToastNotification(data.message || '卡密兑换成功！', 'success');
           redeemCode.value = '';
           // 2 秒后自动关闭弹窗
           setTimeout(() => {
