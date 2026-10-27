@@ -92,6 +92,25 @@ def run_tests():
     assert res_second.status_code == 400, f"Expected 400 for concurrent submission, got {res_second.status_code}"
     print(f"  -> 多开并发提交被系统精准阻断 (HTTP 400): {res_second.json().get('detail')} [OK]")
 
+    # 3.2 验证管理员特权豁免（管理员并发提交不受单任务限制，无阻断）
+    print("\n[Test 2.2] 验证管理员并发提交特权豁免（无限制）...")
+    with get_db_connection() as conn:
+        conn.execute("INSERT OR REPLACE INTO tasks (task_id, workflow_id, user_id, status, created_at, updated_at) VALUES ('task_admin_active_1', '2105612272424034306', ?, 'RUNNING', ?, ?);", (admin_user["id"], int(time.time()), int(time.time())))
+        conn.commit()
+
+    with patch("routers.tasks_router.dispatch_queued_task"):
+        res_admin_second = client.post("/api/generate", json={
+            "workflowId": "2105612272424034306",
+            "nodeInfoList": []
+        }, headers=admin_headers)
+    assert res_admin_second.status_code == 200, f"Admin must NOT be restricted by 1-task limit, got {res_admin_second.status_code}: {res_admin_second.text}"
+    print(f"  -> 管理员并发提交成功豁免单任务限制，返回 200 正常入队/调度 [OK]")
+
+    # 清理 admin 的测试任务
+    with get_db_connection() as conn:
+        conn.execute("DELETE FROM tasks WHERE task_id IN ('task_admin_active_1', ?);", (res_admin_second.json().get("taskId"),))
+        conn.commit()
+
     # 释放模拟占用的 Key
     for k in cfg.get("apiKeys", []):
         kid = k["id"]

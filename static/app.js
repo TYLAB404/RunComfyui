@@ -618,7 +618,8 @@ createApp({
           const hasActive = data.some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
           if (currentUser.value && currentUser.value.role !== 'admin') {
             isGenerating.value = hasActive;
-          } else if (!hasActive) {
+          } else {
+            // 管理员特权：不受单并发限制，始终解锁按钮以支持多开多发
             isGenerating.value = false;
           }
         }
@@ -928,6 +929,9 @@ createApp({
           activeOutputIndex.value = 0;
           await refreshTasks();
           await fetchCurrentUser();
+          if (currentUser.value && currentUser.value.role === 'admin') {
+            isGenerating.value = false;
+          }
         } else {
           showToastNotification('任务创建失败: ' + (data.detail || JSON.stringify(data)), 'error');
           isGenerating.value = false;
