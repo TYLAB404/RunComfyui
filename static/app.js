@@ -616,7 +616,9 @@ createApp({
           }
 
           const hasActive = data.some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
-          if (!hasActive) {
+          if (currentUser.value && currentUser.value.role !== 'admin') {
+            isGenerating.value = hasActive;
+          } else if (!hasActive) {
             isGenerating.value = false;
           }
         }
@@ -775,6 +777,14 @@ createApp({
       if (!selectedWorkflowId.value) {
         showToastNotification('请先选择一个工作流', 'warning');
         return;
+      }
+
+      if (currentUser.value && currentUser.value.role !== 'admin') {
+        const hasActive = (tasks.value || []).some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
+        if (hasActive) {
+          showToastNotification('您当前已有正在进行中的任务，单账号同一时间仅支持运行 1 个任务，请等待其完成后再提交！', 'warning');
+          return;
+        }
       }
 
       isGenerating.value = true;

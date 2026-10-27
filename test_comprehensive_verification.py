@@ -83,6 +83,15 @@ def run_tests():
     assert queued_task_id and queued_task_id.startswith("task_"), f"Queued taskId should start with 'task_', got {queued_task_id}"
     print(f"  -> 排队任务创建成功，返回 status: 'ok', isQueued: True, taskId: {queued_task_id} [OK]")
 
+    # 3.1 验证多开标签/并发拦截（已有一个任务在进行时，提交第 2 个任务必须被严格阻断 400）
+    print("\n[Test 2.1] 验证单账号多开标签/多任务并发阻断...")
+    res_second = client.post("/api/generate", json={
+        "workflowId": "2105612272424034306",
+        "nodeInfoList": []
+    }, headers=user_headers)
+    assert res_second.status_code == 400, f"Expected 400 for concurrent submission, got {res_second.status_code}"
+    print(f"  -> 多开并发提交被系统精准阻断 (HTTP 400): {res_second.json().get('detail')} [OK]")
+
     # 释放模拟占用的 Key
     for k in cfg.get("apiKeys", []):
         kid = k["id"]
