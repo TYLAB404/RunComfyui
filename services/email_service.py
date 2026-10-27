@@ -30,10 +30,13 @@ def send_admin_alert_email(subject: str, html_body: str) -> Tuple[bool, str]:
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
     from email.header import Header
+    from email.utils import formataddr
 
     msg = MIMEMultipart()
-    msg['From'] = Header(f"RunComfyUI 运维管家 <{user}>", 'utf-8')
-    msg['To'] = Header(admin_email, 'utf-8')
+    from_name = Header("RunComfyUI 运维管家", "utf-8").encode()
+    to_name = Header("系统管理员", "utf-8").encode()
+    msg['From'] = formataddr((from_name, user))
+    msg['To'] = formataddr((to_name, admin_email))
     msg['Subject'] = Header(subject, 'utf-8')
     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
 
