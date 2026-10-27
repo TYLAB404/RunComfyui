@@ -97,7 +97,7 @@ def mask_key(raw_key: str) -> str:
 def verify_key_with_runninghub(raw_key: str) -> Tuple[bool, str]:
     """
     轻量级校验 API Key 是否有效：
-    请求 RunningHub 接口，验证 API Key 合法性
+    请求 RunningHub 接口，验证 API Key 合法性，并精准识别账号是否被封禁/注销/欠费
     """
     if not raw_key:
         return False, "API Key 为空"
@@ -105,22 +105,46 @@ def verify_key_with_runninghub(raw_key: str) -> Tuple[bool, str]:
     url = "https://www.runninghub.cn/task/openapi/outputs"
     payload = {"apiKey": raw_key, "taskId": "1"}
     try:
-        res = requests.post(url, json=payload, timeout=6)
+        res = requests.post(url, json=payload, timeout=8)
         data = res.json()
         code = data.get("code")
-        msg = data.get("msg") or ""
+        msg = str(data.get("msg") or "").strip()
 
         # 807 代表 APIKEY_TASK_NOT_FOUND，说明 Key 用户完全合法，只是 task 不存在，校验成功
-        if code == 807:
-            return True, "API Key 校验成功，账户有效"
-        elif code in (806, 301) or "USER_NOT_FOUND" in msg or "not exist" in msg:
-            return False, f"API Key 无效或用户不存在 ({msg})"
-        elif code == 0:
-            return True, "API Key 校验成功"
+        if code in (807, 0):
+            return True, "API Key 校验成功，账号正常可用"
+        
+        # 1. 明确的账号封禁/冻结风控
+        msg_lower = msg.lower()
+        if code in (403, 302) or any(k in msg for k in ["封禁", "限制", "冻结", "违规", "风险"]) or "disabled" in msg_lower or "forbidden" in msg_lower:
+            return False, f"账号已被 RunningHub 官方封禁/限制使用 (官方提示: {msg}, code: {code})"
+
+        # 2. 账号注销/Key 不存在
+        elif code in (806, 301, 401) or any(k in msg_lower for k in ["user_not_found", "not found", "not exist", "invalid", "不存在"]):
+            return False, f"API Key 无效或账号已被注销 (官方提示: {msg}, code: {code})"
+
+        # 3. 算力余额不足
+        elif code == 402 or any(k in msg for k in ["余额不足", "欠费", "算力不足"]) or "insufficient" in msg_lower:
+            return False, f"账号算力余额不足/已耗尽 (官方提示: {msg}, code: {code})"
+
         else:
-            # 其它错误码
-            return False, f"RunningHub 响应: {msg} (code: {code})"
+            return False, f"RunningHub 接口异常: {msg} (code: {code})"
     except requests.exceptions.Timeout:
-        return False, "连接 RunningHub 超时，请检查网络"
+        return False, "连接 RunningHub 服务器超时，请检查网络"
     except Exception as e:
-        return False, f"验证请求异常: {str(e)}"
+        return False, f"网络请求异常: {str(e)}"
+
+def is_key_fatal_error(code: Optional[int], msg: str) -> bool:
+    """
+    判断 RunningHub 返回的错误是否属于 Key 级故障（如封禁、注销、欠费、未授权或被限制）
+    若是 Key 故障，系统必须自动触发无感故障转移 (Failover) 与熔断隔离，杜绝向终端用户暴露
+    """
+    if code in (403, 301, 302, 401, 806):
+        return True
+    m = (msg or "").lower()
+    banned_keywords = [
+        "封禁", "限制", "冻结", "违规", "风险", "disabled", "forbidden", 
+        "user_not_found", "not found", "not exist", "invalid", "不存在", 
+        "余额不足", "欠费", "算力不足", "insufficient", "apikey"
+    ]
+    return any(k in m for k in banned_keywords)
