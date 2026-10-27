@@ -52,7 +52,7 @@ from core.http_client import http_session
 from services.key_pool import KEY_POOL_MANAGER
 from services.email_service import send_admin_alert_email
 from services.imgbed_service import sync_task_outputs_to_imgbed
-from services.runninghub import RUNNINGHUB_API_URL
+from services.runninghub import RUNNINGHUB_API_URL, ACTIVE_TASK_PREVIEWS
 from routers.tasks_router import CANCELLED_TASKS
 
 router = APIRouter(tags=["Admin"])
@@ -432,6 +432,13 @@ async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_
     if not t:
         raise HTTPException(status_code=404, detail="任务不存在")
 
+    cur_status = str(t.get("status") or "")
+    if cur_status in ("SUCCESS", "FAILED", "CANCELLED"):
+        return {
+            "status": "error",
+            "message": f"任务已处于终态 ({cur_status})，不可取消或重复退款"
+        }
+
     CANCELLED_TASKS.add(task_id_str)
     await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
 
@@ -467,8 +474,14 @@ async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_
     # 原子化取消状态跃迁与幂等退款（杜绝并发重复退款）
     r_ok, refund_msg, new_bal = db_atomic_cancel_and_refund(
         task_id_str,
-        reason=f"管理员强制取消任务全额退款"
+        reason="管理员强制取消任务全额退款"
     )
+
+    if not r_ok:
+        return {
+            "status": "error",
+            "message": refund_msg
+        }
 
     db_update_task(task_id_str, {
         "status": "CANCELLED",
@@ -476,6 +489,7 @@ async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_
         "errorMessage": f"管理员后台强制取消 ({cloud_status})",
         "updatedAt": int(time.time()),
     })
+    ACTIVE_TASK_PREVIEWS.pop(task_id_str, None)
 
     return {
         "status": "ok",

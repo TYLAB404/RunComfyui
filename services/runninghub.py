@@ -496,8 +496,7 @@ async def dispatch_queued_task(
                         continue
                     else:
                         await KEY_POOL_MANAGER.release_key(key_id, local_task_id)
-                        if current_user:
-                            db_refund_user_points(current_user["id"], task_cost, task_id=local_task_id, reason=f"原生代理提交失败退还: {last_err}")
+                        db_atomic_cancel_and_refund(local_task_id, reason=f"原生代理提交失败退还: {last_err}")
                         db_update_task(local_task_id, {
                             "status": "FAILED",
                             "error": str(last_err),
@@ -544,8 +543,7 @@ async def dispatch_queued_task(
                         continue
                     else:
                         await KEY_POOL_MANAGER.release_key(key_id, local_task_id)
-                        if current_user:
-                            db_refund_user_points(current_user["id"], task_cost, task_id=local_task_id, reason=f"云端拒绝任务退还: {msg}")
+                        db_atomic_cancel_and_refund(local_task_id, reason=f"云端拒绝任务退还: {msg}")
                         db_update_task(local_task_id, {
                             "status": "FAILED",
                             "error": msg or "创建任务失败",
@@ -560,8 +558,7 @@ async def dispatch_queued_task(
                 break
 
         if not real_task_id:
-            if current_user:
-                db_refund_user_points(current_user["id"], task_cost, task_id=local_task_id, reason="通道繁忙排队超时退还算力")
+            db_atomic_cancel_and_refund(local_task_id, reason="通道繁忙排队超时退还算力")
             db_update_task(local_task_id, {
                 "status": "FAILED",
                 "error": "计算通道繁忙调度超时",
@@ -571,16 +568,15 @@ async def dispatch_queued_task(
             })
             return
 
-        if real_task_id != local_task_id:
-            try:
-                with get_db_connection() as conn:
-                    conn.execute("UPDATE tasks SET task_id = ? WHERE task_id = ?;", (real_task_id, local_task_id))
-                    conn.commit()
-            except Exception as e:
-                print(f"[Warning] Failed to update task_id {local_task_id} to {real_task_id}: {e}")
-            async with KEY_POOL_MANAGER._lock:
-                if key_id in KEY_POOL_MANAGER._states:
-                    KEY_POOL_MANAGER._states[key_id]["task_id"] = real_task_id
+        try:
+            with get_db_connection() as conn:
+                conn.execute("UPDATE tasks SET task_id = ?, key_id = ? WHERE task_id = ?;", (real_task_id, key_id, local_task_id))
+                conn.commit()
+        except Exception as e:
+            print(f"[Warning] Failed to update task_id {local_task_id} to {real_task_id}: {e}")
+        async with KEY_POOL_MANAGER._lock:
+            if key_id in KEY_POOL_MANAGER._states:
+                KEY_POOL_MANAGER._states[key_id]["task_id"] = real_task_id
 
         ACTIVE_POLL_TASKS.add(real_task_id)
         asyncio.create_task(poll_task_status(real_task_id, api_key, key_id=key_id))
@@ -593,22 +589,39 @@ async def dispatch_queued_task(
 async def reconcile_pending_tasks():
     """
     服务重启时启动对账与自愈：
-    自动恢复未完成的 QUEUED / RUNNING 历史任务的云端轮询监听，
-    彻底解决服务器重启后旧任务在数据库中'假死'的问题。
+    1. 本地未派发的排队任务（task_前缀）：全额退还算力并标记为失败，避免向云端轮询无效任务。
+    2. 已在云端运行的真实任务：恢复 Key 独占占用与轮询监听，防止重启后新任务并发冲撞。
     """
-    from core.database import db_load_tasks
+    from core.database import db_load_tasks, db_atomic_cancel_and_refund, db_update_task
     from core.config import get_active_api_key
     from core.security import decrypt_key
     await asyncio.sleep(1.5)
     try:
         pending = db_load_tasks(status="RUNNING", is_admin=True, limit=50) + db_load_tasks(status="QUEUED", is_admin=True, limit=50)
         if pending:
-            print(f"[Reconcile] 发现 {len(pending)} 个处于进行中的历史任务，正在恢复云端状态监听...")
+            print(f"[Reconcile] 发现 {len(pending)} 个处于进行中的历史任务，正在恢复云端状态监听与对账...")
             cfg = load_config()
             for t in pending:
                 tid = str(t.get("taskId"))
                 if not tid or tid in ACTIVE_POLL_TASKS:
                     continue
+                
+                # 1. 本地排队任务在重启前未成功派发给 RunningHub (本地临时 ID)
+                if t.get("status") == "QUEUED" and tid.startswith("task_"):
+                    print(f"[Reconcile] 本地排队任务 {tid} 在重启前未派发，执行自动退款与终态清理")
+                    try:
+                        db_atomic_cancel_and_refund(tid, reason="服务器重启维护，未派发排队任务自动退还算力")
+                        db_update_task(tid, {
+                            "status": "FAILED",
+                            "error": "服务器重启维护，排队任务已自动退还算力",
+                            "statusText": "服务器维护重启，未派发的排队任务已全额退还算力",
+                            "updatedAt": int(time.time())
+                        })
+                    except Exception as e:
+                        print(f"[Reconcile] 清理本地排队任务 {tid} 失败: {e}")
+                    continue
+
+                # 2. 已在云端运行的真实任务，恢复 Key 锁定与轮询
                 task_key_id = t.get("keyId")
                 api_key = None
                 if task_key_id:
@@ -619,6 +632,8 @@ async def reconcile_pending_tasks():
                 if not api_key:
                     api_key = get_active_api_key(cfg)
                 if api_key:
+                    if task_key_id:
+                        await KEY_POOL_MANAGER.mark_key_busy(task_key_id, tid)
                     ACTIVE_POLL_TASKS.add(tid)
                     asyncio.create_task(poll_task_status(tid, api_key, key_id=task_key_id))
     except Exception as e:

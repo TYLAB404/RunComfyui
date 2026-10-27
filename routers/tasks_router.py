@@ -72,6 +72,10 @@ async def generate_task(
         for wf in cfg.get("workflows", []):
             if str(wf.get("id")) == str(req.workflowId):
                 task_cost = int(wf.get("pointsCost", 0) or wf.get("cost", 0) or 5)
+                if not wf.get("isOfficial"):
+                    task_cost = max(5, task_cost)
+                elif task_cost < 0:
+                    task_cost = 5
                 wf_found = True
                 break
         if not wf_found:
@@ -151,15 +155,19 @@ async def generate_task(
                 temp_id, req, current_user, task_cost, is_custom_proxy, task_type
             )
             return {
-                "status": "queued",
+                "status": "ok",
+                "isQueued": True,
                 "taskId": temp_id,
                 "message": f"当前算力通道繁忙，任务已加入排队队列（当前排在第 {queue_pos} 位），后台正自动等待空闲调度...",
                 "task": queue_task_record
             }
 
-        key_id = key_info["keyId"]
-        api_key = key_info["apiKey"]
-        key_name = key_info["keyName"]
+        if isinstance(key_info, dict):
+            key_id = key_info["keyId"]
+            api_key = key_info["apiKey"]
+            key_name = key_info["keyName"]
+        else:
+            key_id, api_key, key_name = key_info[0], key_info[1], key_info[2]
 
         if is_custom_proxy:
             prompt_dict = copy.deepcopy(req.customPrompt or {})
@@ -359,6 +367,13 @@ async def cancel_task_endpoint(task_id: str, current_user: Optional[Dict[str, An
         if current_user.get("role") != "admin" and str(current_user["id"]) != task_owner:
             raise HTTPException(status_code=403, detail="无权操作其他用户的任务")
 
+    cur_status = str(t.get("status") or "")
+    if cur_status in ("SUCCESS", "FAILED", "CANCELLED"):
+        return {
+            "status": "error",
+            "message": f"任务已处于终态 ({cur_status})，不可取消或重复退款"
+        }
+
     CANCELLED_TASKS.add(task_id_str)
     await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
 
@@ -394,8 +409,14 @@ async def cancel_task_endpoint(task_id: str, current_user: Optional[Dict[str, An
     # 原子化取消状态跃迁与幂等退款
     r_ok, refund_msg, new_bal = db_atomic_cancel_and_refund(
         task_id_str,
-        reason=f"用户主动取消任务全额退款"
+        reason="用户主动取消任务全额退款"
     )
+
+    if not r_ok:
+        return {
+            "status": "error",
+            "message": refund_msg
+        }
 
     db_update_task(task_id_str, {
         "status": "CANCELLED",
