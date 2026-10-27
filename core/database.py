@@ -56,13 +56,12 @@ import contextlib
 def get_db_connection():
     """
     高性能防泄漏 SQLite 连接引擎：
-    1. 启用 WAL 预写日志与 NORMAL 同步
+    1. 启用 WAL 预写日志（在 init_database 持久化开启）与 NORMAL 同步
     2. 开启 32MB 内存缓存与 128MB mmap 内存映射，减少 90% 物理磁盘寻道
     3. 严格在 finally 块中关闭连接，彻底消除 Windows 文件锁与文件句柄泄漏
     """
     conn = sqlite3.connect(DB_PATH, timeout=25.0)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode = WAL;")
     conn.execute("PRAGMA synchronous = NORMAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
     conn.execute("PRAGMA cache_size = -32000;")
@@ -76,6 +75,7 @@ def get_db_connection():
 def init_database():
     """初始化数据库表架构与自动迁移旧版数据"""
     with get_db_connection() as conn:
+        conn.execute("PRAGMA journal_mode = WAL;")
         cursor = conn.cursor()
         
         # 1. 用户表 (Users)
@@ -120,6 +120,9 @@ def init_database():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks (user_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (created_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_status ON tasks (user_id, status);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_created ON tasks (user_id, created_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status_created ON tasks (status, created_at DESC);")
 
         try:
             cursor.execute("ALTER TABLE tasks ADD COLUMN key_id TEXT DEFAULT '';")
@@ -432,6 +435,26 @@ def db_delete_task(task_id: str):
         cursor.execute("DELETE FROM tasks WHERE task_id = ?;", (str(task_id),))
         conn.commit()
 
+def db_clean_tasks_by_status(status: str = "FAILED") -> int:
+    """按状态直接在 SQL 层批量清理任务，避免加载全量 JSON 到内存"""
+    st = (status or "FAILED").upper()
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        if st == "ALL_FINISHED":
+            cursor.execute("DELETE FROM tasks WHERE status IN ('FAILED', 'SUCCESS', 'CANCELLED');")
+        else:
+            cursor.execute("DELETE FROM tasks WHERE status = ?;", (st,))
+        deleted_count = cursor.rowcount
+        conn.commit()
+        return deleted_count
+
+def db_get_user_task_counts() -> Dict[str, int]:
+    """基于 SQL GROUP BY 索引统计每个用户的任务总数，避免全表反序列化"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, COUNT(*) as cnt FROM tasks WHERE user_id IS NOT NULL AND user_id != '' GROUP BY user_id;")
+        return {str(r["user_id"]): int(r["cnt"]) for r in cursor.fetchall()}
+
 # ----------------- 积分计费原子操作与流水账本 (P0-5 资产防超卖与防并发并发) -----------------
 
 def db_deduct_user_points(user_id: str, amount: int, task_id: str = "", reason: str = "工作流生图扣费") -> Tuple[bool, int, str]:
@@ -691,14 +714,19 @@ def db_list_cdkeys(status_filter: str = "ALL", page: int = 1, page_size: int = 5
 
         where_sql = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-        cursor.execute("SELECT COUNT(*) FROM cdkeys WHERE is_used = 0 AND is_void = 0;")
-        unused_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM cdkeys WHERE is_used = 1;")
-        used_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COUNT(*) FROM cdkeys WHERE is_void = 1;")
-        void_count = cursor.fetchone()[0]
-        cursor.execute("SELECT COALESCE(SUM(points), 0) FROM cdkeys;")
-        total_points_issued = cursor.fetchone()[0]
+        cursor.execute("""
+            SELECT 
+                COUNT(CASE WHEN is_used = 0 AND is_void = 0 THEN 1 END) as unused_cnt,
+                COUNT(CASE WHEN is_used = 1 THEN 1 END) as used_cnt,
+                COUNT(CASE WHEN is_void = 1 THEN 1 END) as void_cnt,
+                COALESCE(SUM(points), 0) as total_pts
+            FROM cdkeys;
+        """)
+        agg_row = cursor.fetchone()
+        unused_count = agg_row["unused_cnt"] if agg_row else 0
+        used_count = agg_row["used_cnt"] if agg_row else 0
+        void_count = agg_row["void_cnt"] if agg_row else 0
+        total_points_issued = agg_row["total_pts"] if agg_row else 0
 
         cursor.execute(f"SELECT COUNT(*) FROM cdkeys {where_sql};", tuple(params))
         filtered_total = cursor.fetchone()[0]

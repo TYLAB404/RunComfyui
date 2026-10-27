@@ -12,8 +12,8 @@ import aiohttp
 import requests
 from pydantic import BaseModel
 
-from core.config import RUNNINGHUB_API_URL, load_config
-from core.security import is_key_fatal_error
+from core.config import RUNNINGHUB_API_URL, load_config, get_active_api_key
+from core.security import is_key_fatal_error, decrypt_key
 from core.http_client import HTTP_SESSION
 from core.database import (
     db_get_task, db_save_task, db_update_task, 
@@ -638,4 +638,91 @@ async def reconcile_pending_tasks():
                     asyncio.create_task(poll_task_status(tid, api_key, key_id=task_key_id))
     except Exception as e:
         print(f"[Reconcile Error] {e}")
+
+
+async def execute_task_cancellation(t: Dict[str, Any], is_admin: bool = False) -> Dict[str, Any]:
+    """
+    统一封装任务取消服务逻辑（供用户前台与管理员后台共同调用，彻底解耦路由层重复逻辑）：
+    1. 校验任务状态是否处于可取消态
+    2. 标记 CANCELLED_TASKS 并立即释放占用的 Key 池通道
+    3. 精准匹配接单 Key 通知 RunningHub 云端中止任务
+    4. 执行数据库 ACID 原子状态跃迁与幂等积分退还
+    """
+    task_id_str = str(t.get("taskId") or "").strip()
+    cur_status = str(t.get("status") or "")
+    if cur_status in ("SUCCESS", "FAILED", "CANCELLED"):
+        return {
+            "status": "error",
+            "message": f"任务已处于终态 ({cur_status})，不可取消或重复退款"
+        }
+
+    CANCELLED_TASKS.add(task_id_str)
+    await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
+
+    cfg = load_config()
+    task_key_id = t.get("keyId")
+    cancel_api_key = None
+    if task_key_id:
+        for k in cfg.get("apiKeys", []):
+            if k.get("id") == task_key_id:
+                cancel_api_key = decrypt_key(k.get("keyEncrypted"))
+                break
+    if not cancel_api_key:
+        cancel_api_key = get_active_api_key(cfg)
+
+    cloud_status = "已标记本地取消" if is_admin else "本地已标记取消"
+    if cancel_api_key and not task_id_str.startswith("task_"):
+        try:
+            cancel_url = f"{RUNNINGHUB_API_URL}/task/openapi/cancel"
+            headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
+            res = await asyncio.to_thread(
+                HTTP_SESSION.post,
+                cancel_url,
+                json={"apiKey": cancel_api_key, "taskId": task_id_str},
+                headers=headers,
+                timeout=8
+            )
+            data = res.json()
+            cloud_status = data.get("msg") or "已通知 RunningHub 云端取消"
+        except Exception as e:
+            cloud_status = f"云端取消异常: {str(e)}" if is_admin else f"云端取消请求异常: {str(e)}"
+
+    refund_reason = "管理员强制取消任务全额退款" if is_admin else "用户主动取消任务全额退款"
+    r_ok, refund_msg, new_bal = db_atomic_cancel_and_refund(
+        task_id_str,
+        reason=refund_reason
+    )
+
+    if not r_ok:
+        return {
+            "status": "error",
+            "message": refund_msg
+        }
+
+    if is_admin:
+        db_update_task(task_id_str, {
+            "status": "CANCELLED",
+            "error": f"管理员后台强制取消 ({cloud_status})",
+            "errorMessage": f"管理员后台强制取消 ({cloud_status})",
+            "updatedAt": int(time.time()),
+        })
+    else:
+        db_update_task(task_id_str, {
+            "status": "CANCELLED",
+            "error": f"用户已主动取消任务 ({cloud_status})",
+            "statusText": "用户已主动取消",
+            "updatedAt": int(time.time()),
+        })
+    ACTIVE_TASK_PREVIEWS.pop(task_id_str, None)
+
+    resp = {
+        "status": "ok",
+        "message": f"任务已强制取消 ({cloud_status})" if is_admin else f"任务已成功取消 ({cloud_status})",
+        "detail": refund_msg,
+        "newBalance": new_bal,
+    }
+    if is_admin:
+        resp["cloudStatus"] = cloud_status
+    return resp
+
 

@@ -2323,16 +2323,21 @@
         });
         const newKeyForm = ref({ name: '', apiKey: '' });
 
+        let _iconRefreshTimer = null;
         const refreshIcons = () => {
-          nextTick(() => {
-            try {
-              if (window.lucide && typeof window.lucide.createIcons === 'function') {
-                window.lucide.createIcons();
+          if (_iconRefreshTimer) return;
+          _iconRefreshTimer = setTimeout(() => {
+            _iconRefreshTimer = null;
+            nextTick(() => {
+              try {
+                if (window.lucide && typeof window.lucide.createIcons === 'function') {
+                  window.lucide.createIcons();
+                }
+              } catch (err) {
+                console.warn('Lucide icon refresh ignored:', err);
               }
-            } catch (err) {
-              console.warn('Lucide icon refresh ignored:', err);
-            }
-          });
+            });
+          }, 30);
         };
 
         // 统一鉴权 Fetch

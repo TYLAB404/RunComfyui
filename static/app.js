@@ -659,8 +659,8 @@ createApp({
           if (newHash !== lastGalleryHash) {
             lastGalleryHash = newHash;
             gallery.value = data;
+            nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
           }
-          nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
         }
       } catch (err) {
         console.error('Failed to fetch gallery:', err);

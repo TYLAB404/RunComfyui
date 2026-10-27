@@ -4,6 +4,7 @@ import time
 import requests
 from typing import Dict, Any, Optional, List, Tuple, Set
 from core.config import DATA_DIR, RUNNINGHUB_API_URL
+from core.http_client import HTTP_SESSION
 
 OBJECT_INFO_CACHE_PATH = os.path.join(DATA_DIR, "object_info_cache.json")
 _MEMORY_OBJECT_INFO: Optional[Dict[str, Any]] = None
@@ -36,7 +37,7 @@ def get_cached_object_info(api_key: str) -> Dict[str, Any]:
     for host in ["www.runninghub.cn", "www.runninghub.ai"]:
         try:
             url = f"https://{host}/proxy/{api_key}/object_info"
-            res = requests.get(url, timeout=12)
+            res = HTTP_SESSION.get(url, timeout=12)
             if res.status_code == 200:
                 data = res.json()
                 if isinstance(data, dict) and len(data) > 50:

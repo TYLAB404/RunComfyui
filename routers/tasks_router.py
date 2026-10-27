@@ -22,7 +22,8 @@ from core.auth import (
 from services.key_pool import KEY_POOL_MANAGER
 from services.runninghub import (
     ACTIVE_POLL_TASKS, CANCELLED_TASKS, ACTIVE_TASK_PREVIEWS,
-    submit_proxy_prompt_async, poll_task_status, listen_websocket_stream, dispatch_queued_task
+    submit_proxy_prompt_async, poll_task_status, listen_websocket_stream,
+    dispatch_queued_task, execute_task_cancellation
 )
 
 router = APIRouter(tags=["Tasks"])
@@ -387,68 +388,4 @@ async def cancel_task_endpoint(task_id: str, current_user: Optional[Dict[str, An
         if current_user.get("role") != "admin" and str(current_user["id"]) != task_owner:
             raise HTTPException(status_code=403, detail="无权操作其他用户的任务")
 
-    cur_status = str(t.get("status") or "")
-    if cur_status in ("SUCCESS", "FAILED", "CANCELLED"):
-        return {
-            "status": "error",
-            "message": f"任务已处于终态 ({cur_status})，不可取消或重复退款"
-        }
-
-    CANCELLED_TASKS.add(task_id_str)
-    await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
-
-    cfg = load_config()
-    # 核心：精准提取当初接单的 Key，杜绝跨账号取消导致的云端无感扣费
-    task_key_id = t.get("keyId")
-    cancel_api_key = None
-    if task_key_id:
-        for k in cfg.get("apiKeys", []):
-            if k.get("id") == task_key_id:
-                cancel_api_key = decrypt_key(k.get("keyEncrypted"))
-                break
-    if not cancel_api_key:
-        cancel_api_key = get_active_api_key(cfg)
-
-    cloud_status = "本地已标记取消"
-    if cancel_api_key:
-        try:
-            cancel_url = f"{RUNNINGHUB_API_URL}/task/openapi/cancel"
-            headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
-            res = await asyncio.to_thread(
-                HTTP_SESSION.post,
-                cancel_url,
-                json={"apiKey": cancel_api_key, "taskId": task_id_str},
-                headers=headers,
-                timeout=8
-            )
-            data = res.json()
-            cloud_status = data.get("msg") or "已通知 RunningHub 云端取消"
-        except Exception as e:
-            cloud_status = f"云端取消请求异常: {str(e)}"
-
-    # 原子化取消状态跃迁与幂等退款
-    r_ok, refund_msg, new_bal = db_atomic_cancel_and_refund(
-        task_id_str,
-        reason="用户主动取消任务全额退款"
-    )
-
-    if not r_ok:
-        return {
-            "status": "error",
-            "message": refund_msg
-        }
-
-    db_update_task(task_id_str, {
-        "status": "CANCELLED",
-        "error": f"用户已主动取消任务 ({cloud_status})",
-        "statusText": "用户已主动取消",
-        "updatedAt": int(time.time())
-    })
-    ACTIVE_TASK_PREVIEWS.pop(task_id_str, None)
-
-    return {
-        "status": "ok",
-        "message": f"任务已成功取消 ({cloud_status})",
-        "detail": refund_msg,
-        "newBalance": new_bal
-    }
+    return await execute_task_cancellation(t, is_admin=False)

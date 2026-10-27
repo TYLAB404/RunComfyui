@@ -9,6 +9,7 @@ from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException
 from core.auth import get_current_user_optional
 from core.database import db_load_tasks, db_get_task, update_task_record
+from services.imgbed_service import infer_media_type
 
 router = APIRouter(tags=["Gallery"])
 
@@ -38,15 +39,9 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
             if fp in seen:
                 continue
             seen.add(fp)
-            ext = os.path.splitext(fname)[1].lower()
             file_type = out.get("fileType")
             if not file_type or file_type == "image":
-                if ext in {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}:
-                    file_type = "audio"
-                elif ext in {".mp4", ".webm", ".mov"}:
-                    file_type = "video"
-                else:
-                    file_type = "image"
+                file_type = infer_media_type(fname, "image")
             items.append({
                 "filename": fname,
                 "url": url,

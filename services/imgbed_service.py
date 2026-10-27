@@ -3,14 +3,32 @@ import io
 import time
 import asyncio
 import urllib.parse
-import aiohttp
-import requests
 from typing import Dict, Any, Optional, List
 from core.config import load_config, get_imgbed_config
 from core.database import db_get_task, db_load_tasks, db_update_task
+from core.http_client import HTTP_SESSION
 
 IMGBED_SEMAPHORE = asyncio.Semaphore(4)
 SYNC_ALL_RUNNING = False
+SYNC_STATUS: Dict[str, Any] = {
+    "running": False,
+    "total": 0,
+    "processed": 0,
+    "synced": 0,
+    "failed": 0,
+    "message": ""
+}
+
+def infer_media_type(filename: str, default_type: str = "image") -> str:
+    """根据文件名后缀统一推断媒体类型 (image / video / audio)"""
+    fname_lower = str(filename or "").lower()
+    if any(fname_lower.endswith(ext) for ext in (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac")):
+        return "audio"
+    if any(fname_lower.endswith(ext) for ext in (".mp4", ".webm", ".mov", ".gif")):
+        return "video"
+    if any(fname_lower.endswith(ext) for ext in (".png", ".jpg", ".jpeg", ".webp", ".bmp")):
+        return "image"
+    return default_type or "image"
 
 def _sanitize_folder_name(name: str) -> str:
     cleaned = "".join(c for c in str(name) if c.isalnum() or c in ("-", "_")).strip()
@@ -64,16 +82,15 @@ async def sync_single_file_to_imgbed(
             return "EXPIRED"
     elif file_url.startswith("http://") or file_url.startswith("https://"):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(file_url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                    if resp.status == 200:
-                        file_bytes = await resp.read()
-                        content_type = resp.headers.get("Content-Type") or "application/octet-stream"
-                    elif resp.status in (404, 403, 410):
-                        print(f"[ImgBed Notice] Remote source missing/expired ({resp.status}) at {file_url}")
-                        return "EXPIRED"
-                    else:
-                        return None
+            resp = await asyncio.to_thread(HTTP_SESSION.get, file_url, timeout=30)
+            if resp.status_code == 200:
+                file_bytes = resp.content
+                content_type = resp.headers.get("Content-Type") or "application/octet-stream"
+            elif resp.status_code in (404, 403, 410):
+                print(f"[ImgBed Notice] Remote source missing/expired ({resp.status_code}) at {file_url}")
+                return "EXPIRED"
+            else:
+                return None
         except Exception as e:
             print(f"[ImgBed Warning] Stream fetch failed from {file_url}: {e}")
             return None
@@ -100,7 +117,7 @@ async def sync_single_file_to_imgbed(
             try:
                 def _do_upload():
                     files = {"file": (fname, io.BytesIO(file_bytes), content_type)}
-                    return requests.post(upload_url, headers=headers, files=files, timeout=30)
+                    return HTTP_SESSION.post(upload_url, headers=headers, files=files, timeout=30)
                 
                 up_resp = await asyncio.to_thread(_do_upload)
                 if up_resp.status_code == 200:
@@ -192,25 +209,73 @@ async def sync_task_outputs_to_imgbed(task_id: str):
     except Exception as e:
         print(f"[ImgBed Task Sync Error] {e}")
 
+def get_sync_progress() -> Dict[str, Any]:
+    """获取当前后台图床批量备份进度快照"""
+    return SYNC_STATUS
+
+async def _run_batch_pending(pending_tasks: list):
+    global SYNC_ALL_RUNNING, SYNC_STATUS
+    SYNC_ALL_RUNNING = True
+    try:
+        for tid, count in pending_tasks:
+            before_t = db_get_task(tid)
+            before_synced = sum(1 for o in (before_t.get("outputs") or []) if o.get("imgbedUrl"))
+            await sync_task_outputs_to_imgbed(tid)
+            after_t = db_get_task(tid)
+            after_synced = sum(1 for o in (after_t.get("outputs") or []) if o.get("imgbedUrl"))
+            newly_synced = after_synced - before_synced
+            SYNC_STATUS["processed"] += count
+            SYNC_STATUS["synced"] += newly_synced
+            SYNC_STATUS["failed"] += (count - newly_synced)
+            SYNC_STATUS["message"] = f"已备份 {SYNC_STATUS['synced']}/{SYNC_STATUS['total']} 个成果..."
+            await asyncio.sleep(0.3)
+        SYNC_STATUS["message"] = f"备份完成！共成功转存 {SYNC_STATUS['synced']} 个成果"
+    except Exception as e:
+        SYNC_STATUS["message"] = f"转存中断: {str(e)}"
+    finally:
+        SYNC_ALL_RUNNING = False
+        SYNC_STATUS["running"] = False
+
+def start_pending_sync(pending_tasks: list, total_pending_files: int) -> Dict[str, Any]:
+    """启动待备份文件批量转存任务"""
+    global SYNC_ALL_RUNNING, SYNC_STATUS
+    if SYNC_ALL_RUNNING:
+        return {"status": "busy", "message": "图床备份任务正在后台平稳转存中，请勿重复触发", "progress": SYNC_STATUS}
+    SYNC_STATUS = {
+        "running": True,
+        "total": total_pending_files,
+        "processed": 0,
+        "synced": 0,
+        "failed": 0,
+        "message": f"正在平稳转存共 {total_pending_files} 个未备份成果..."
+    }
+    asyncio.create_task(_run_batch_pending(pending_tasks))
+    return {
+        "status": "ok",
+        "message": f"已启动 {total_pending_files} 个未备份文件的图床归档任务",
+        "total": total_pending_files
+    }
+
 async def run_sync_all_history():
     global SYNC_ALL_RUNNING
+    SYNC_ALL_RUNNING = True
     try:
-        cfg = load_config()
-        imgbed_cfg = get_imgbed_config(cfg)
-        if not imgbed_cfg.get("enabled"):
-            return
-        
-        tasks = db_load_tasks(is_admin=True, limit=1000)
-        success_tasks = [t for t in tasks if t.get("status") == "SUCCESS"]
-        print(f"[ImgBed Batch Sync] Found {len(success_tasks)} success tasks to evaluate...")
-        
-        for t in success_tasks:
-            tid = t.get("taskId")
-            if tid:
+        tasks = db_load_tasks(is_admin=True, limit=500)
+        for t in tasks:
+            tid = str(t.get("taskId"))
+            outs = t.get("outputs", [])
+            needs_sync = any(not o.get("imgbedUrl") and not o.get("sourceExpired") for o in outs)
+            if needs_sync:
                 await sync_task_outputs_to_imgbed(tid)
-                await asyncio.sleep(0.5)
-        print("[ImgBed Batch Sync] Batch sync completed successfully!")
+                await asyncio.sleep(0.3)
     except Exception as e:
         print(f"[ImgBed Batch Sync Error] {e}")
     finally:
         SYNC_ALL_RUNNING = False
+
+def start_all_history_sync() -> Dict[str, Any]:
+    """启动全量历史成果平稳转存任务"""
+    if SYNC_ALL_RUNNING:
+        return {"status": "busy", "message": "全量历史成果正在后台平稳转存中，请勿重复触发"}
+    asyncio.create_task(run_sync_all_history())
+    return {"status": "ok", "message": "全量历史成果图床归档任务已成功推入后台调度队列，请稍后刷新审计概览"}

@@ -1,5 +1,6 @@
 import os
 import base64
+import functools
 import requests
 from typing import Tuple, Optional
 from cryptography.fernet import Fernet
@@ -62,6 +63,7 @@ def encrypt_key(plain_key: str) -> str:
         print(f"[Security Error] Encryption failed: {e}")
         raise RuntimeError(f"Data encryption failed securely: {e}")
 
+@functools.lru_cache(maxsize=512)
 def decrypt_key(encrypted_key: str) -> str:
     """将 Fernet 密文解密为明文 API Key"""
     if not encrypted_key:
@@ -76,6 +78,7 @@ def decrypt_key(encrypted_key: str) -> str:
         print(f"[Security Error] Decryption failed: {e}")
         return ""
 
+@functools.lru_cache(maxsize=512)
 def mask_key(raw_key: str) -> str:
     """将 API Key 转换为脱敏形式，例如 e565****8043"""
     if not raw_key:

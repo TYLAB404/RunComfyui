@@ -12,7 +12,7 @@ from core.database import (
     is_rate_limited, record_failed_attempt, clear_failed_attempts
 )
 from core.auth import (
-    load_users, create_user, get_user_by_id, get_user_by_identifier,
+    get_user_count, create_user, get_user_by_id, get_user_by_identifier,
     update_user_fields, set_user_password, verify_password,
     create_jwt_token, verify_turnstile_token, sanitize_user,
     get_current_user, get_current_user_optional,
@@ -41,7 +41,6 @@ def get_public_auth_config():
     """面向前端登录注册界面的公开基础配置（无任何私钥敏感数据）"""
     cfg = load_config()
     sys_cfg = cfg.get("system", {})
-    users = load_users()
     return {
         "siteTitle": sys_cfg.get("siteTitle", "RunningHub 智能调度中心"),
         "turnstileEnabled": bool(sys_cfg.get("turnstileEnabled", False)),
@@ -50,7 +49,7 @@ def get_public_auth_config():
         "requireLoginToGenerate": bool(sys_cfg.get("requireLoginToGenerate", False)),
         "broadcast": sys_cfg.get("broadcast", {"enabled": False, "message": "", "level": "info"}),
         "maintenance": sys_cfg.get("maintenance", {"enabled": False, "message": "系统维护中"}),
-        "isFirstUser": len(users) == 0
+        "isFirstUser": get_user_count() == 0
     }
 
 @router.post("/api/auth/register")

@@ -135,16 +135,20 @@ class KeyPoolManager:
             self._waiters.clear()
 
     async def inspect_all_keys(self) -> List[Dict[str, Any]]:
-        """全池主动巡检所有 Key，更新健康状态"""
+        """全池主动并发巡检所有 Key，更新健康状态"""
         all_keys = self._get_all_keys()
-        results = []
-        for k in all_keys:
+        if not all_keys:
+            return []
+        sem = asyncio.Semaphore(5)
+
+        async def _inspect_one(k: Dict[str, Any]) -> Dict[str, Any]:
             kid = k.get("id")
             name = k.get("name", "未命名密钥")
             raw = decrypt_key(k.get("keyEncrypted", ""))
             masked = mask_key(raw)
-            valid, msg = await asyncio.to_thread(verify_key_with_runninghub, raw)
-            
+            async with sem:
+                valid, msg = await asyncio.to_thread(verify_key_with_runninghub, raw)
+
             async with self._lock:
                 st = self._states.setdefault(kid, {
                     "is_busy": False, "task_id": None, "busy_since": None,
@@ -159,18 +163,20 @@ class KeyPoolManager:
                     st["health_error"] = msg
                     st["is_busy"] = False
                     st["task_id"] = None
-            
+
             if not valid:
                 asyncio.create_task(async_notify_key_incident(kid, name, masked, msg))
 
-            results.append({
+            return {
                 "id": kid,
                 "name": name,
                 "maskedKey": masked,
                 "isValid": valid,
                 "message": msg
-            })
-        return results
+            }
+
+        results = await asyncio.gather(*(_inspect_one(k) for k in all_keys))
+        return list(results)
 
     def get_pool_status(self) -> List[Dict[str, Any]]:
         all_keys = self._get_all_keys()
