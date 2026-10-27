@@ -2,7 +2,7 @@ import os
 import json
 import time
 import requests
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Dict, Any, Optional, List, Tuple, Set
 from core.config import DATA_DIR, RUNNINGHUB_API_URL
 
 OBJECT_INFO_CACHE_PATH = os.path.join(DATA_DIR, "object_info_cache.json")
@@ -238,8 +238,51 @@ def convert_ui_workflow_to_prompt(ui_json: Dict[str, Any], obj_info: Dict[str, A
 
     return prompt
 
+def detect_silent_audio_subgraphs(nodes: Dict[str, Any]) -> Set[str]:
+    """
+    拓扑检测 ComfyUI 中常见的静音/占位音频生成 4 节点流水线：
+    Node 1 (GetImageSize / GetImageSizeAndCount)
+      -> Node 2 (SimpleCalculator / SimpleCalculatorKJ)
+        -> Node 3 (EmptyAudio)
+          -> Node 4 (SaveAudio / SaveAudioAdvanced)
+    
+    严格限制：只有当这 4 个节点严格按照此有向无环依赖链级联连接时，才认定为辅助占位链路并隐藏。
+    若任意节点独立存在或未形成该完整 4 节点链路，则视为用户真实操作节点，正常展示。
+    """
+    def normalize_type(ctype: Any) -> str:
+        return str(ctype).replace("_", "").replace(" ", "").lower()
+
+    def is_node_type(node: Dict[str, Any], candidates: List[str]) -> bool:
+        norm = normalize_type(node.get("class_type", ""))
+        return any(c in norm for c in candidates)
+
+    def get_node_incoming_sources(node: Dict[str, Any]) -> Set[str]:
+        sources = set()
+        inputs = node.get("inputs", {})
+        if isinstance(inputs, dict):
+            for val in inputs.values():
+                if isinstance(val, (list, tuple)) and len(val) >= 1:
+                    sources.add(str(val[0]))
+        return sources
+
+    hidden_ids: Set[str] = set()
+    for n4_id, n4 in nodes.items():
+        if is_node_type(n4, ["saveaudio"]):
+            for n3_id in get_node_incoming_sources(n4):
+                n3 = nodes.get(n3_id)
+                if n3 and is_node_type(n3, ["emptyaudio"]):
+                    for n2_id in get_node_incoming_sources(n3):
+                        n2 = nodes.get(n2_id)
+                        if n2 and is_node_type(n2, ["simplecalculator"]):
+                            for n1_id in get_node_incoming_sources(n2):
+                                n1 = nodes.get(n1_id)
+                                if n1 and is_node_type(n1, ["getimagesize"]):
+                                    chain = {str(n1_id), str(n2_id), str(n3_id), str(n4_id)}
+                                    hidden_ids.update(chain)
+    return hidden_ids
+
 def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """从 ComfyUI 节点结构深度动态提取提示词、尺寸、参考图、视频以及全部节点可编辑项"""
+    """对 ComfyUI 节点结构做深度动态解析，提取提示词、尺寸、采样器、参考图视频、以及全节点可调项"""
     prompt_nodes = []
     sampler_nodes = []
     latent_nodes = []
@@ -253,115 +296,192 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
     for nid, node in nodes.items():
         ctype = node.get("class_type", "")
         inputs = node.get("inputs", {})
-        meta = node.get("_meta", {})
-        title = meta.get("title", ctype)
 
-        fields = []
-        for field_name, field_val in inputs.items():
-            if isinstance(field_val, list):
-                continue
-            fields.append({
-                "fieldName": field_name,
-                "currentValue": field_val,
-                "type": type(field_val).__name__
-            })
+        # 获取当前节点中所有的常量字面量字段（排除 link 引用列表，如 ['1', 0]）
+        literal_fields = {k: v for k, v in inputs.items() if not isinstance(v, (list, dict))}
 
-        all_editable_nodes.append({
-            "nodeId": str(nid),
-            "title": title,
-            "classType": ctype,
-            "fields": fields
-        })
+        # 1. 提示词与文本节点
+        if "CLIPTextEncode" in ctype or "RH_Prompter" in ctype or "Prompt" in ctype or "JjkText" in ctype or ("text" in literal_fields and isinstance(literal_fields["text"], str) and len(literal_fields["text"]) > 0):
+            field_name = "text" if "text" in literal_fields else "prompt"
+            if field_name in literal_fields:
+                prompt_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"提示词节点 #{nid} ({ctype})",
+                    "fieldName": field_name,
+                    "defaultValue": str(literal_fields[field_name])
+                })
 
-        ctype_lower = ctype.lower()
-        title_lower = title.lower()
+        # 2. 采样器与步数/调度器节点 (优先匹配真实带有 steps 的调度器或采样器)
+        if ("steps" in literal_fields and "cfg" in literal_fields) or ctype in ("KSampler", "KSamplerAdvanced"):
+            sampler_fields = {
+                k: v for k, v in literal_fields.items()
+                if k in ["steps", "cfg", "sampler_name", "scheduler", "seed", "denoise"]
+            }
+            if sampler_fields:
+                sampler_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"采样器节点 #{nid} ({ctype})",
+                    "fields": sampler_fields
+                })
+        elif "steps" in literal_fields:
+            sched_fields = {
+                k: v for k, v in literal_fields.items()
+                if k in ["steps", "scheduler", "denoise"]
+            }
+            if sched_fields:
+                sampler_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"步数与调度器 #{nid} ({ctype})",
+                    "fields": sched_fields
+                })
 
-        # 提示词节点
-        if "cliptextencode" in ctype_lower or "prompt" in title_lower or "text" in ctype_lower:
-            text_val = inputs.get("text", "")
-            is_neg = any(k in title_lower or k in ctype_lower for k in ["neg", "负向", "反向", "bad", "negative"])
-            prompt_nodes.append({
-                "nodeId": str(nid),
-                "title": title,
-                "classType": ctype,
-                "fieldName": "text",
-                "defaultValue": text_val if isinstance(text_val, str) else "",
-                "isNegative": is_neg
-            })
+        # 3. 画面尺寸与批次节点 (EmptyLatentImage)
+        if "EmptyLatentImage" in ctype or "Latent" in ctype or ("width" in literal_fields and "height" in literal_fields):
+            latent_fields = {
+                k: v for k, v in literal_fields.items()
+                if k in ["width", "height", "batch_size"]
+            }
+            if latent_fields:
+                latent_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"尺寸节点 #{nid} ({ctype})",
+                    "fields": latent_fields
+                })
 
-        # 采样器节点
-        elif "ksampler" in ctype_lower or "sampler" in title_lower:
-            sampler_nodes.append({
-                "nodeId": str(nid),
-                "title": title,
-                "classType": ctype,
-                "seed": inputs.get("seed", 0) if isinstance(inputs.get("seed"), (int, float)) else 0,
-                "steps": inputs.get("steps", 20) if isinstance(inputs.get("steps"), (int, float)) else 20,
-                "cfg": inputs.get("cfg", 7.0) if isinstance(inputs.get("cfg"), (int, float)) else 7.0,
-                "sampler_name": inputs.get("sampler_name", "euler"),
-                "scheduler": inputs.get("scheduler", "normal"),
-                "denoise": inputs.get("denoise", 1.0) if isinstance(inputs.get("denoise"), (int, float)) else 1.0
-            })
+        # 4. 参考图输入节点 (LoadImage / UploadImage)
+        if "LoadImage" in ctype or "UploadImage" in ctype or ("image" in literal_fields and isinstance(literal_fields["image"], str)):
+            if "image" in literal_fields:
+                image_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"参考图输入 #{nid} ({ctype})",
+                    "fieldName": "image",
+                    "defaultValue": str(literal_fields.get("image", ""))
+                })
 
-        # 空 Latent 尺寸节点
-        elif "emptylatent" in ctype_lower or ("width" in inputs and "height" in inputs and not isinstance(inputs.get("width"), list)):
-            latent_nodes.append({
-                "nodeId": str(nid),
-                "title": title,
-                "classType": ctype,
-                "width": inputs.get("width", 512),
-                "height": inputs.get("height", 512),
-                "batch_size": inputs.get("batch_size", 1)
-            })
+        # 5. 参考视频输入节点 (VHS_LoadVideo / LoadVideo)
+        if "LoadVideo" in ctype or ("video" in literal_fields and isinstance(literal_fields["video"], str)):
+            if "video" in literal_fields:
+                video_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"参考视频输入 #{nid} ({ctype})",
+                    "fieldName": "video",
+                    "defaultValue": str(literal_fields.get("video", ""))
+                })
 
-        # 图像输入节点
-        elif "loadimage" in ctype_lower or ("image" in inputs and isinstance(inputs.get("image"), str)):
-            image_nodes.append({
-                "nodeId": str(nid),
-                "title": title,
-                "classType": ctype,
-                "fieldName": "image",
-                "defaultValue": inputs.get("image", "")
-            })
+        # 5.1 参考音频输入节点 (LoadAudio / VHS_LoadAudio / AudioLoader / 或包含 audio 参数)
+        if any(k.lower() in ctype.lower() for k in ["loadaudio", "audioloader"]) or any(k in literal_fields for k in ["audio", "audio_file", "audio_path", "sound", "voice", "speech"]):
+            audio_field = next((k for k in ["audio", "audio_file", "audio_path", "sound", "voice", "speech"] if k in literal_fields and isinstance(literal_fields[k], str)), None)
+            if audio_field:
+                audio_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"参考音频输入 #{nid} ({ctype})",
+                    "fieldName": audio_field,
+                    "defaultValue": str(literal_fields.get(audio_field, ""))
+                })
 
-        # 视频输入节点
-        elif "loadvideo" in ctype_lower or "vhs_loadvideo" in ctype_lower:
-            video_nodes.append({
-                "nodeId": str(nid),
-                "title": title,
-                "classType": ctype,
-                "fieldName": "video",
-                "defaultValue": inputs.get("video", "")
-            })
+        # 6. 画质/基准分辨率节点 (如 PrimitiveInt: 1280)
+        if ctype in ("PrimitiveInt", "Int") and "value" in literal_fields:
+            val = literal_fields["value"]
+            if isinstance(val, int) and (val >= 256 or val in [512, 720, 768, 1024, 1080, 1280, 1920]):
+                quality_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "title": f"画质/分辨率尺寸 #{nid} ({ctype})",
+                    "fieldName": "value",
+                    "defaultValue": val
+                })
 
-        # 音频输入节点
-        elif "loadaudio" in ctype_lower or "audio" in ctype_lower:
-            audio_nodes.append({
-                "nodeId": str(nid),
-                "title": title,
-                "classType": ctype,
-                "fieldName": "audio",
-                "defaultValue": inputs.get("audio", "")
-            })
-
-        # 最终保存输出节点
-        elif any(k in ctype_lower for k in ["saveimage", "previewimage", "vhs_videocombine", "saveaudio"]):
+        # 7. 输出类节点 (SaveImage, PreviewImage, SaveVideo, VHS_VideoCombine, 等)
+        if any(k in ctype for k in ["SaveImage", "PreviewImage", "SaveVideo", "VHS_VideoCombine", "Preview", "SaveAudio", "Output"]):
             output_nodes.append({
                 "nodeId": str(nid),
-                "title": title,
-                "classType": ctype
+                "class_type": ctype,
+                "title": f"输出节点 #{nid} ({ctype})",
+                "isVideo": any(v in ctype for v in ["Video", "VHS"]),
+                "isAudio": "Audio" in ctype
             })
 
+        # 8. 全节点字面量清单（带详细字段元数据，供前端全量可调参数面板渲染）
+        if literal_fields:
+            field_meta = []
+            for k, v in literal_fields.items():
+                ftype = "str"
+                if isinstance(v, bool):
+                    ftype = "bool"
+                elif isinstance(v, int):
+                    ftype = "int"
+                elif isinstance(v, float):
+                    ftype = "float"
+                field_meta.append({
+                    "name": k,
+                    "value": v,
+                    "type": ftype
+                })
+            all_editable_nodes.append({
+                "nodeId": str(nid),
+                "class_type": ctype,
+                "fields": literal_fields,
+                "fieldMeta": field_meta
+            })
+
+    # 拓扑检测静音音频占位辅助链路 (GetImageSize -> Simple Calculator -> Empty Audio -> Save Audio)
+    hide_auxiliary = bool(cfg.get("system", {}).get("hideAuxiliaryAudioChain", True))
+    hidden_node_ids: Set[str] = detect_silent_audio_subgraphs(nodes) if hide_auxiliary else set()
+
+    if hidden_node_ids:
+        prompt_nodes = [p for p in prompt_nodes if str(p.get("nodeId")) not in hidden_node_ids]
+        sampler_nodes = [s for s in sampler_nodes if str(s.get("nodeId")) not in hidden_node_ids]
+        latent_nodes = [l for l in latent_nodes if str(l.get("nodeId")) not in hidden_node_ids]
+        image_nodes = [im for im in image_nodes if str(im.get("nodeId")) not in hidden_node_ids]
+        video_nodes = [vm for vm in video_nodes if str(vm.get("nodeId")) not in hidden_node_ids]
+        audio_nodes = [am for am in audio_nodes if str(am.get("nodeId")) not in hidden_node_ids]
+        quality_nodes = [q for q in quality_nodes if str(q.get("nodeId")) not in hidden_node_ids]
+        output_nodes = [o for o in output_nodes if str(o.get("nodeId")) not in hidden_node_ids]
+        all_editable_nodes = [n for n in all_editable_nodes if str(n.get("nodeId")) not in hidden_node_ids]
+
+    # 智能区分正向、负向与主体提示词
+    categorized_prompts = []
+    for p in prompt_nodes:
+        text_val = p["defaultValue"].strip().lower()
+        if any(w in text_val for w in ["bad", "blurry", "worst quality", "low quality", "deformed", "distorted", "artifacts", "lowres"]) or "negative" in p["class_type"].lower():
+            role = "negative"
+            label = "负向提示词 (Negative Prompt)"
+        elif len(text_val) > 20 or "positive" in p["class_type"].lower() or any(w in text_val for w in ["masterpiece", "detailed", "描述", "人物", "衣服", "服装", "背景", "镜头"]):
+            role = "positive"
+            label = "正向主提示词 (Positive Prompt)"
+        else:
+            role = "subject"
+            label = "主体/特征描述"
+        categorized_prompts.append({**p, "role": role, "label": f"{label} #{p['nodeId']}"})
+
+    if categorized_prompts and not any(p["role"] == "positive" for p in categorized_prompts):
+        categorized_prompts[0]["role"] = "positive"
+        categorized_prompts[0]["label"] = f"正向主提示词 #{categorized_prompts[0]['nodeId']}"
+
+    # 对全节点列表按 nodeId 数字排序
+    def node_sort_key(n):
+        try:
+            return (0, int(n["nodeId"]))
+        except Exception:
+            return (1, str(n["nodeId"]))
+    all_editable_nodes.sort(key=node_sort_key)
+
     return {
-        "hiddenAuxiliaryNodeIds": [],
+        "hiddenAuxiliaryNodeIds": list(hidden_node_ids) if hidden_node_ids else [],
         "dynamicSchema": {
-            "promptNodes": prompt_nodes,
-            "samplerNodes": sampler_nodes,
-            "latentNodes": latent_nodes,
+            "promptNodes": categorized_prompts,
+            "samplerNode": sampler_nodes[0] if sampler_nodes else None,
+            "latentNode": latent_nodes[0] if latent_nodes else None,
             "imageNodes": image_nodes,
             "videoNodes": video_nodes,
             "audioNodes": audio_nodes,
-            "outputNodes": output_nodes,
             "qualityNodes": quality_nodes,
             "allEditableNodes": all_editable_nodes
         }
