@@ -122,7 +122,23 @@ def delete_workflow(workflow_id: str, current_user: Optional[Dict[str, Any]] = D
 @router.get("/api/admin/workflows")
 def admin_list_workflows(_: Dict[str, Any] = Depends(get_current_admin)):
     cfg = load_config()
-    return sort_workflows(cfg.get("workflows", []))
+    raw_wfs = cfg.get("workflows", [])
+    for w in raw_wfs:
+        if "isActive" not in w:
+            w["isActive"] = True
+    return sort_workflows(raw_wfs)
+
+@router.delete("/api/admin/workflows/{workflow_id}")
+def admin_delete_workflow(workflow_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员强制删除工作流"""
+    cfg = load_config()
+    workflows = cfg.get("workflows", [])
+    target = next((w for w in workflows if str(w.get("id")) == str(workflow_id)), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="工作流不存在")
+    cfg["workflows"] = [w for w in workflows if str(w.get("id")) != str(workflow_id)]
+    save_config(cfg)
+    return {"status": "ok", "message": f"工作流 {workflow_id} 已成功删除"}
 
 @router.post("/api/admin/workflows/{workflow_id}/toggle-active")
 def admin_toggle_workflow_active(workflow_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
