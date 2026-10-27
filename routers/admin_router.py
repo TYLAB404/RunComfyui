@@ -854,7 +854,7 @@ async def admin_test_smtp_email(_: Dict[str, Any] = Depends(get_current_admin)):
       </p>
     </div>
     """
-    ok, msg = send_admin_alert_email("【测试邮件】RunComfyUI 运维告警通道连接测试", html)
+    ok, msg = await asyncio.to_thread(send_admin_alert_email, "【测试邮件】RunComfyUI 运维告警通道连接测试", html)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "ok", "message": "测试邮件已成功发送至管理员接收邮箱，请检查收件箱或垃圾箱"}
