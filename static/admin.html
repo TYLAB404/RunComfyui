@@ -179,7 +179,7 @@
 
             <!-- 工作流调度与治理 (全新) -->
             <button 
-              @click="activeSection = 'workflows'" 
+              @click="activeSection = 'workflows'; loadWorkflows()" 
               :class="activeSection === 'workflows' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
               class="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
               <div class="flex items-center gap-3">
@@ -938,9 +938,10 @@
 
                   <button 
                     @click="loadWorkflows" 
-                    class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition flex items-center gap-1 border border-slate-700">
-                    <i data-lucide="rotate-cw" class="w-3.5 h-3.5"></i>
-                    <span>刷新</span>
+                    :disabled="workflowsLoading"
+                    class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-medium text-slate-300 transition flex items-center gap-1 border border-slate-700 disabled:opacity-50">
+                    <i data-lucide="rotate-cw" :class="{'animate-spin': workflowsLoading}" class="w-3.5 h-3.5"></i>
+                    <span>{{ workflowsLoading ? '刷新中...' : '刷新' }}</span>
                   </button>
                 </div>
               </div>
@@ -1022,7 +1023,15 @@
                         </div>
                       </td>
                     </tr>
-                    <tr v-if="filteredWorkflows.length === 0">
+                    <tr v-if="workflowsLoading">
+                      <td colspan="7" class="py-12 text-center text-slate-400">
+                        <div class="flex items-center justify-center gap-2">
+                          <span class="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
+                          <span>正在加载全站工作流数据...</span>
+                        </div>
+                      </td>
+                    </tr>
+                    <tr v-else-if="filteredWorkflows.length === 0">
                       <td colspan="7" class="py-12 text-center text-slate-500">
                         当前分类下无工作流
                       </td>
@@ -1594,18 +1603,10 @@
                       <i data-lucide="copy" class="w-3.5 h-3.5"></i>
                     </button>
                     <button 
-                      v-if="item.isTakedown"
-                      @click="adminRestoreGalleryItem(item.taskId, item.filename)" 
-                      title="重新上架恢复展示"
-                      class="w-7 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center text-xs backdrop-blur-md">
-                      <i data-lucide="check-circle" class="w-3.5 h-3.5"></i>
-                    </button>
-                    <button 
-                      v-else
-                      @click="adminTakedownGalleryItem(item.taskId, item.filename)" 
-                      title="违规下架该作品"
-                      class="w-7 h-7 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white flex items-center justify-center text-xs backdrop-blur-md">
-                      <i data-lucide="shield-alert" class="w-3.5 h-3.5"></i>
+                      @click="adminDeleteGalleryRecord(item.taskId, item.filename)" 
+                      title="删除图片记录（仅清理台账，图床文件保留）"
+                      class="w-7 h-7 rounded-lg bg-rose-600/80 hover:bg-rose-600 text-white flex items-center justify-center text-xs backdrop-blur-md transition">
+                      <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
                     </button>
                   </div>
                 </div>
@@ -1661,18 +1662,11 @@
                     <span class="text-slate-500 font-mono uppercase">{{ item.fileType }}</span>
                     <div class="flex items-center gap-2">
                       <button 
-                        v-if="item.isTakedown"
-                        @click="adminRestoreGalleryItem(item.taskId, item.filename)" 
-                        class="text-emerald-400 hover:text-emerald-300 text-[11px] font-semibold flex items-center gap-1 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30 transition">
-                        <i data-lucide="check" class="w-3 h-3"></i>
-                        <span>重新上架</span>
-                      </button>
-                      <button 
-                        v-else
-                        @click="adminTakedownGalleryItem(item.taskId, item.filename)" 
-                        class="text-rose-400 hover:text-rose-300 text-[11px] font-semibold flex items-center gap-1 bg-rose-500/10 px-2 py-0.5 rounded border border-rose-500/30 transition">
-                        <i data-lucide="shield-alert" class="w-3 h-3"></i>
-                        <span>违规下架</span>
+                        @click="adminDeleteGalleryRecord(item.taskId, item.filename)" 
+                        class="text-rose-400 hover:text-rose-300 text-[11px] font-semibold flex items-center gap-1 bg-rose-500/10 hover:bg-rose-500/20 px-2 py-0.5 rounded border border-rose-500/30 transition"
+                        title="仅删除本地台账，图床文件保留">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i>
+                        <span>删除记录</span>
                       </button>
                     </div>
                   </div>
@@ -2150,7 +2144,7 @@
   </div>
 
   <script>
-    const { createApp, ref, computed, onMounted, nextTick } = Vue;
+    const { createApp, ref, computed, onMounted, nextTick, watch } = Vue;
 
     createApp({
       setup() {
@@ -2262,6 +2256,7 @@
         const taskFilterLoading = ref(false);
 
         const workflows = ref([]);
+        const workflowsLoading = ref(false);
         const workflowFilter = ref('ALL');
 
         const broadcastForm = ref({
@@ -2276,16 +2271,16 @@
 
         const filteredWorkflows = computed(() => {
           if (workflowFilter.value === 'OFFICIAL') {
-            return workflows.value.filter(w => w.isOfficial);
+            return workflows.value.filter(w => Boolean(w.isOfficial));
           }
           if (workflowFilter.value === 'USER') {
             return workflows.value.filter(w => !w.isOfficial);
           }
           if (workflowFilter.value === 'ACTIVE') {
-            return workflows.value.filter(w => w.isActive);
+            return workflows.value.filter(w => w.isActive !== false);
           }
           if (workflowFilter.value === 'INACTIVE') {
-            return workflows.value.filter(w => !w.isActive);
+            return workflows.value.filter(w => w.isActive === false);
           }
           return workflows.value;
         });
@@ -2424,6 +2419,7 @@
               loadAnnouncements(),
               loadSystemSettings(),
               loadTasks(),
+              loadWorkflows(),
               loadKeys(),
               loadAdminGallery(),
               loadImgbedInfo(),
@@ -2549,6 +2545,7 @@
         };
 
         const loadWorkflows = async () => {
+          workflowsLoading.value = true;
           try {
             const res = await authFetch('/api/admin/workflows');
             if (res.ok) {
@@ -2556,6 +2553,10 @@
             }
           } catch (e) {
             console.error('Failed to load workflows', e);
+          } finally {
+            workflowsLoading.value = false;
+            await nextTick();
+            refreshIcons();
           }
         };
 
@@ -2941,6 +2942,37 @@
             showToastNotification('同步异常: ' + e.message, 'error');
           } finally {
             syncingAllImgbed.value = false;
+          }
+        };
+
+        // 删除图片记录（仅从台账彻底移除，前后台不展示，图床云端文件不受影响并安全保留）
+        const adminDeleteGalleryRecord = async (taskId, filename) => {
+          const confirmed = await confirmAction({
+            title: '删除图片记录确认',
+            message: '确定要删除该成果记录吗？\n\n删除后前台与后台均不再展示此图片。\n提示：此操作仅清理本地台账记录，自建图床上的云端文件仍将永久保留，不对图床做任何物理删除。',
+            confirmText: '确认删除记录',
+            type: 'danger'
+          });
+          if (!confirmed) return;
+
+          try {
+            const res = await authFetch(`/api/admin/gallery/${encodeURIComponent(taskId)}/${encodeURIComponent(filename)}`, {
+              method: 'DELETE'
+            });
+            if (res.ok) {
+              const data = await res.json();
+              adminGallery.value = adminGallery.value.filter(i => !(i.taskId === taskId && i.filename === filename));
+              if (imgbedInfo.value && imgbedInfo.value.totalOutputs > 0) {
+                imgbedInfo.value.totalOutputs -= 1;
+              }
+              showToastNotification(data.message || '图片记录已成功删除（图床文件完好保留）', 'success');
+              refreshIcons();
+            } else {
+              const err = await res.json().catch(() => ({}));
+              showToastNotification(err.detail || '删除失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('删除异常: ' + e.message, 'error');
           }
         };
 
@@ -3707,9 +3739,11 @@
           syncProgressText,
           syncPendingToImgbed,
           adminBackupSingleItem,
-          adminDeleteGalleryItem: adminTakedownGalleryItem,
+          adminDeleteGalleryRecord,
+          adminDeleteGalleryItem: adminDeleteGalleryRecord,
           adminTakedownGalleryItem,
           adminRestoreGalleryItem,
+          workflowsLoading,
           onMediaLoadError,
           handleMediaError,
           copyToClipboard,

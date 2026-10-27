@@ -640,8 +640,45 @@ def admin_get_gallery(
     return items
 
 
-@router.post("/api/admin/gallery/{task_id}/{filename}/takedown")
 @router.delete("/api/admin/gallery/{task_id}/{filename}")
+def admin_delete_gallery_record(
+    task_id: str,
+    filename: str,
+    _: Dict[str, Any] = Depends(get_current_admin),
+):
+    """管理员删除图片记录（从任务输出台账中彻底移除，前后台均不再展示，但不对图床做任何物理删除）"""
+    t = db_get_task(str(task_id))
+    if not t:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    safe_name = os.path.basename(filename)
+    outs = t.get("outputs", [])
+    initial_len = len(outs)
+
+    new_outs = []
+    for o in outs:
+        fname = o.get("filename") or os.path.basename(o.get("url", "").split("?")[0])
+        remote_fname = os.path.basename(o.get("remoteUrl", "").split("?")[0])
+        if safe_name in (fname, remote_fname) or (o.get("url") and safe_name in o.get("url")):
+            continue
+        new_outs.append(o)
+
+    if len(new_outs) != initial_len:
+        update_task_record(str(task_id), {
+            "outputs": new_outs,
+            "updatedAt": int(time.time()),
+        })
+        return {
+            "status": "ok",
+            "message": "图片记录已成功删除，前后台均不再展示（自建图床原文件已安全保留，未作任何改动）"
+        }
+    else:
+        return {
+            "status": "ok",
+            "message": "未找到对应的图片记录，无需删除"
+        }
+
+
+@router.post("/api/admin/gallery/{task_id}/{filename}/takedown")
 def admin_takedown_gallery_item(
     task_id: str,
     filename: str,
