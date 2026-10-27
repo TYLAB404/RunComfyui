@@ -1756,6 +1756,17 @@
               <label class="block text-slate-300 mb-1">密钥标签名称</label>
               <input type="text" v-model="newKeyForm.name" placeholder="例如: 生产主密钥" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
             </div>
+            <div>
+              <label class="block text-slate-300 mb-1">API 密钥明文 (提交后将立即进行 AES-256 加密)</label>
+              <input type="password" v-model="newKeyForm.apiKey" placeholder="输入 RunningHub Key" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 font-mono text-white">
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 pt-2">
+            <button @click="showAddKeyModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 text-slate-300">取消</button>
+            <button @click="submitAddKey" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">加密保存</button>
+          </div>
+        </div>
+      </div>
 
       <!-- 弹窗: SMTP 告警邮箱设置 Modal -->
       <div v-if="showSmtpModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1819,17 +1830,6 @@
               <button @click="showSmtpModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 text-slate-300">取消</button>
               <button @click="saveSmtpConfig" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">保存设置</button>
             </div>
-          </div>
-        </div>
-      </div>
-            <div>
-              <label class="block text-slate-300 mb-1">API 密钥明文 (提交后将立即进行 AES-256 加密)</label>
-              <input type="password" v-model="newKeyForm.apiKey" placeholder="输入 RunningHub Key" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 font-mono text-white">
-            </div>
-          </div>
-          <div class="flex justify-end gap-2 pt-2">
-            <button @click="showAddKeyModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 text-slate-300">取消</button>
-            <button @click="submitAddKey" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">加密保存</button>
           </div>
         </div>
       </div>
