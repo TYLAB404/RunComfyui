@@ -109,6 +109,7 @@ def delete_gallery_file(
     
     # 兜底：遍历用户任务进行文件指纹匹配
     user_tasks = db_load_tasks(limit=500) if is_admin else (db_load_tasks(user_id=user_id, limit=500) if user_id else db_load_tasks(limit=100))
+    found_any = False
     for t in user_tasks:
         outs = t.get("outputs", [])
         modified = False
@@ -132,5 +133,9 @@ def delete_gallery_file(
                 "outputs": new_outs,
                 "updatedAt": int(time.time())
             })
+            found_any = True
             
+    if not found_any:
+        raise HTTPException(status_code=404, detail="未找到匹配的成果或无权操作")
+
     return {"status": "ok", "message": "该成果已成功从您的画廊中移除（前台已隐藏）"}

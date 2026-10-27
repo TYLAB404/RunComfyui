@@ -878,15 +878,21 @@ def db_atomic_cancel_and_refund(task_id: str, reason: str = "任务取消退款"
         
         if cursor.rowcount == 0:
             return False, "任务已处于终态或退款已处理完毕（幂等防护生效）", 0
-        
-        conn.commit()
 
-    new_bal = 0
-    if user_id and original_cost > 0:
-        _, new_bal = db_refund_user_points(
-            user_id=user_id,
-            amount=original_cost,
-            task_id=str(task_id),
-            reason=f"{reason} (任务ID: {task_id})"
-        )
-    return True, f"已成功取消并退还 {original_cost} 算力点", new_bal
+        # 单事务 ACID 原子化点数返还与流水落盘，杜绝分布式崩溃窗口资损
+        new_bal = 0
+        if user_id and original_cost > 0:
+            cursor.execute("UPDATE users SET points = points + ? WHERE id = ?;", (original_cost, str(user_id)))
+            cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
+            p_row = cursor.fetchone()
+            new_bal = p_row[0] if p_row else 0
+
+            ledger_id = f"led_{now}_{os.urandom(3).hex()}"
+            ledger_reason = f"{reason} (任务ID: {task_id})"
+            cursor.execute("""
+            INSERT INTO points_ledger (id, user_id, task_id, amount, balance_after, reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?);
+            """, (ledger_id, str(user_id), str(task_id), original_cost, new_bal, ledger_reason, now))
+
+        conn.commit()
+        return True, f"已成功取消并退还 {original_cost} 算力点", new_bal

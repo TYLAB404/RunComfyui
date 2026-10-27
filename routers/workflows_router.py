@@ -5,7 +5,7 @@ import asyncio
 import requests
 from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.config import (
     load_config, save_config, get_active_api_key,
@@ -25,7 +25,7 @@ class WorkflowModel(BaseModel):
     name: str
     description: Optional[str] = ""
     category: Optional[str] = "官方预设"
-    pointsCost: Optional[int] = 5
+    pointsCost: Optional[int] = Field(5, ge=0)
     defaultParams: Optional[Dict[str, Any]] = None
     isOfficial: Optional[bool] = None
     isActive: Optional[bool] = True
@@ -70,6 +70,8 @@ def add_or_update_workflow(wf: WorkflowModel, current_user: Optional[Dict[str, A
         wf_data["ownerName"] = str(current_user.get("username", "用户"))
         wf_data["isActive"] = True
         wf_data["isPinned"] = False
+        # 普通用户自建工作流默认计费不可低于 5 点，防止私自设为 0 点白嫖算力
+        wf_data["pointsCost"] = max(5, int(wf_data.get("pointsCost") or 5))
         if not wf_data.get("category") or wf_data.get("category") == "官方预设":
             wf_data["category"] = "我的自建"
     else:

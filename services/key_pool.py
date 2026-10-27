@@ -203,6 +203,17 @@ class KeyPoolManager:
         await self.release_key(key_id)
         await self.mark_key_healthy(key_id)
 
+    async def mark_key_busy(self, key_id: str, task_id: str):
+        """恢复某个 Key 为忙碌占用状态（用于服务重启对账时恢复云端正在运行的任务）"""
+        async with self._lock:
+            st = self._states.setdefault(key_id, {
+                "is_busy": False, "task_id": None, "busy_since": None,
+                "is_healthy": True, "health_error": "", "last_checked": 0
+            })
+            st["is_busy"] = True
+            st["task_id"] = str(task_id)
+            st["busy_since"] = time.time()
+
     def get_busy_count(self) -> Tuple[int, int]:
         all_keys = self._get_all_keys()
         busy_keys = sum(1 for k in all_keys if self._states.get(k.get("id"), {}).get("is_busy"))

@@ -12,6 +12,10 @@ client = TestClient(app)
 
 def test_full_security_matrix():
     print("--- 1. Initializing Database ---")
+    from core.config import load_config, save_config
+    cfg = load_config()
+    cfg["workflows"] = [w for w in cfg.get("workflows", []) if not str(w.get("id")).startswith("wf_test_audit") and not str(w.get("id")).startswith("wf_user_a_priv")]
+    save_config(cfg)
     init_database()
 
     print("--- 2. Setting Up Test Users ---")
@@ -66,16 +70,24 @@ def test_full_security_matrix():
     assert data_pub["activeKeyId"] == "", "activeKeyId must be empty for normal users"
     print(" [PASS] GET /api/config properly masks keys from non-admin users")
 
-    # 3.6 POST /api/workflows by user vs admin
-    r = client.post("/api/workflows", json={"id": "wf_test_audit", "name": "Test WF"}, headers=headers_user_a)
-    assert r.status_code == 403, f"Expected 403 for user wf add, got {r.status_code}"
-    r = client.post("/api/workflows", json={"id": "wf_test_audit", "name": "Test WF", "pointsCost": 20}, headers=headers_admin)
+    # 3.6 POST /api/workflows by user vs admin (租户隔离与防越权校验)
+    # Admin 成功保存官方工作流
+    r = client.post("/api/workflows", json={"id": "wf_test_audit", "name": "Test WF", "pointsCost": 20, "isOfficial": True}, headers=headers_admin)
     assert r.status_code == 200, f"Expected 200 for admin wf add, got {r.status_code}"
-    print(" [PASS] POST /api/workflows restricted to admin")
+    # User A 尝试篡改官方工作流 -> 403 Forbidden
+    r = client.post("/api/workflows", json={"id": "wf_test_audit", "name": "Tampered WF"}, headers=headers_user_a)
+    assert r.status_code == 403, f"Expected 403 for user tampering official wf, got {r.status_code}"
+    # User A 创建自己的自建工作流 -> 200 OK
+    r = client.post("/api/workflows", json={"id": "wf_user_a_priv", "name": "User A WF"}, headers=headers_user_a)
+    assert r.status_code == 200, f"Expected 200 for user creating private wf, got {r.status_code}"
+    # User B 尝试篡改 User A 的私有工作流 -> 403 Forbidden
+    r = client.post("/api/workflows", json={"id": "wf_user_a_priv", "name": "Tampered Priv WF"}, headers=headers_user_b)
+    assert r.status_code == 403, f"Expected 403 for User B modifying User A wf, got {r.status_code}"
+    print(" [PASS] POST /api/workflows 官方防篡改与租户隔离全面生效")
 
     print("\n--- 4. Testing P0-3 & P0-4: Tenant Validation (Tasks & Gallery) ---")
     # Seed a task owned by user_a
-    from database import db_save_task
+    from core.database import db_save_task
     test_task_id = "task_sec_audit_1001"
     db_save_task({
         "taskId": test_task_id,
@@ -108,7 +120,7 @@ def test_full_security_matrix():
     print(" [PASS] User B cannot delete User A gallery file")
 
     print("\n--- 5. Testing P0-5: Atomic Points Deduction & Refund ---")
-    from auth import get_user_by_id
+    from core.auth import get_user_by_id
     u_before = get_user_by_id(user_a["id"])
     points_before = u_before["points"]
 
@@ -132,7 +144,7 @@ def test_full_security_matrix():
     assert r.status_code == 200
 
     # Admin changes User A's password or disables User A
-    from auth import set_user_password
+    from core.auth import set_user_password
     set_user_password(user_a["id"], "NewPassword456!")
     # Old token used by User A should be instantly invalid
     r = client.get("/api/tasks", headers=headers_user_a)
@@ -140,6 +152,10 @@ def test_full_security_matrix():
     print(" [PASS] Password change instantly revokes old JWT token (0.1s instant kick verified)")
 
     print("\n--- 7. Cleanup Test Records ---")
+    from core.config import load_config, save_config
+    cfg = load_config()
+    cfg["workflows"] = [w for w in cfg.get("workflows", []) if w.get("id") not in ("wf_test_audit", "wf_user_a_priv")]
+    save_config(cfg)
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM points_ledger WHERE user_id IN (SELECT id FROM users WHERE username IN ('test_admin_sec', 'test_user_a', 'test_user_b'));")
