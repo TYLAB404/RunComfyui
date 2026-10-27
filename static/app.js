@@ -286,21 +286,41 @@ createApp({
       return tasks.value.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED').length;
     });
 
-    // 最近的一个任务
-    const latestTask = computed(() => {
+    // 管理员专属：当前窗口独立锁定的任务 ID
+    const focusedTaskId = ref('');
+
+    // 所有进行中的活跃任务列表
+    const activeTasksList = computed(() => {
+      return tasks.value.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED');
+    });
+
+    // 当前在监视面板中展示的任务：
+    // - 管理员：支持基于当前窗口会话锁定或选中的任务独立监视（解决多开抢占大屏问题）
+    // - 普通用户：严格保持原有默认行为，写死绑定全站最新任务 tasks[0]
+    const currentMonitorTask = computed(() => {
+      if (currentUser.value && currentUser.value.role === 'admin') {
+        if (focusedTaskId.value) {
+          const found = tasks.value.find(t => t.taskId === focusedTaskId.value);
+          if (found) return found;
+        }
+      }
       return tasks.value.length > 0 ? tasks.value[0] : null;
     });
 
+    // 保持对原有模板变量 latestTask 的完全向下兼容
+    const latestTask = computed(() => currentMonitorTask.value);
+
     // 当前在监视面板中展示的输出媒体
     const currentDisplayOutput = computed(() => {
-      if (!latestTask.value || !latestTask.value.outputs || latestTask.value.outputs.length === 0) {
+      const task = currentMonitorTask.value;
+      if (!task || !task.outputs || task.outputs.length === 0) {
         return null;
       }
       const idx = activeOutputIndex.value;
-      if (idx >= 0 && idx < latestTask.value.outputs.length) {
-        return latestTask.value.outputs[idx];
+      if (idx >= 0 && idx < task.outputs.length) {
+        return task.outputs[idx];
       }
-      return latestTask.value.outputs[0];
+      return task.outputs[0];
     });
 
     // 判断是否为视频文件/URL
@@ -930,6 +950,7 @@ createApp({
           await refreshTasks();
           await fetchCurrentUser();
           if (currentUser.value && currentUser.value.role === 'admin') {
+            focusedTaskId.value = data.taskId; // 仅管理员记录当前窗口生成的独立任务 ID
             isGenerating.value = false;
           }
         } else {
@@ -1872,6 +1893,9 @@ createApp({
       tasks,
       gallery,
       latestTask,
+      currentMonitorTask,
+      focusedTaskId,
+      activeTasksList,
       activeOutputIndex,
       currentDisplayOutput,
       runningTasksCount,

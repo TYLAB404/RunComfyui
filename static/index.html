@@ -879,6 +879,25 @@
                 </div>
               </div>
 
+              <!-- 管理员特权：多任务并发实时监视切换栏 (仅管理员且活跃任务 > 1 时显示) -->
+              <div 
+                v-if="currentUser && currentUser.role === 'admin' && activeTasksList && activeTasksList.length > 1" 
+                class="flex items-center gap-1.5 overflow-x-auto pb-2 mb-2.5 scrollbar-none border-b border-slate-800/80"
+              >
+                <button
+                  v-for="at in activeTasksList"
+                  :key="at.taskId"
+                  @click="focusedTaskId = at.taskId"
+                  :class="(latestTask && latestTask.taskId === at.taskId) ? 'bg-indigo-600 text-white shadow-sm ring-1 ring-indigo-400/50' : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-800'"
+                  class="text-[11px] px-2.5 py-1 rounded-lg font-medium flex items-center gap-1.5 shrink-0 transition"
+                >
+                  <span class="w-1.5 h-1.5 rounded-full animate-ping bg-emerald-400" v-if="at.status === 'RUNNING'"></span>
+                  <span class="w-1.5 h-1.5 rounded-full bg-amber-400" v-else-if="at.status === 'QUEUED'"></span>
+                  <span class="truncate max-w-[120px]">{{ at.workflowName || at.taskId.slice(-6) }}</span>
+                  <span v-if="at.progressPercent" class="text-[10px] opacity-80 font-mono">{{ at.progressPercent }}%</span>
+                </button>
+              </div>
+
               <!-- 成果展示区 (视频与图片无缝双轨渲染) -->
               <div class="bg-slate-950 border border-slate-800/80 rounded-xl overflow-hidden aspect-square flex items-center justify-center relative group">
                 <template v-if="currentDisplayOutput">
@@ -1339,6 +1358,13 @@
                     {{ formatTime(t.createdAt) }}
                   </td>
                   <td class="p-3 text-right whitespace-nowrap">
+                    <button 
+                      v-if="currentUser && currentUser.role === 'admin'"
+                      @click="focusedTaskId = t.taskId; activeTab = 'workspace'" 
+                      class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-[11px] font-medium transition inline-flex items-center gap-1 shadow-sm mr-1.5"
+                      title="在大屏聚焦监视此任务">
+                      <span>🖥 监视</span>
+                    </button>
                     <button 
                       v-if="t.status === 'RUNNING' || t.status === 'QUEUED'" 
                       @click="cancelTask(t.taskId)" 
