@@ -1835,7 +1835,7 @@
       </div>
 
       <!-- 弹窗 5: 自建图床配置管理 Modal -->
-      <div v-if="showImgbedModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+      <div v-if="showImgbedModal" class="fixed inset-0 z-[9995] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
         <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
           <div class="flex items-center justify-between border-b border-slate-800 pb-3">
             <h3 class="text-sm font-bold text-white flex items-center gap-2">
@@ -2733,13 +2733,14 @@
 
         // 打开图床配置 Modal
         const openImgbedModal = () => {
+          const cfg = systemConfig.value || {};
           imgbedForm.value = {
-            enabled: systemConfig.value.imgbedEnabled !== false,
-            uploadUrl: systemConfig.value.imgbedUploadUrl || 'https://imgbed.2364498.xyz/upload',
+            enabled: cfg.imgbedEnabled !== false,
+            uploadUrl: cfg.imgbedUploadUrl || 'https://imgbed.2364498.xyz/upload',
             authHeader: '',
-            rootFolder: systemConfig.value.imgbedRootFolder || 'RunComfyui',
-            isolateByUser: systemConfig.value.imgbedIsolateByUser !== false,
-            concurrency: systemConfig.value.imgbedConcurrency || 3
+            rootFolder: cfg.imgbedRootFolder || 'RunComfyui',
+            isolateByUser: cfg.imgbedIsolateByUser !== false,
+            concurrency: cfg.imgbedConcurrency || 3
           };
           showImgbedModal.value = true;
           refreshIcons();
