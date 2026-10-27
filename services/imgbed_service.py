@@ -30,14 +30,23 @@ async def sync_single_file_to_imgbed(
     username: str, 
     imgbed_cfg: Dict[str, Any]
 ) -> Optional[str]:
-    upload_base = get_normalized_imgbed_url(imgbed_cfg.get("uploadUrl", ""))
-    raw_auth = imgbed_cfg.get("rawAuthHeader", "")
-    if not upload_base or not raw_auth:
+    if not imgbed_cfg.get("enabled"):
+        return None
+    raw_auth = imgbed_cfg.get("rawAuthHeader")
+    if not raw_auth:
         return None
 
-    user_folder = _sanitize_folder_name(username)
-    target_folder = f"RunComfyui/{user_folder}"
-    upload_url = f"{upload_base}/upload?folder={urllib.parse.quote(target_folder)}"
+    upload_base = imgbed_cfg.get("uploadUrl", "https://imgbed.2364498.xyz/upload").strip()
+    root_folder = imgbed_cfg.get("rootFolder", "RunComfyui").strip() or "RunComfyui"
+    
+    if imgbed_cfg.get("isolateByUser", True):
+        user_folder = _sanitize_folder_name(username)
+        target_folder = f"{root_folder}/{user_folder}"
+    else:
+        target_folder = root_folder
+
+    sep = "&" if "?" in upload_base else "?"
+    upload_url = f"{upload_base}{sep}uploadFolder={urllib.parse.quote(target_folder)}"
 
     file_bytes = None
     content_type = None
@@ -135,6 +144,11 @@ async def sync_task_outputs_to_imgbed(task_id: str):
             return
             
         username = t.get("username") or "guest"
+        root_folder = imgbed_cfg.get("rootFolder", "RunComfyui").strip() or "RunComfyui"
+        if imgbed_cfg.get("isolateByUser", True):
+            folder_name = f"{root_folder}/{_sanitize_folder_name(username)}"
+        else:
+            folder_name = root_folder
         updated = False
         new_outputs = []
         
@@ -166,7 +180,7 @@ async def sync_task_outputs_to_imgbed(task_id: str):
                 out_copy["imgbedUrl"] = perm_url
                 out_copy["storage"] = "imgbed"
                 out_copy["sourceExpired"] = False
-                out_copy["imgbedFolder"] = f"RunComfyui/{_sanitize_folder_name(username)}"
+                out_copy["imgbedFolder"] = folder_name
                 out_copy["imgbedSyncedAt"] = int(time.time())
                 new_outputs.append(out_copy)
                 updated = True
