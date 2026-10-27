@@ -44,6 +44,8 @@ from core.database import (
     db_update_announcement,
     db_delete_announcement,
     db_get_admin_overview_stats,
+    db_record_points_ledger,
+    db_atomic_cancel_and_refund,
 )
 from core.security import decrypt_key, encrypt_key, mask_key
 from core.http_client import http_session
@@ -185,11 +187,14 @@ async def admin_update_user(
         updates["role"] = req.role
 
     points_changed = False
+    delta_points = 0
     if req.points is not None:
         new_pts = max(0, int(req.points))
-        if new_pts != user.get("points", 0):
+        old_pts = int(user.get("points", 0))
+        if new_pts != old_pts:
             updates["points"] = new_pts
             points_changed = True
+            delta_points = new_pts - old_pts
 
     is_deactivating = False
     if req.isActive is not None:
@@ -201,6 +206,14 @@ async def admin_update_user(
 
     if updates:
         update_user_fields(user_id, updates)
+        if points_changed:
+            admin_name = admin.get("username", "系统管理员")
+            db_record_points_ledger(
+                user_id=user_id,
+                delta=delta_points,
+                balance_after=new_pts,
+                reason=f"管理员 ({admin_name}) 后台手动调整算力点数"
+            )
 
     pwd_changed = False
     if req.newPassword and len(req.newPassword.strip()) >= 6:
@@ -422,17 +435,27 @@ async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_
     CANCELLED_TASKS.add(task_id_str)
     await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
 
-    cloud_status = "已标记本地取消"
     cfg = load_config()
-    api_key = get_active_api_key(cfg)
-    if api_key:
+    # 核心：精准提取当初接单的具体 Key，杜绝跨账号取消导致的云端无感扣费
+    task_key_id = t.get("keyId")
+    cancel_api_key = None
+    if task_key_id:
+        for k in cfg.get("apiKeys", []):
+            if k.get("id") == task_key_id:
+                cancel_api_key = decrypt_key(k.get("keyEncrypted"))
+                break
+    if not cancel_api_key:
+        cancel_api_key = get_active_api_key(cfg)
+
+    cloud_status = "已标记本地取消"
+    if cancel_api_key:
         try:
             cancel_url = f"{RUNNINGHUB_API_URL}/task/openapi/cancel"
             headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
             res = await asyncio.to_thread(
                 http_session.post,
                 cancel_url,
-                json={"apiKey": api_key, "taskId": task_id_str},
+                json={"apiKey": cancel_api_key, "taskId": task_id_str},
                 headers=headers,
                 timeout=8,
             )
@@ -441,29 +464,24 @@ async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_
         except Exception as e:
             cloud_status = f"云端取消异常: {str(e)}"
 
-    cost_val = int(t.get("cost", 0) or 0)
-    task_owner = str(t.get("userId") or "")
-    refund_msg = ""
-    if cost_val > 0 and task_owner and t.get("status") not in ("CANCELLED", "FAILED"):
-        r_ok, new_bal = db_refund_user_points(
-            user_id=task_owner,
-            amount=cost_val,
-            task_id=task_id_str,
-            reason=f"管理员强制取消任务全额退款 (任务ID: {task_id_str})",
-        )
-        if r_ok:
-            refund_msg = f"，已退还 {cost_val} 算力点至用户 (余额: {new_bal})"
+    # 原子化取消状态跃迁与幂等退款（杜绝并发重复退款）
+    r_ok, refund_msg, new_bal = db_atomic_cancel_and_refund(
+        task_id_str,
+        reason=f"管理员强制取消任务全额退款"
+    )
 
     db_update_task(task_id_str, {
         "status": "CANCELLED",
-        "error": f"管理员后台强制取消 ({cloud_status}){refund_msg}",
-        "errorMessage": f"管理员后台强制取消 ({cloud_status}){refund_msg}",
+        "error": f"管理员后台强制取消 ({cloud_status})",
+        "errorMessage": f"管理员后台强制取消 ({cloud_status})",
         "updatedAt": int(time.time()),
     })
 
     return {
         "status": "ok",
-        "message": f"任务已强制取消{refund_msg}",
+        "message": f"任务已强制取消 ({cloud_status})",
+        "detail": refund_msg,
+        "newBalance": new_bal,
         "cloudStatus": cloud_status,
     }
 

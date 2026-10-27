@@ -131,15 +131,22 @@ def verify_key_with_runninghub(raw_key: str) -> Tuple[bool, str]:
 
 def is_key_fatal_error(code: Optional[int], msg: str) -> bool:
     """
-    判断 RunningHub 返回的错误是否属于 Key 级故障（如封禁、注销、欠费、未授权或被限制）
-    若是 Key 故障，系统必须自动触发无感故障转移 (Failover) 与熔断隔离，杜绝向终端用户暴露
+    判断 RunningHub 返回的错误是否属于 Key 级故障（如封禁、注销、欠费、未授权或被限制）:
+    严格排除业务级常规报错（如工作流未找到、节点报错、参数非法），避免误杀正常健康 Key！
     """
-    if code in (403, 301, 302, 401, 806):
+    if code in (403, 401, 806):
         return True
     m = (msg or "").lower()
-    banned_keywords = [
-        "封禁", "限制", "冻结", "违规", "风险", "disabled", "forbidden", 
-        "user_not_found", "not found", "not exist", "invalid", "不存在", 
-        "余额不足", "欠费", "算力不足", "insufficient", "apikey"
+    
+    # 明确排除业务级错误，避免误触发 Key 熔断
+    business_indicators = ["workflow not found", "node not found", "workflow invalid", "parameter invalid", "node error"]
+    if any(b in m for b in business_indicators):
+        return False
+        
+    fatal_keywords = [
+        "账号已被限制", "账号已被封禁", "账号封禁", "账户被限制", "已被封禁",
+        "违规", "涉嫌违规", "apikey已被禁用", "apikey无效", "token已过期",
+        "余额不足", "欠费", "rh币不足", "insufficient", "account_disabled",
+        "unauthorized", "forbidden"
     ]
-    return any(k in m for k in banned_keywords)
+    return any(k in m for k in fatal_keywords)

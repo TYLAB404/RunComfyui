@@ -4,6 +4,7 @@ import time
 import json
 import copy
 import uuid
+import base64
 import asyncio
 import urllib.parse
 from typing import Dict, Any, Optional, Tuple, Set, List
@@ -16,13 +17,15 @@ from core.security import is_key_fatal_error
 from core.http_client import HTTP_SESSION
 from core.database import (
     db_get_task, db_save_task, db_update_task, 
-    db_refund_user_points, get_db_connection
+    db_refund_user_points, db_atomic_cancel_and_refund, get_db_connection
 )
 from services.key_pool import KEY_POOL_MANAGER
 from services.imgbed_service import sync_task_outputs_to_imgbed
 
 ACTIVE_POLL_TASKS: Set[str] = set()
 CANCELLED_TASKS: Set[str] = set()
+# 内存级实时预览缓存（杜绝每秒高频 base64 写入 SQLite 造成写放大与数据库暴涨）
+ACTIVE_TASK_PREVIEWS: Dict[str, Dict[str, Any]] = {}
 
 def get_output_fingerprint(item: Dict[str, Any]) -> str:
     """提取产物文件的唯一物理指纹，防止重复展示"""
@@ -153,20 +156,17 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
                                 elif b'WEBP' in img_bytes[:16]:
                                     mime = "image/webp"
                                 data_url = f"data:{mime};base64,{b64}"
-                                cur_t = db_get_task(str(task_id))
-                                if cur_t:
-                                    outs = cur_t.get("outputs", [])
-                                    outs = [o for o in outs if not o.get("isRealtimePreview")]
-                                    outs.insert(0, {
-                                        "filename": f"{task_id}_preview.png",
-                                        "url": data_url,
-                                        "remoteUrl": data_url,
-                                        "size": len(img_bytes),
-                                        "isRealtime": True,
-                                        "isRealtimePreview": True,
-                                        "fileType": "image"
-                                    })
-                                    db_update_task(str(task_id), {"outputs": outs, "updatedAt": int(time.time())})
+                                # 存入内存高速流，绝不写入 SQLite 避免数据库写放大
+                                ACTIVE_TASK_PREVIEWS[str(task_id)] = {
+                                    "filename": f"{task_id}_preview.png",
+                                    "url": data_url,
+                                    "remoteUrl": data_url,
+                                    "size": len(img_bytes),
+                                    "isRealtime": True,
+                                    "isRealtimePreview": True,
+                                    "fileType": "image",
+                                    "updatedAt": time.time()
+                                }
 
                     elif msg.type == aiohttp.WSMsgType.TEXT:
                         try:
@@ -347,6 +347,7 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                         "statusText": "生成任务已圆满完成",
                         "updatedAt": int(time.time())
                     })
+                    ACTIVE_TASK_PREVIEWS.pop(str(task_id), None)
                     asyncio.create_task(sync_task_outputs_to_imgbed(str(task_id)))
                     return
                 
@@ -372,6 +373,7 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                             "statusText": "生成完成 (已安全截流有效成果)",
                             "updatedAt": int(time.time())
                         })
+                        ACTIVE_TASK_PREVIEWS.pop(str(task_id), None)
                         asyncio.create_task(sync_task_outputs_to_imgbed(str(task_id)))
                         return
                     else:
@@ -406,16 +408,11 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                         else:
                             display_status = f"执行失败: {err_msg[:40]}"
 
-                        if cur_t and cur_t.get("userId") and cur_t.get("cost"):
-                            cost_val = int(cur_t.get("cost", 0))
-                            if cost_val > 0:
-                                db_refund_user_points(
-                                    user_id=cur_t["userId"],
-                                    amount=cost_val,
-                                    task_id=str(task_id),
-                                    reason=f"任务渲染超时/失败全额退还算力 ({task_id})"
-                                )
-                                db_update_task(str(task_id), {"cost": 0})
+                        # 原子化退还扣减的算力点数并更新任务（幂等防护）
+                        db_atomic_cancel_and_refund(
+                            str(task_id),
+                            reason="任务渲染超时/失败全额退还算力"
+                        )
 
                         db_update_task(str(task_id), {
                             "status": "FAILED",
@@ -424,6 +421,7 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                             "duration": int(time.time() - start_time),
                             "updatedAt": int(time.time())
                         })
+                        ACTIVE_TASK_PREVIEWS.pop(str(task_id), None)
                         return
             except Exception:
                 pass
@@ -574,9 +572,12 @@ async def dispatch_queued_task(
             return
 
         if real_task_id != local_task_id:
-            with get_db_connection() as conn:
-                conn.execute("UPDATE tasks SET task_id = ? WHERE task_id = ?;", (real_task_id, local_task_id))
-                conn.commit()
+            try:
+                with get_db_connection() as conn:
+                    conn.execute("UPDATE tasks SET task_id = ? WHERE task_id = ?;", (real_task_id, local_task_id))
+                    conn.commit()
+            except Exception as e:
+                print(f"[Warning] Failed to update task_id {local_task_id} to {real_task_id}: {e}")
             async with KEY_POOL_MANAGER._lock:
                 if key_id in KEY_POOL_MANAGER._states:
                     KEY_POOL_MANAGER._states[key_id]["task_id"] = real_task_id
@@ -587,3 +588,39 @@ async def dispatch_queued_task(
             asyncio.create_task(listen_websocket_stream(net_wss_url, real_task_id, api_key))
     except Exception as e:
         print(f"[Dispatch Queued Task Exception] {e}")
+
+
+async def reconcile_pending_tasks():
+    """
+    服务重启时启动对账与自愈：
+    自动恢复未完成的 QUEUED / RUNNING 历史任务的云端轮询监听，
+    彻底解决服务器重启后旧任务在数据库中'假死'的问题。
+    """
+    from core.database import db_load_tasks
+    from core.config import get_active_api_key
+    from core.security import decrypt_key
+    await asyncio.sleep(1.5)
+    try:
+        pending = db_load_tasks(status="RUNNING", is_admin=True, limit=50) + db_load_tasks(status="QUEUED", is_admin=True, limit=50)
+        if pending:
+            print(f"[Reconcile] 发现 {len(pending)} 个处于进行中的历史任务，正在恢复云端状态监听...")
+            cfg = load_config()
+            for t in pending:
+                tid = str(t.get("taskId"))
+                if not tid or tid in ACTIVE_POLL_TASKS:
+                    continue
+                task_key_id = t.get("keyId")
+                api_key = None
+                if task_key_id:
+                    for k in cfg.get("apiKeys", []):
+                        if k.get("id") == task_key_id:
+                            api_key = decrypt_key(k.get("keyEncrypted"))
+                            break
+                if not api_key:
+                    api_key = get_active_api_key(cfg)
+                if api_key:
+                    ACTIVE_POLL_TASKS.add(tid)
+                    asyncio.create_task(poll_task_status(tid, api_key, key_id=task_key_id))
+    except Exception as e:
+        print(f"[Reconcile Error] {e}")
+

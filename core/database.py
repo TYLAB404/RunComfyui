@@ -5,7 +5,7 @@ import time
 from typing import Optional, List, Dict, Any, Tuple
 import secrets
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DB_PATH = os.path.join(DATA_DIR, "app.db")
 OLD_TASKS_PATH = os.path.join(DATA_DIR, "tasks.json")
@@ -120,6 +120,13 @@ def init_database():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks (user_id);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks (status);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks (created_at DESC);")
+
+        try:
+            cursor.execute("ALTER TABLE tasks ADD COLUMN key_id TEXT DEFAULT '';")
+            conn.commit()
+        except Exception:
+            pass
+
 
         # 3. 公告表 (Announcements) - 平台官方公告与活动通知
         cursor.execute("""
@@ -276,7 +283,8 @@ def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
         "outputs": outputs,
         "nodeInfoList": node_info,
         "createdAt": d.get("created_at"),
-        "updatedAt": d.get("updated_at")
+        "updatedAt": d.get("updated_at"),
+        "keyId": d.get("key_id") or ""
     }
 
 def db_load_tasks(
@@ -335,15 +343,16 @@ def db_save_task(task: Dict[str, Any]):
         INSERT INTO tasks (
             task_id, user_id, username, workflow_id, workflow_name, task_type,
             positive_prompt, negative_prompt, status, duration, consume_coins,
-            outputs_json, node_info_json, cost, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            outputs_json, node_info_json, cost, created_at, updated_at, key_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
             status = excluded.status,
             duration = excluded.duration,
             consume_coins = excluded.consume_coins,
             outputs_json = excluded.outputs_json,
             cost = excluded.cost,
-            updated_at = excluded.updated_at;
+            updated_at = excluded.updated_at,
+            key_id = COALESCE(NULLIF(excluded.key_id, ''), tasks.key_id);
         """, (
             str(task["taskId"]),
             str(task["userId"]) if task.get("userId") else None,
@@ -360,7 +369,8 @@ def db_save_task(task: Dict[str, Any]):
             json.dumps(task.get("nodeInfoList", []), ensure_ascii=False),
             int(task.get("cost", 0) or 0),
             int(task.get("createdAt", time.time())),
-            int(task.get("updatedAt", time.time()))
+            int(task.get("updatedAt", time.time())),
+            str(task.get("keyId") or task.get("key_id") or "")
         ))
         conn.commit()
 
@@ -383,7 +393,9 @@ def db_update_task(task_id: str, updates: Dict[str, Any]):
             "currentStep": "current_step",
             "currentNodeId": "current_node_id",
             "error": "error_message",
-            "errorMessage": "error_message"
+            "errorMessage": "error_message",
+            "keyId": "key_id",
+            "key_id": "key_id"
         }
         for k, v in updates.items():
             if k in mapping:
@@ -805,3 +817,76 @@ def load_tasks() -> List[Dict[str, Any]]:
 def save_tasks(tasks: List[Dict[str, Any]]):
     for t in tasks:
         db_save_task(t)
+
+
+def db_record_points_ledger(user_id: str, delta: int, balance_after: int, reason: str, task_id: str = ""):
+    """手动增扣点数或调账时记录流水，确保余额与流水强一致"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"
+        cursor.execute("""
+        INSERT INTO points_ledger (id, user_id, task_id, amount, balance_after, reason, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+        """, (ledger_id, str(user_id), str(task_id), delta, balance_after, reason, int(time.time())))
+        conn.commit()
+
+
+def db_count_user_active_tasks(user_id: str) -> int:
+    """统计指定用户当前正在进行中（排队或渲染中）的任务数"""
+    if not user_id:
+        return 0
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status IN ('QUEUED', 'RUNNING', 'PENDING');", (str(user_id),))
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+
+def db_atomic_cancel_and_refund(task_id: str, reason: str = "任务取消退款") -> Tuple[bool, str, int]:
+    """
+    原子化取消任务并执行点数退还（杜绝并发双击/多重取消导致的重复退款）:
+    1. 在数据库事务内执行 UPDATE tasks SET status='CANCELLED', cost=0 WHERE task_id=? AND status IN ('QUEUED','RUNNING','PENDING') AND cost > 0;
+    2. 检查 cursor.rowcount:
+       - 若 rowcount == 1: 成功拿到唯一退款权！读取该任务的 user_id 和原 cost，调用 db_refund_user_points 退还。
+       - 若 rowcount == 0: 说明该任务已被其他并发请求取消、已退过款、或本身为 0 算力，直接幂等返回 False，拒绝二次退款！
+    """
+    now = int(time.time())
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT user_id, cost, status FROM tasks WHERE task_id = ?;", (str(task_id),))
+        row = cursor.fetchone()
+        if not row:
+            return False, "任务不存在", 0
+        
+        user_id = row["user_id"]
+        original_cost = int(row["cost"] or 0)
+        cur_status = str(row["status"] or "")
+        if cur_status in ("CANCELLED", "FAILED", "SUCCESS"):
+            return False, f"任务已处于终态 ({cur_status})，无需重复取消或退款", 0
+        
+        if original_cost <= 0:
+            cursor.execute("UPDATE tasks SET status = 'CANCELLED', updated_at = ? WHERE task_id = ? AND status IN ('QUEUED', 'RUNNING', 'PENDING');", (now, str(task_id)))
+            conn.commit()
+            return True, "任务已标记取消（无需退款）", 0
+        
+        # 核心原子状态跃迁：只在 cost > 0 且状态为进行中时扣减
+        cursor.execute("""
+            UPDATE tasks 
+            SET status = 'CANCELLED', cost = 0, updated_at = ? 
+            WHERE task_id = ? AND status IN ('QUEUED', 'RUNNING', 'PENDING') AND cost > 0;
+        """, (now, str(task_id)))
+        
+        if cursor.rowcount == 0:
+            return False, "任务已处于终态或退款已处理完毕（幂等防护生效）", 0
+        
+        conn.commit()
+
+    new_bal = 0
+    if user_id and original_cost > 0:
+        _, new_bal = db_refund_user_points(
+            user_id=user_id,
+            amount=original_cost,
+            task_id=str(task_id),
+            reason=f"{reason} (任务ID: {task_id})"
+        )
+    return True, f"已成功取消并退还 {original_cost} 算力点", new_bal
