@@ -27,6 +27,9 @@ from services.runninghub import (
 
 router = APIRouter(tags=["Tasks"])
 
+# 单用户并发互斥锁（杜绝多标签并发穿透）
+USER_SUBMIT_LOCKS: Dict[str, asyncio.Lock] = {}
+
 class GenerateRequest(BaseModel):
     workflowId: Optional[str] = ""
     workflowName: Optional[str] = ""
@@ -51,237 +54,254 @@ async def generate_task(
             reason = sys_settings.get("maintenanceReason") or "系统正在例行升级维护中，请稍后再试"
             raise HTTPException(status_code=503, detail=f"【系统维护公告】{reason}")
 
-    # 1. 单用户并发保护：非管理员普通用户同时只允许跑最多 2 个任务，防止霸占全池通道
-    if current_user and current_user.get("role") != "admin":
-        active_cnt = db_count_user_active_tasks(str(current_user["id"]))
-        if active_cnt >= 2:
+    # 1. 单用户并发互斥锁：每个普通用户同一时间仅允许运行 1 个任务，禁止多开标签并发占用多个 Key
+    user_id = str(current_user["id"]) if current_user else ""
+    is_admin = bool(current_user and current_user.get("role") == "admin")
+    u_lock = None
+    if user_id and not is_admin:
+        u_lock = USER_SUBMIT_LOCKS.setdefault(user_id, asyncio.Lock())
+        if u_lock.locked():
             raise HTTPException(
-                status_code=429,
-                detail="您已有 2 个进行中的生成任务，请等待其完成后再提交新任务，保持算力通道畅通"
+                status_code=400,
+                detail="您已有任务正在提交调度中，请勿在多个标签页重复点击！"
             )
+        await u_lock.acquire()
 
-    is_custom_proxy = bool(req.customPrompt)
-
-    if not is_custom_proxy and not req.workflowId:
-        raise HTTPException(status_code=400, detail="缺少必填参数：workflowId")
-
-    # 2. 算力计费与工作流合法性校验（堵死 0 元白嫖漏洞）
-    task_cost = 0
-    if not is_custom_proxy:
-        wf_found = False
-        for wf in cfg.get("workflows", []):
-            if str(wf.get("id")) == str(req.workflowId):
-                task_cost = int(wf.get("pointsCost", 0) or wf.get("cost", 0) or 5)
-                if not wf.get("isOfficial"):
-                    task_cost = max(5, task_cost)
-                elif task_cost < 0:
-                    task_cost = 5
-                wf_found = True
-                break
-        if not wf_found:
-            raise HTTPException(status_code=400, detail="未配置或不存在的官方工作流，禁止非法提交")
-    else:
-        # customPrompt 模式：普通用户如果提交自定义 ComfyUI 流程，至少收取标准算力（10点）
-        is_admin = bool(current_user and current_user.get("role") == "admin")
-        task_cost = 0 if is_admin else 10
-
-    points_deducted = False
-    if current_user:
-        ok, remaining, msg = db_deduct_user_points(
-            user_id=current_user["id"],
-            amount=task_cost,
-            reason=f"生成任务算力扣减 ({req.workflowName or req.workflowId})"
-        )
-        if not ok:
-            raise HTTPException(status_code=402, detail=f"算力点数不足：本次生成需 {task_cost} 点，您当前账户仅剩 {remaining} 点，请兑换卡密或充值")
-        points_deducted = True
-
-    task_type = "Lite" if req.taskType and req.taskType.strip().lower() == "lite" else "Standard"
-
-    temp_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-    user_id = current_user["id"] if current_user else ""
-    user_name = current_user["username"] if current_user else "匿名访客"
-
-    excluded_key_ids: Set[str] = set()
-    real_task_id = None
-    net_wss_url = None
-    assigned_key_id = None
-    assigned_api_key = None
-
-    while True:
-        key_info = await KEY_POOL_MANAGER.acquire_free_key(temp_id, exclude_key_ids=excluded_key_ids)
-        if not key_info:
-            key_info = await KEY_POOL_MANAGER.wait_for_free_key(temp_id, timeout=1.5, exclude_key_ids=excluded_key_ids)
-
-        all_keys = KEY_POOL_MANAGER._get_all_keys()
-        remaining_healthy = [
-            k for k in all_keys 
-            if k.get("id") not in excluded_key_ids and KEY_POOL_MANAGER._states.get(k.get("id"), {}).get("is_healthy", True)
-        ]
-
-        if not key_info:
-            if not remaining_healthy:
-                if points_deducted and current_user:
-                    db_refund_user_points(current_user["id"], task_cost, task_id=temp_id, reason="所有算力通道异常自动退还")
-                raise HTTPException(status_code=503, detail="所有可用算力通道暂时繁忙或异常，请稍后重试（算力已原路退还）")
-
-            # 优雅排队机制
-            queue_task_record = {
-                "taskId": temp_id,
-                "workflowId": str(req.workflowId),
-                "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
-                "taskType": "Proxy-Native" if is_custom_proxy else task_type,
-                "userId": user_id,
-                "username": user_name,
-                "positivePrompt": req.positivePrompt or "",
-                "negativePrompt": req.negativePrompt or "",
-                "cost": task_cost if points_deducted else 0,
-                "status": "QUEUED",
-                "createdAt": int(time.time()),
-                "updatedAt": int(time.time()),
-                "duration": 0,
-                "consumeCoins": "0",
-                "outputs": [],
-                "nodeInfoList": req.nodeInfoList,
-                "keyId": ""
-            }
-            db_save_task(queue_task_record)
-            
-            queue_snapshot = KEY_POOL_MANAGER.get_queue_stats()
-            queue_pos = queue_snapshot.get("waiters_count", 1)
-            
-            background_tasks.add_task(
-                dispatch_queued_task,
-                temp_id, req, current_user, task_cost, is_custom_proxy, task_type
-            )
-            return {
-                "status": "ok",
-                "isQueued": True,
-                "taskId": temp_id,
-                "message": f"当前算力通道繁忙，任务已加入排队队列（当前排在第 {queue_pos} 位），后台正自动等待空闲调度...",
-                "task": queue_task_record
-            }
-
-        if isinstance(key_info, dict):
-            key_id = key_info["keyId"]
-            api_key = key_info["apiKey"]
-            key_name = key_info["keyName"]
-        else:
-            key_id, api_key, key_name = key_info[0], key_info[1], key_info[2]
-
-        if is_custom_proxy:
-            prompt_dict = copy.deepcopy(req.customPrompt or {})
-            for item in req.nodeInfoList:
-                nid = str(item.get("nodeId"))
-                fname = item.get("fieldName")
-                fval = item.get("fieldValue")
-                if nid in prompt_dict and "inputs" in prompt_dict[nid]:
-                    prompt_dict[nid]["inputs"][fname] = fval
-
-            proxy_payload = {
-                "prompt": prompt_dict,
-                "client_id": str(uuid.uuid4())
-            }
-
-            sub_task_id, last_err = await submit_proxy_prompt_async(api_key, proxy_payload)
-            if not sub_task_id:
-                if is_key_fatal_error(None, str(last_err)):
-                    print(f"[Silent Failover] Key {key_id} ({key_name}) failed in proxy: {last_err}. Isolating and trying next key...")
-                    await KEY_POOL_MANAGER.mark_key_unhealthy(key_id, f"原生代理鉴权/风控拒绝: {last_err}")
-                    excluded_key_ids.add(key_id)
-                    continue
-                else:
-                    await KEY_POOL_MANAGER.release_key(key_id, temp_id)
-                    if points_deducted and current_user:
-                        db_refund_user_points(current_user["id"], task_cost, reason=f"原生代理提交失败退还: {last_err}")
-                    raise HTTPException(status_code=400, detail=f"提交至云端引擎失败: {last_err}")
-
-            real_task_id = str(sub_task_id)
-            assigned_key_id = key_id
-            assigned_api_key = api_key
-            break
-
-        else:
-            payload = {
-                "apiKey": api_key,
-                "workflowId": str(req.workflowId),
-                "taskType": task_type
-            }
-            if req.nodeInfoList:
-                payload["nodeInfoList"] = req.nodeInfoList
-
-            headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
-            url = f"{RUNNINGHUB_API_URL}/task/openapi/create"
-
-            try:
-                res = await asyncio.to_thread(
-                    HTTP_SESSION.post, url, json=payload, headers=headers, timeout=12
+    try:
+        if user_id and not is_admin:
+            active_cnt = db_count_user_active_tasks(user_id)
+            if active_cnt >= 1:
+                raise HTTPException(
+                    status_code=400,
+                    detail="您当前已有 1 个正在进行中的生成任务。为保障算力通道公平，单账号暂不支持多标签并发运行，请等待当前任务生成完成或在历史记录中取消后再提交新任务！"
                 )
-                data = res.json()
-            except Exception as e:
-                await KEY_POOL_MANAGER.release_key(key_id, temp_id)
-                if points_deducted and current_user:
-                    db_refund_user_points(current_user["id"], task_cost, reason=f"网络请求云端引擎异常: {str(e)}")
-                raise HTTPException(status_code=502, detail=f"连接云端算力调度集群异常: {str(e)}")
 
-            code = data.get("code")
-            msg = data.get("msg") or "云端未知异常"
+        is_custom_proxy = bool(req.customPrompt)
 
-            if code != 0:
-                if is_key_fatal_error(code, msg):
-                    print(f"[Silent Failover] Key {key_id} ({key_name}) fatal error [{code}]: {msg}. Isolating and trying next key...")
-                    await KEY_POOL_MANAGER.mark_key_unhealthy(key_id, f"OpenAPI返回致命拒绝 [{code}]: {msg}")
-                    excluded_key_ids.add(key_id)
-                    continue
-                else:
+        if not is_custom_proxy and not req.workflowId:
+            raise HTTPException(status_code=400, detail="缺少必填参数：workflowId")
+
+        # 2. 算力计费与工作流合法性校验（堵死 0 元白嫖漏洞）
+        task_cost = 0
+        if not is_custom_proxy:
+            wf_found = False
+            for wf in cfg.get("workflows", []):
+                if str(wf.get("id")) == str(req.workflowId):
+                    task_cost = int(wf.get("pointsCost", 0) or wf.get("cost", 0) or 5)
+                    if not wf.get("isOfficial"):
+                        task_cost = max(5, task_cost)
+                    elif task_cost < 0:
+                        task_cost = 5
+                    wf_found = True
+                    break
+            if not wf_found:
+                raise HTTPException(status_code=400, detail="未配置或不存在的官方工作流，禁止非法提交")
+        else:
+            # customPrompt 模式：普通用户如果提交自定义 ComfyUI 流程，至少收取标准算力（10点）
+            is_admin = bool(current_user and current_user.get("role") == "admin")
+            task_cost = 0 if is_admin else 10
+
+        points_deducted = False
+        if current_user:
+            ok, remaining, msg = db_deduct_user_points(
+                user_id=current_user["id"],
+                amount=task_cost,
+                reason=f"生成任务算力扣减 ({req.workflowName or req.workflowId})"
+            )
+            if not ok:
+                raise HTTPException(status_code=402, detail=f"算力点数不足：本次生成需 {task_cost} 点，您当前账户仅剩 {remaining} 点，请兑换卡密或充值")
+            points_deducted = True
+
+        task_type = "Lite" if req.taskType and req.taskType.strip().lower() == "lite" else "Standard"
+
+        temp_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:8]}"
+        user_id = current_user["id"] if current_user else ""
+        user_name = current_user["username"] if current_user else "匿名访客"
+
+        excluded_key_ids: Set[str] = set()
+        real_task_id = None
+        net_wss_url = None
+        assigned_key_id = None
+        assigned_api_key = None
+
+        while True:
+            key_info = await KEY_POOL_MANAGER.acquire_free_key(temp_id, exclude_key_ids=excluded_key_ids)
+            if not key_info:
+                key_info = await KEY_POOL_MANAGER.wait_for_free_key(temp_id, timeout=1.5, exclude_key_ids=excluded_key_ids)
+
+            all_keys = KEY_POOL_MANAGER._get_all_keys()
+            remaining_healthy = [
+                k for k in all_keys 
+                if k.get("id") not in excluded_key_ids and KEY_POOL_MANAGER._states.get(k.get("id"), {}).get("is_healthy", True)
+            ]
+
+            if not key_info:
+                if not remaining_healthy:
+                    if points_deducted and current_user:
+                        db_refund_user_points(current_user["id"], task_cost, task_id=temp_id, reason="所有算力通道异常自动退还")
+                    raise HTTPException(status_code=503, detail="所有可用算力通道暂时繁忙或异常，请稍后重试（算力已原路退还）")
+
+                # 优雅排队机制
+                queue_task_record = {
+                    "taskId": temp_id,
+                    "workflowId": str(req.workflowId),
+                    "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
+                    "taskType": "Proxy-Native" if is_custom_proxy else task_type,
+                    "userId": user_id,
+                    "username": user_name,
+                    "positivePrompt": req.positivePrompt or "",
+                    "negativePrompt": req.negativePrompt or "",
+                    "cost": task_cost if points_deducted else 0,
+                    "status": "QUEUED",
+                    "createdAt": int(time.time()),
+                    "updatedAt": int(time.time()),
+                    "duration": 0,
+                    "consumeCoins": "0",
+                    "outputs": [],
+                    "nodeInfoList": req.nodeInfoList,
+                    "keyId": ""
+                }
+                db_save_task(queue_task_record)
+            
+                queue_snapshot = KEY_POOL_MANAGER.get_queue_stats()
+                queue_pos = queue_snapshot.get("waiters_count", 1)
+            
+                background_tasks.add_task(
+                    dispatch_queued_task,
+                    temp_id, req, current_user, task_cost, is_custom_proxy, task_type
+                )
+                return {
+                    "status": "ok",
+                    "isQueued": True,
+                    "taskId": temp_id,
+                    "message": f"当前算力通道繁忙，任务已加入排队队列（当前排在第 {queue_pos} 位），后台正自动等待空闲调度...",
+                    "task": queue_task_record
+                }
+
+            if isinstance(key_info, dict):
+                key_id = key_info["keyId"]
+                api_key = key_info["apiKey"]
+                key_name = key_info["keyName"]
+            else:
+                key_id, api_key, key_name = key_info[0], key_info[1], key_info[2]
+
+            if is_custom_proxy:
+                prompt_dict = copy.deepcopy(req.customPrompt or {})
+                for item in req.nodeInfoList:
+                    nid = str(item.get("nodeId"))
+                    fname = item.get("fieldName")
+                    fval = item.get("fieldValue")
+                    if nid in prompt_dict and "inputs" in prompt_dict[nid]:
+                        prompt_dict[nid]["inputs"][fname] = fval
+
+                proxy_payload = {
+                    "prompt": prompt_dict,
+                    "client_id": str(uuid.uuid4())
+                }
+
+                sub_task_id, last_err = await submit_proxy_prompt_async(api_key, proxy_payload)
+                if not sub_task_id:
+                    if is_key_fatal_error(None, str(last_err)):
+                        print(f"[Silent Failover] Key {key_id} ({key_name}) failed in proxy: {last_err}. Isolating and trying next key...")
+                        await KEY_POOL_MANAGER.mark_key_unhealthy(key_id, f"原生代理鉴权/风控拒绝: {last_err}")
+                        excluded_key_ids.add(key_id)
+                        continue
+                    else:
+                        await KEY_POOL_MANAGER.release_key(key_id, temp_id)
+                        if points_deducted and current_user:
+                            db_refund_user_points(current_user["id"], task_cost, reason=f"原生代理提交失败退还: {last_err}")
+                        raise HTTPException(status_code=400, detail=f"提交至云端引擎失败: {last_err}")
+
+                real_task_id = str(sub_task_id)
+                assigned_key_id = key_id
+                assigned_api_key = api_key
+                break
+
+            else:
+                payload = {
+                    "apiKey": api_key,
+                    "workflowId": str(req.workflowId),
+                    "taskType": task_type
+                }
+                if req.nodeInfoList:
+                    payload["nodeInfoList"] = req.nodeInfoList
+
+                headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
+                url = f"{RUNNINGHUB_API_URL}/task/openapi/create"
+
+                try:
+                    res = await asyncio.to_thread(
+                        HTTP_SESSION.post, url, json=payload, headers=headers, timeout=12
+                    )
+                    data = res.json()
+                except Exception as e:
                     await KEY_POOL_MANAGER.release_key(key_id, temp_id)
                     if points_deducted and current_user:
-                        db_refund_user_points(current_user["id"], task_cost, reason=f"云端拒绝任务: {msg}")
-                    raise HTTPException(status_code=400, detail=f"云端任务提交失败: {msg}")
+                        db_refund_user_points(current_user["id"], task_cost, reason=f"网络请求云端引擎异常: {str(e)}")
+                    raise HTTPException(status_code=502, detail=f"连接云端算力调度集群异常: {str(e)}")
 
-            real_task_id = str(data.get("data", {}).get("taskId"))
-            net_wss_url = data.get("data", {}).get("netWssUrl")
-            assigned_key_id = key_id
-            assigned_api_key = api_key
-            break
+                code = data.get("code")
+                msg = data.get("msg") or "云端未知异常"
 
-    async with KEY_POOL_MANAGER._lock:
-        if assigned_key_id in KEY_POOL_MANAGER._states:
-            KEY_POOL_MANAGER._states[assigned_key_id]["task_id"] = str(real_task_id)
+                if code != 0:
+                    if is_key_fatal_error(code, msg):
+                        print(f"[Silent Failover] Key {key_id} ({key_name}) fatal error [{code}]: {msg}. Isolating and trying next key...")
+                        await KEY_POOL_MANAGER.mark_key_unhealthy(key_id, f"OpenAPI返回致命拒绝 [{code}]: {msg}")
+                        excluded_key_ids.add(key_id)
+                        continue
+                    else:
+                        await KEY_POOL_MANAGER.release_key(key_id, temp_id)
+                        if points_deducted and current_user:
+                            db_refund_user_points(current_user["id"], task_cost, reason=f"云端拒绝任务: {msg}")
+                        raise HTTPException(status_code=400, detail=f"云端任务提交失败: {msg}")
 
-    # 核心：将 assigned_key_id 固化存入数据库，确保后续取消和轮询始终使用同一个 Key
-    task_record = {
-        "taskId": str(real_task_id),
-        "workflowId": str(req.workflowId),
-        "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
-        "taskType": "Proxy-Native" if is_custom_proxy else task_type,
-        "userId": user_id,
-        "username": user_name,
-        "positivePrompt": req.positivePrompt or "",
-        "negativePrompt": req.negativePrompt or "",
-        "cost": task_cost if points_deducted else 0,
-        "status": "QUEUED",
-        "createdAt": int(time.time()),
-        "updatedAt": int(time.time()),
-        "duration": 0,
-        "consumeCoins": "0",
-        "outputs": [],
-        "nodeInfoList": req.nodeInfoList,
-        "keyId": assigned_key_id
-    }
+                real_task_id = str(data.get("data", {}).get("taskId"))
+                net_wss_url = data.get("data", {}).get("netWssUrl")
+                assigned_key_id = key_id
+                assigned_api_key = api_key
+                break
 
-    db_save_task(task_record)
+        async with KEY_POOL_MANAGER._lock:
+            if assigned_key_id in KEY_POOL_MANAGER._states:
+                KEY_POOL_MANAGER._states[assigned_key_id]["task_id"] = str(real_task_id)
 
-    ACTIVE_POLL_TASKS.add(str(real_task_id))
-    asyncio.create_task(poll_task_status(str(real_task_id), assigned_api_key, key_id=assigned_key_id))
-    if net_wss_url:
-        asyncio.create_task(listen_websocket_stream(net_wss_url, str(real_task_id), assigned_api_key))
+        # 核心：将 assigned_key_id 固化存入数据库，确保后续取消和轮询始终使用同一个 Key
+        task_record = {
+            "taskId": str(real_task_id),
+            "workflowId": str(req.workflowId),
+            "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
+            "taskType": "Proxy-Native" if is_custom_proxy else task_type,
+            "userId": user_id,
+            "username": user_name,
+            "positivePrompt": req.positivePrompt or "",
+            "negativePrompt": req.negativePrompt or "",
+            "cost": task_cost if points_deducted else 0,
+            "status": "QUEUED",
+            "createdAt": int(time.time()),
+            "updatedAt": int(time.time()),
+            "duration": 0,
+            "consumeCoins": "0",
+            "outputs": [],
+            "nodeInfoList": req.nodeInfoList,
+            "keyId": assigned_key_id
+        }
 
-    return {
-        "status": "ok",
-        "taskId": str(real_task_id),
-        "task": task_record
-    }
+        db_save_task(task_record)
+
+        ACTIVE_POLL_TASKS.add(str(real_task_id))
+        asyncio.create_task(poll_task_status(str(real_task_id), assigned_api_key, key_id=assigned_key_id))
+        if net_wss_url:
+            asyncio.create_task(listen_websocket_stream(net_wss_url, str(real_task_id), assigned_api_key))
+
+        return {
+            "status": "ok",
+            "taskId": str(real_task_id),
+            "task": task_record
+        }
+
+    finally:
+        if u_lock and u_lock.locked():
+            u_lock.release()
 
 @router.get("/api/tasks")
 async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
