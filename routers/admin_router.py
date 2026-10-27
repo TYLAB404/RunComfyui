@@ -37,6 +37,8 @@ from core.database import (
     db_update_task,
     db_delete_task,
     db_delete_tasks_batch,
+    db_clean_tasks_by_status,
+    db_get_user_task_counts,
     db_load_tasks,
     update_task_record,
     db_get_announcements,
@@ -51,9 +53,16 @@ from core.security import decrypt_key, encrypt_key, mask_key
 from core.http_client import http_session
 from services.key_pool import KEY_POOL_MANAGER
 from services.email_service import send_admin_alert_email
-from services.imgbed_service import sync_task_outputs_to_imgbed, sync_single_file_to_imgbed, _sanitize_folder_name
-from services.runninghub import RUNNINGHUB_API_URL, ACTIVE_TASK_PREVIEWS
-from routers.tasks_router import CANCELLED_TASKS
+from services.imgbed_service import (
+    sync_task_outputs_to_imgbed,
+    sync_single_file_to_imgbed,
+    _sanitize_folder_name,
+    infer_media_type,
+    get_sync_progress,
+    start_pending_sync,
+    start_all_history_sync,
+)
+from services.runninghub import RUNNINGHUB_API_URL, ACTIVE_TASK_PREVIEWS, execute_task_cancellation
 
 router = APIRouter(tags=["Admin"])
 
@@ -116,7 +125,6 @@ class SmtpConfigRequest(BaseModel):
 @router.get("/api/admin/overview")
 def admin_overview(_: Dict[str, Any] = Depends(get_current_admin)):
     """管理员系统全量概览指标（利用高性能 SQL 聚合替代内存循环）"""
-    users = load_users()
     stats = db_get_admin_overview_stats()
     cfg = load_config()
     sys_cfg = cfg.get("system", {})
@@ -126,9 +134,9 @@ def admin_overview(_: Dict[str, Any] = Depends(get_current_admin)):
     secret_raw = decrypt_key(secret_enc) if secret_enc else ""
 
     return {
-        "totalUsers": len(users),
-        "adminCount": sum(1 for u in users if u.get("role") == "admin"),
-        "activeUsers": sum(1 for u in users if u.get("isActive", True)),
+        "totalUsers": stats["totalUsers"],
+        "adminCount": stats["adminCount"],
+        "activeUsers": stats["activeUsers"],
         "totalTasks": stats["totalTasks"],
         "todayTasks": stats["todayTasks"],
         "successTasks": stats["successTasks"],
@@ -146,19 +154,14 @@ def admin_overview(_: Dict[str, Any] = Depends(get_current_admin)):
 
 @router.get("/api/admin/users")
 def admin_list_users(_: Dict[str, Any] = Depends(get_current_admin)):
-    """全量用户列表及其累计任务统计"""
+    """全量用户列表及其累计任务统计（采用 SQL GROUP BY 索引聚合，避免全量任务反序列化）"""
     users = load_users()
-    tasks = load_tasks()
-    task_counts = {}
-    for t in tasks:
-        uid = t.get("userId")
-        if uid:
-            task_counts[uid] = task_counts.get(uid, 0) + 1
+    task_counts = db_get_user_task_counts()
 
     result = []
     for u in users:
         safe = sanitize_user(u)
-        safe["taskCount"] = task_counts.get(u["id"], u.get("taskCount", 0))
+        safe["taskCount"] = task_counts.get(str(u["id"]), u.get("taskCount", 0))
         result.append(safe)
     result.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
     return result
@@ -432,72 +435,7 @@ async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_
     if not t:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    cur_status = str(t.get("status") or "")
-    if cur_status in ("SUCCESS", "FAILED", "CANCELLED"):
-        return {
-            "status": "error",
-            "message": f"任务已处于终态 ({cur_status})，不可取消或重复退款"
-        }
-
-    CANCELLED_TASKS.add(task_id_str)
-    await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
-
-    cfg = load_config()
-    # 核心：精准提取当初接单的具体 Key，杜绝跨账号取消导致的云端无感扣费
-    task_key_id = t.get("keyId")
-    cancel_api_key = None
-    if task_key_id:
-        for k in cfg.get("apiKeys", []):
-            if k.get("id") == task_key_id:
-                cancel_api_key = decrypt_key(k.get("keyEncrypted"))
-                break
-    if not cancel_api_key:
-        cancel_api_key = get_active_api_key(cfg)
-
-    cloud_status = "已标记本地取消"
-    if cancel_api_key:
-        try:
-            cancel_url = f"{RUNNINGHUB_API_URL}/task/openapi/cancel"
-            headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
-            res = await asyncio.to_thread(
-                http_session.post,
-                cancel_url,
-                json={"apiKey": cancel_api_key, "taskId": task_id_str},
-                headers=headers,
-                timeout=8,
-            )
-            data = res.json()
-            cloud_status = data.get("msg") or "已通知 RunningHub 云端取消"
-        except Exception as e:
-            cloud_status = f"云端取消异常: {str(e)}"
-
-    # 原子化取消状态跃迁与幂等退款（杜绝并发重复退款）
-    r_ok, refund_msg, new_bal = db_atomic_cancel_and_refund(
-        task_id_str,
-        reason="管理员强制取消任务全额退款"
-    )
-
-    if not r_ok:
-        return {
-            "status": "error",
-            "message": refund_msg
-        }
-
-    db_update_task(task_id_str, {
-        "status": "CANCELLED",
-        "error": f"管理员后台强制取消 ({cloud_status})",
-        "errorMessage": f"管理员后台强制取消 ({cloud_status})",
-        "updatedAt": int(time.time()),
-    })
-    ACTIVE_TASK_PREVIEWS.pop(task_id_str, None)
-
-    return {
-        "status": "ok",
-        "message": f"任务已强制取消 ({cloud_status})",
-        "detail": refund_msg,
-        "newBalance": new_bal,
-        "cloudStatus": cloud_status,
-    }
+    return await execute_task_cancellation(t, is_admin=True)
 
 
 @router.delete("/api/admin/tasks/{task_id}")
@@ -513,9 +451,7 @@ def admin_clean_tasks_batch(payload: Dict[str, Any], _: Dict[str, Any] = Depends
     status_target = payload.get("status")
     if not status_target:
         raise HTTPException(status_code=400, detail="缺少清理目标状态")
-    tasks = db_load_tasks(status=status_target, is_admin=True, limit=1000)
-    tids = [t["taskId"] for t in tasks if t.get("taskId")]
-    deleted_count = db_delete_tasks_batch(tids)
+    deleted_count = db_clean_tasks_by_status(status_target)
     return {"status": "ok", "deletedCount": deleted_count, "message": f"已成功清理 {deleted_count} 条状态为 {status_target} 的任务记录"}
 
 
@@ -584,15 +520,9 @@ def admin_get_gallery(
                 continue
             seen.add(fp)
 
-            ext = os.path.splitext(fname)[1].lower()
             ft = out.get("fileType")
             if not ft or ft == "image":
-                if ext in {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}:
-                    ft = "audio"
-                elif ext in {".mp4", ".webm", ".mov"}:
-                    ft = "video"
-                else:
-                    ft = "image"
+                ft = infer_media_type(fname, "image")
             if file_type and file_type != "all" and ft != file_type:
                 continue
 
@@ -795,27 +725,17 @@ async def admin_test_imgbed(_: Dict[str, Any] = Depends(get_current_admin)):
         return {"status": "error", "message": f"连接异常: {str(e)}"}
 
 
-_SYNC_ALL_RUNNING = False
-_SYNC_STATUS = {
-    "running": False,
-    "total": 0,
-    "processed": 0,
-    "synced": 0,
-    "failed": 0,
-    "message": ""
-}
-
 @router.get("/api/admin/imgbed/sync_progress")
 def admin_get_sync_progress(_: Dict[str, Any] = Depends(get_current_admin)):
     """获取未备份文件同步归档的实时进度"""
-    return _SYNC_STATUS
+    return get_sync_progress()
 
 @router.post("/api/admin/imgbed/sync_pending")
 async def admin_sync_pending_to_imgbed(_: Dict[str, Any] = Depends(get_current_admin)):
     """一键备份全站所有未备份的文件到图床（带实时进度追踪）"""
-    global _SYNC_ALL_RUNNING, _SYNC_STATUS
-    if _SYNC_ALL_RUNNING:
-        return {"status": "busy", "message": "图床备份任务正在后台平稳转存中，请勿重复触发", "progress": _SYNC_STATUS}
+    cur_progress = get_sync_progress()
+    if cur_progress.get("running"):
+        return {"status": "busy", "message": "图床备份任务正在后台平稳转存中，请勿重复触发", "progress": cur_progress}
 
     cfg = load_config()
     imgbed_cfg = get_imgbed_config(cfg)
@@ -837,44 +757,7 @@ async def admin_sync_pending_to_imgbed(_: Dict[str, Any] = Depends(get_current_a
     if total_pending_files == 0:
         return {"status": "ok", "message": "当前没有待备份的文件（所有有效成果已全部备份归档）", "total": 0}
 
-    _SYNC_STATUS = {
-        "running": True,
-        "total": total_pending_files,
-        "processed": 0,
-        "synced": 0,
-        "failed": 0,
-        "message": f"正在平稳转存共 {total_pending_files} 个未备份成果..."
-    }
-
-    async def _batch_pending():
-        global _SYNC_ALL_RUNNING, _SYNC_STATUS
-        _SYNC_ALL_RUNNING = True
-        try:
-            for tid, count in pending_tasks:
-                before_t = db_get_task(tid)
-                before_synced = sum(1 for o in (before_t.get("outputs") or []) if o.get("imgbedUrl"))
-                await sync_task_outputs_to_imgbed(tid)
-                after_t = db_get_task(tid)
-                after_synced = sum(1 for o in (after_t.get("outputs") or []) if o.get("imgbedUrl"))
-                newly_synced = after_synced - before_synced
-                _SYNC_STATUS["processed"] += count
-                _SYNC_STATUS["synced"] += newly_synced
-                _SYNC_STATUS["failed"] += (count - newly_synced)
-                _SYNC_STATUS["message"] = f"已备份 {_SYNC_STATUS['synced']}/{_SYNC_STATUS['total']} 个成果..."
-                await asyncio.sleep(0.3)
-            _SYNC_STATUS["message"] = f"备份完成！共成功转存 {_SYNC_STATUS['synced']} 个成果"
-        except Exception as e:
-            _SYNC_STATUS["message"] = f"转存中断: {str(e)}"
-        finally:
-            _SYNC_ALL_RUNNING = False
-            _SYNC_STATUS["running"] = False
-
-    asyncio.create_task(_batch_pending())
-    return {
-        "status": "ok", 
-        "message": f"已启动 {total_pending_files} 个未备份文件的图床归档任务",
-        "total": total_pending_files
-    }
+    return start_pending_sync(pending_tasks, total_pending_files)
 
 @router.post("/api/admin/imgbed/sync_item")
 async def admin_sync_single_item(payload: Dict[str, Any], _: Dict[str, Any] = Depends(get_current_admin)):
@@ -940,27 +823,7 @@ async def admin_sync_single_item(payload: Dict[str, Any], _: Dict[str, Any] = De
 @router.post("/api/admin/imgbed/sync_all")
 async def admin_sync_all_to_imgbed(_: Dict[str, Any] = Depends(get_current_admin)):
     """管理员一键将历史所有未备份的成果平滑转存至图床（按所属用户文件夹隔离）"""
-    global _SYNC_ALL_RUNNING
-    if _SYNC_ALL_RUNNING:
-        return {"status": "busy", "message": "全量历史成果正在后台平稳转存中，请勿重复触发"}
-
-    async def _batch_sync():
-        global _SYNC_ALL_RUNNING
-        _SYNC_ALL_RUNNING = True
-        try:
-            tasks = db_load_tasks(is_admin=True, limit=500)
-            for t in tasks:
-                tid = str(t.get("taskId"))
-                outs = t.get("outputs", [])
-                needs_sync = any(not o.get("imgbedUrl") and not o.get("sourceExpired") for o in outs)
-                if needs_sync:
-                    await sync_task_outputs_to_imgbed(tid)
-                    await asyncio.sleep(0.3)
-        finally:
-            _SYNC_ALL_RUNNING = False
-
-    asyncio.create_task(_batch_sync())
-    return {"status": "ok", "message": "全量历史成果图床归档任务已成功推入后台调度队列，请稍后刷新审计概览"}
+    return start_all_history_sync()
 
 
 # ==================== 9. Key 池管理与巡检 ====================

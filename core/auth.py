@@ -11,6 +11,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from fastapi import Request, HTTPException, Depends
 from core.security import SECRET_KEY_FILE
 from core.database import get_db_connection, db_bump_token_version
+from core.http_client import HTTP_SESSION
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -191,15 +192,13 @@ async def verify_turnstile_token(token: str, secret_key: str, remote_ip: str = "
         payload["remoteip"] = remote_ip
     
     try:
-        timeout = aiohttp.ClientTimeout(total=4.0, connect=3.0)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, data=payload) as resp:
-                data = await resp.json()
-                if data.get("success"):
-                    return True, "人机验证通过"
-                codes = data.get("error-codes", [])
-                err_msg = ", ".join(codes) if codes else "人机安全验证未通过"
-                return False, f"Turnstile 校验未通过: {err_msg}"
+        resp = await asyncio.to_thread(HTTP_SESSION.post, url, data=payload, timeout=4.0)
+        data = resp.json()
+        if data.get("success"):
+            return True, "人机验证通过"
+        codes = data.get("error-codes", [])
+        err_msg = ", ".join(codes) if codes else "人机安全验证未通过"
+        return False, f"Turnstile 校验未通过: {err_msg}"
     except Exception as e:
         print(f"[Turnstile Warning] 无法连通 Cloudflare 验签服务器 ({e})，触发降级放行")
         return True, "Cloudflare 网络连通异常，降级放行"
