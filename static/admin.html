@@ -1040,38 +1040,56 @@
             
             <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
               
-              <div class="flex items-center justify-between">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
-                  <h3 class="text-sm font-bold text-white">RunningHub API 密钥池安全管理</h3>
-                  <p class="text-xs text-slate-400">所有密钥均经由 AES-256 高强度对称加密落盘，保护算力资产安全</p>
+                  <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                    <span>RunningHub API 密钥池安全中心</span>
+                    <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-medium">无感故障转移已启用</span>
+                  </h3>
+                  <p class="text-xs text-slate-400 mt-0.5">AES-256 高强度加密存储，多账号自动轮询调度。遇到封禁、注销或欠费时自动熔断隔离并邮件告警</p>
                 </div>
-                <button @click="showAddKeyModal = true" class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition flex items-center gap-1.5">
-                  <i data-lucide="plus" class="w-3.5 h-3.5"></i>
-                  <span>添加新密钥</span>
-                </button>
+                <div class="flex items-center gap-2">
+                  <button @click="inspectAllKeys" :disabled="isInspectingKeys" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-sky-400 border border-slate-700/80 transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="activity" :class="{'animate-spin': isInspectingKeys}" class="w-3.5 h-3.5 text-sky-400"></i>
+                    <span>{{ isInspectingKeys ? '巡检中...' : '一键全池巡检' }}</span>
+                  </button>
+                  <button @click="openSmtpModal" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-amber-300 border border-slate-700/80 transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="mail" class="w-3.5 h-3.5 text-amber-400"></i>
+                    <span>告警邮箱设置</span>
+                  </button>
+                  <button @click="showAddKeyModal = true" class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold text-white transition flex items-center gap-1.5 shadow-sm">
+                    <i data-lucide="plus" class="w-3.5 h-3.5"></i>
+                    <span>添加新密钥</span>
+                  </button>
+                </div>
               </div>
 
-                            <!-- 动态并发池调度运行看板 (Key Pool Mutex Live Status) -->
-              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <!-- 动态并发池调度运行看板 (Key Pool Mutex Live Status) -->
+              <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
                 <div class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800">
-                  <div class="text-[11px] text-slate-400 font-medium">总并发槽位数</div>
-                  <div class="text-xl font-bold text-white mt-1 font-mono">{{ keyPoolStats.totalKeys || keys.length }} <span class="text-[10px] text-slate-500 font-sans">个账号</span></div>
-                  <div class="text-[10px] text-indigo-400 mt-1">每个普通号独立单线程</div>
+                  <div class="text-[11px] text-slate-400 font-medium">全池账号总量</div>
+                  <div class="text-xl font-bold text-white mt-1 font-mono">{{ keyPoolStats.totalKeys || keys.length }} <span class="text-[10px] text-slate-500 font-sans">个</span></div>
+                  <div class="text-[10px] text-indigo-400 mt-1">独立单线程并发</div>
                 </div>
                 <div class="p-3.5 rounded-xl bg-slate-950/80 border border-emerald-500/30 bg-emerald-500/5">
-                  <div class="text-[11px] text-emerald-400 font-medium">空闲待命中 (Idle)</div>
+                  <div class="text-[11px] text-emerald-400 font-medium">健康待命中 (Idle)</div>
                   <div class="text-xl font-bold text-emerald-300 mt-1 font-mono">{{ keyPoolStats.freeKeys ?? keys.length }} <span class="text-[10px] text-emerald-500/70 font-sans">槽位</span></div>
-                  <div class="text-[10px] text-emerald-400/80 mt-1">随时毫秒级接客调度</div>
+                  <div class="text-[10px] text-emerald-400/80 mt-1">毫秒级极速接单</div>
                 </div>
                 <div class="p-3.5 rounded-xl bg-slate-950/80 border border-rose-500/30 bg-rose-500/5">
-                  <div class="text-[11px] text-rose-400 font-medium">GPU 计算中 (Busy)</div>
+                  <div class="text-[11px] text-rose-400 font-medium">GPU 渲染中 (Busy)</div>
                   <div class="text-xl font-bold text-rose-300 mt-1 font-mono">{{ keyPoolStats.busyKeys || 0 }} <span class="text-[10px] text-rose-500/70 font-sans">占用</span></div>
-                  <div class="text-[10px] text-rose-400/80 mt-1">单线程互斥锁保护</div>
+                  <div class="text-[10px] text-rose-400/80 mt-1">互斥锁保护防串单</div>
+                </div>
+                <div class="p-3.5 rounded-xl bg-slate-950/80 border border-red-500/30 bg-red-950/20">
+                  <div class="text-[11px] text-red-400 font-medium">熔断隔离 (Banned)</div>
+                  <div class="text-xl font-bold text-red-400 mt-1 font-mono">{{ keyPoolStats.bannedKeys || 0 }} <span class="text-[10px] text-red-500/70 font-sans">异常</span></div>
+                  <div class="text-[10px] text-red-400/80 mt-1">已自动无感绕过</div>
                 </div>
                 <div class="p-3.5 rounded-xl bg-slate-950/80 border border-amber-500/30 bg-amber-500/5">
                   <div class="text-[11px] text-amber-400 font-medium">排队等待中 (Waiting)</div>
                   <div class="text-xl font-bold text-amber-300 mt-1 font-mono">{{ keyPoolStats.waitingTasks || 0 }} <span class="text-[10px] text-amber-500/70 font-sans">任务</span></div>
-                  <div class="text-[10px] text-amber-400/80 mt-1">释放时毫秒级抢占补位</div>
+                  <div class="text-[10px] text-amber-400/80 mt-1">释放时毫秒级抢占</div>
                 </div>
               </div>
 
@@ -1089,25 +1107,46 @@
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
                     <tr v-for="k in keys" :key="k.id" class="hover:bg-slate-800/30 transition">
-                      <td class="py-3 px-3 font-semibold text-white">{{ k.name }}</td>
+                      <td class="py-3 px-3 font-semibold text-white">
+                        <div class="flex items-center gap-2">
+                          <span>{{ k.name }}</span>
+                          <span v-if="k.isActive" class="px-1.5 py-0.2 rounded text-[9px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">主Key</span>
+                        </div>
+                      </td>
                       <td class="py-3 px-3 font-mono text-indigo-300">{{ k.maskedKey }}</td>
                       <td class="py-3 px-3">
-                        <div class="flex items-center gap-2">
-                          <span v-if="getKeyPoolItem(k.id)?.isBusy" class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center gap-1 animate-pulse">
-                            <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                            <span>GPU 渲染中 ({{ getKeyPoolItem(k.id)?.busyDuration }}s)</span>
-                          </span>
-                          <span v-else class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
-                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                            <span>空闲待命</span>
-                          </span>
-                          <span v-if="k.isActive" class="px-1.5 py-0.5 rounded text-[9px] font-mono bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                            默认主Key
-                          </span>
+                        <div class="flex flex-col gap-1 items-start">
+                          <!-- 熔断状态 -->
+                          <div v-if="getKeyPoolItem(k.id) && !getKeyPoolItem(k.id).isHealthy" class="flex items-center gap-1.5">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/15 text-red-400 border border-red-500/30 flex items-center gap-1" :title="getKeyPoolItem(k.id).healthError">
+                              <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span>
+                              <span>⛔ 熔断隔离 (已被封禁/失效)</span>
+                            </span>
+                          </div>
+                          <!-- 正在渲染 -->
+                          <div v-else-if="getKeyPoolItem(k.id)?.isBusy" class="flex items-center gap-1.5">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30 flex items-center gap-1 animate-pulse">
+                              <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
+                              <span>GPU 渲染中 ({{ getKeyPoolItem(k.id)?.busyDuration }}s)</span>
+                            </span>
+                          </div>
+                          <!-- 健康空闲待命 -->
+                          <div v-else class="flex items-center gap-1.5">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                              <span>🟢 健康待命</span>
+                            </span>
+                          </div>
+
+                          <!-- 报错详情诊断提示 -->
+                          <div v-if="getKeyPoolItem(k.id) && !getKeyPoolItem(k.id).isHealthy && getKeyPoolItem(k.id).healthError" class="text-[10px] text-red-400/90 font-mono truncate max-w-xs" :title="getKeyPoolItem(k.id).healthError">
+                            {{ getKeyPoolItem(k.id).healthError }}
+                          </div>
                         </div>
                       </td>
                       <td class="py-3 px-3 text-slate-400">{{ formatTimestamp(k.createdAt) }}</td>
-                      <td class="py-3 px-3 text-right space-x-1">
+                      <td class="py-3 px-3 text-right space-x-1 whitespace-nowrap">
+                        <button v-if="getKeyPoolItem(k.id) && !getKeyPoolItem(k.id).isHealthy" @click="resumeKeyInPool(k.id)" title="若已解封可一键恢复加入调度池" class="px-2 py-1 rounded bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-300 text-[11px] font-semibold border border-emerald-500/30">恢复启用</button>
                         <button v-if="getKeyPoolItem(k.id)?.isBusy" @click="resetKeyInPool(k.id)" title="若异常卡死可一键强制重置" class="px-2 py-1 rounded bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 text-[11px]">重置空闲</button>
                         <button v-if="!k.isActive" @click="setActiveKey(k.id)" class="px-2 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px]">设为默认</button>
                         <button @click="deleteKey(k.id)" class="px-2 py-1 rounded bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 text-[11px]">删除</button>
@@ -1717,6 +1756,72 @@
               <label class="block text-slate-300 mb-1">密钥标签名称</label>
               <input type="text" v-model="newKeyForm.name" placeholder="例如: 生产主密钥" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
             </div>
+
+      <!-- 弹窗: SMTP 告警邮箱设置 Modal -->
+      <div v-if="showSmtpModal" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
+          <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+            <h3 class="text-sm font-bold text-white flex items-center gap-2">
+              <i data-lucide="mail" class="w-4 h-4 text-amber-400"></i>
+              <span>运维告警邮箱与 SMTP 通知设置</span>
+            </h3>
+            <button @click="showSmtpModal = false" class="text-slate-400 hover:text-white">
+              <i data-lucide="x" class="w-4 h-4"></i>
+            </button>
+          </div>
+
+          <p class="text-xs text-slate-400 leading-relaxed">
+            当 RunningHub 账号发生封禁、失效、欠费或被限制时，系统将自动熔断并向指定邮箱发送告警通知。
+          </p>
+
+          <div class="space-y-3 text-xs">
+            <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
+              <div>
+                <div class="font-semibold text-white">开启无人值守邮件告警</div>
+                <div class="text-[11px] text-slate-500">检测到底层 Key 封禁或失效时触发</div>
+              </div>
+              <input type="checkbox" v-model="smtpForm.enabled" class="w-4 h-4 text-indigo-600 rounded bg-slate-900 border-slate-700">
+            </div>
+
+            <div class="grid grid-cols-3 gap-2">
+              <div class="col-span-2">
+                <label class="block text-slate-300 mb-1">SMTP 发信服务器</label>
+                <input type="text" v-model="smtpForm.host" placeholder="如 smtp.qq.com 或 smtp.163.com" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+              </div>
+              <div>
+                <label class="block text-slate-300 mb-1">端口</label>
+                <input type="number" v-model="smtpForm.port" placeholder="465 / 587" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono">
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 mb-1">发信邮箱账号 (User)</label>
+              <input type="email" v-model="smtpForm.user" placeholder="如 your_email@qq.com" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+            </div>
+
+            <div>
+              <label class="block text-slate-300 mb-1">发信邮箱授权码 / 密码 (Password)</label>
+              <input type="password" v-model="smtpForm.password" :placeholder="smtpForm.hasPassword ? '已配置加密密码（留空保持不变）' : '请输入邮箱 POP3/SMTP 授权码'" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+            </div>
+
+            <div>
+              <label class="block text-slate-300 mb-1">管理员接收告警邮箱 (Admin Email)</label>
+              <input type="email" v-model="smtpForm.adminEmail" placeholder="接收异常告警的站长邮箱" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between border-t border-slate-800 pt-3">
+            <button @click="testSmtpEmail" :disabled="smtpTesting" class="px-3.5 py-1.5 rounded-xl text-xs bg-amber-600/20 hover:bg-amber-600/40 text-amber-300 border border-amber-500/30 flex items-center gap-1.5 transition">
+              <i data-lucide="send" :class="{'animate-spin': smtpTesting}" class="w-3.5 h-3.5"></i>
+              <span>{{ smtpTesting ? '发送中...' : '发送测试邮件' }}</span>
+            </button>
+            <div class="flex items-center gap-2">
+              <button @click="showSmtpModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 text-slate-300">取消</button>
+              <button @click="saveSmtpConfig" class="px-4 py-2 rounded-xl text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-bold">保存设置</button>
+            </div>
+          </div>
+        </div>
+      </div>
             <div>
               <label class="block text-slate-300 mb-1">API 密钥明文 (提交后将立即进行 AES-256 加密)</label>
               <input type="password" v-model="newKeyForm.apiKey" placeholder="输入 RunningHub Key" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 font-mono text-white">
@@ -2186,6 +2291,18 @@
         const editPointsModal = ref({ show: false, userId: '', username: '', points: 0 });
         const resetPwdModal = ref({ show: false, userId: '', username: '', newPassword: '' });
         const showAddKeyModal = ref(false);
+        const showSmtpModal = ref(false);
+        const smtpTesting = ref(false);
+        const isInspectingKeys = ref(false);
+        const smtpForm = ref({
+          enabled: false,
+          host: 'smtp.qq.com',
+          port: 465,
+          user: '',
+          password: '',
+          adminEmail: '',
+          hasPassword: false
+        });
         const newKeyForm = ref({ name: '', apiKey: '' });
 
         const refreshIcons = () => {
@@ -3082,6 +3199,106 @@
           }
         };
 
+        const inspectAllKeys = async () => {
+          isInspectingKeys.value = true;
+          try {
+            const res = await authFetch('/api/admin/key-pool/inspect', { method: 'POST' });
+            if (res.ok) {
+              const data = await res.json();
+              showToastNotification(`巡检完毕：${data.healthyCount} 个账号健康，${data.bannedCount} 个异常`, data.bannedCount > 0 ? 'warning' : 'success');
+              await loadKeyPoolStatus();
+              await loadKeys();
+            } else {
+              const err = await res.json();
+              showToastNotification('巡检失败: ' + (err.detail || '接口响应异常'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('巡检请求异常: ' + e.message, 'error');
+          } finally {
+            isInspectingKeys.value = false;
+            refreshIcons();
+          }
+        };
+
+        const resumeKeyInPool = async (keyId) => {
+          try {
+            const res = await authFetch(`/api/admin/key-pool/${keyId}/resume`, { method: 'POST' });
+            if (res.ok) {
+              showToastNotification('已解除熔断隔离，Key 恢复加入调度池', 'success');
+              await loadKeyPoolStatus();
+            } else {
+              const err = await res.json();
+              showToastNotification('恢复失败: ' + (err.detail || '接口响应异常'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('请求失败: ' + e.message, 'error');
+          }
+        };
+
+        const openSmtpModal = async () => {
+          showSmtpModal.value = true;
+          refreshIcons();
+          try {
+            const res = await authFetch('/api/admin/system/smtp');
+            if (res.ok) {
+              const data = await res.json();
+              smtpForm.value.enabled = !!data.enabled;
+              smtpForm.value.host = data.host || 'smtp.qq.com';
+              smtpForm.value.port = data.port || 465;
+              smtpForm.value.user = data.user || '';
+              smtpForm.value.adminEmail = data.adminEmail || '';
+              smtpForm.value.hasPassword = !!data.hasPassword;
+              smtpForm.value.password = '';
+            }
+          } catch (e) {
+            console.error('Failed to load SMTP settings:', e);
+          }
+        };
+
+        const saveSmtpConfig = async () => {
+          try {
+            const payload = {
+              enabled: smtpForm.value.enabled,
+              host: smtpForm.value.host,
+              port: parseInt(smtpForm.value.port || 465),
+              user: smtpForm.value.user,
+              password: smtpForm.value.password ? smtpForm.value.password : undefined,
+              adminEmail: smtpForm.value.adminEmail
+            };
+            const res = await authFetch('/api/admin/system/smtp', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+              showToastNotification('SMTP 告警设置已保存', 'success');
+              showSmtpModal.value = false;
+            } else {
+              const err = await res.json();
+              showToastNotification('保存失败: ' + (err.detail || '未知错误'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('网络异常: ' + e.message, 'error');
+          }
+        };
+
+        const testSmtpEmail = async () => {
+          smtpTesting.value = true;
+          try {
+            const res = await authFetch('/api/admin/system/smtp/test', { method: 'POST' });
+            if (res.ok) {
+              showToastNotification('测试邮件已成功发送，请查收', 'success');
+            } else {
+              const err = await res.json();
+              showToastNotification('测试发送失败: ' + (err.detail || '未知原因'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('测试请求异常: ' + e.message, 'error');
+          } finally {
+            smtpTesting.value = false;
+          }
+        };
+
         const resetKeyInPool = async (keyId) => {
           try {
             const res = await authFetch(`/api/admin/key-pool/${keyId}/reset`, { method: 'POST' });
@@ -3318,6 +3535,15 @@
           editPointsModal,
           resetPwdModal,
           showAddKeyModal,
+          showSmtpModal,
+          smtpTesting,
+          isInspectingKeys,
+          smtpForm,
+          inspectAllKeys,
+          resumeKeyInPool,
+          openSmtpModal,
+          saveSmtpConfig,
+          testSmtpEmail,
           newKeyForm,
           refreshCurrentSection,
           loadTasks,
