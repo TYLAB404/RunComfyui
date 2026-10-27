@@ -51,7 +51,7 @@ from core.security import decrypt_key, encrypt_key, mask_key
 from core.http_client import http_session
 from services.key_pool import KEY_POOL_MANAGER
 from services.email_service import send_admin_alert_email
-from services.imgbed_service import sync_task_outputs_to_imgbed
+from services.imgbed_service import sync_task_outputs_to_imgbed, sync_single_file_to_imgbed, _sanitize_folder_name
 from services.runninghub import RUNNINGHUB_API_URL, ACTIVE_TASK_PREVIEWS
 from routers.tasks_router import CANCELLED_TASKS
 
@@ -759,6 +759,146 @@ async def admin_test_imgbed(_: Dict[str, Any] = Depends(get_current_admin)):
 
 
 _SYNC_ALL_RUNNING = False
+_SYNC_STATUS = {
+    "running": False,
+    "total": 0,
+    "processed": 0,
+    "synced": 0,
+    "failed": 0,
+    "message": ""
+}
+
+@router.get("/api/admin/imgbed/sync_progress")
+def admin_get_sync_progress(_: Dict[str, Any] = Depends(get_current_admin)):
+    """获取未备份文件同步归档的实时进度"""
+    return _SYNC_STATUS
+
+@router.post("/api/admin/imgbed/sync_pending")
+async def admin_sync_pending_to_imgbed(_: Dict[str, Any] = Depends(get_current_admin)):
+    """一键备份全站所有未备份的文件到图床（带实时进度追踪）"""
+    global _SYNC_ALL_RUNNING, _SYNC_STATUS
+    if _SYNC_ALL_RUNNING:
+        return {"status": "busy", "message": "图床备份任务正在后台平稳转存中，请勿重复触发", "progress": _SYNC_STATUS}
+
+    cfg = load_config()
+    imgbed_cfg = get_imgbed_config(cfg)
+    if not imgbed_cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="自建图床功能未启用，请先在图床配置中开启")
+    if not imgbed_cfg.get("rawAuthHeader"):
+        raise HTTPException(status_code=400, detail="未配置图床 Authorization 密钥")
+
+    tasks = db_load_tasks(is_admin=True, limit=1000)
+    pending_tasks = []
+    total_pending_files = 0
+    for t in tasks:
+        outs = t.get("outputs", [])
+        pending_outs = [o for o in outs if not o.get("imgbedUrl") and not o.get("sourceExpired") and (o.get("remoteUrl") or o.get("url"))]
+        if pending_outs:
+            pending_tasks.append((str(t.get("taskId")), len(pending_outs)))
+            total_pending_files += len(pending_outs)
+
+    if total_pending_files == 0:
+        return {"status": "ok", "message": "当前没有待备份的文件（所有有效成果已全部备份归档）", "total": 0}
+
+    _SYNC_STATUS = {
+        "running": True,
+        "total": total_pending_files,
+        "processed": 0,
+        "synced": 0,
+        "failed": 0,
+        "message": f"正在平稳转存共 {total_pending_files} 个未备份成果..."
+    }
+
+    async def _batch_pending():
+        global _SYNC_ALL_RUNNING, _SYNC_STATUS
+        _SYNC_ALL_RUNNING = True
+        try:
+            for tid, count in pending_tasks:
+                before_t = db_get_task(tid)
+                before_synced = sum(1 for o in (before_t.get("outputs") or []) if o.get("imgbedUrl"))
+                await sync_task_outputs_to_imgbed(tid)
+                after_t = db_get_task(tid)
+                after_synced = sum(1 for o in (after_t.get("outputs") or []) if o.get("imgbedUrl"))
+                newly_synced = after_synced - before_synced
+                _SYNC_STATUS["processed"] += count
+                _SYNC_STATUS["synced"] += newly_synced
+                _SYNC_STATUS["failed"] += (count - newly_synced)
+                _SYNC_STATUS["message"] = f"已备份 {_SYNC_STATUS['synced']}/{_SYNC_STATUS['total']} 个成果..."
+                await asyncio.sleep(0.3)
+            _SYNC_STATUS["message"] = f"备份完成！共成功转存 {_SYNC_STATUS['synced']} 个成果"
+        except Exception as e:
+            _SYNC_STATUS["message"] = f"转存中断: {str(e)}"
+        finally:
+            _SYNC_ALL_RUNNING = False
+            _SYNC_STATUS["running"] = False
+
+    asyncio.create_task(_batch_pending())
+    return {
+        "status": "ok", 
+        "message": f"已启动 {total_pending_files} 个未备份文件的图床归档任务",
+        "total": total_pending_files
+    }
+
+@router.post("/api/admin/imgbed/sync_item")
+async def admin_sync_single_item(payload: Dict[str, Any], _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员单独将某个未备份作品手动转存至图床"""
+    task_id = payload.get("taskId")
+    filename = payload.get("filename")
+    if not task_id:
+        raise HTTPException(status_code=400, detail="缺少 taskId")
+    
+    t = db_get_task(str(task_id))
+    if not t:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    
+    cfg = load_config()
+    imgbed_cfg = get_imgbed_config(cfg)
+    if not imgbed_cfg.get("enabled"):
+        raise HTTPException(status_code=400, detail="自建图床功能未启用")
+    if not imgbed_cfg.get("rawAuthHeader"):
+        raise HTTPException(status_code=400, detail="尚未配置图床 Authorization 密钥")
+
+    username = t.get("username") or "guest"
+    outputs = t.get("outputs", [])
+    target_idx = None
+    target_out = None
+    for idx, o in enumerate(outputs):
+        if filename and o.get("filename") == filename:
+            target_idx = idx
+            target_out = o
+            break
+        elif not filename and not o.get("imgbedUrl"):
+            target_idx = idx
+            target_out = o
+            break
+    
+    if target_out is None:
+        raise HTTPException(status_code=404, detail="未找到对应的输出作品")
+
+    cur_url = target_out.get("remoteUrl") or target_out.get("url") or ""
+    if not cur_url:
+        raise HTTPException(status_code=400, detail="该作品缺少源端下载链接")
+
+    fname = target_out.get("filename") or filename or "output.png"
+    perm_url = await sync_single_file_to_imgbed(cur_url, fname, username, imgbed_cfg)
+    if perm_url == "EXPIRED":
+        target_out["sourceExpired"] = True
+        target_out["imgbedError"] = "原厂源端文件已失效/丢失 (404)"
+        db_update_task(str(task_id), {"outputs": outputs, "updatedAt": int(time.time())})
+        return {"status": "expired", "message": "源端文件已在云端过期失效，无法备份"}
+    elif perm_url:
+        root_folder = imgbed_cfg.get("rootFolder", "RunComfyui").strip() or "RunComfyui"
+        user_folder = _sanitize_folder_name(username) if imgbed_cfg.get("isolateByUser", True) else ""
+        folder_name = f"{root_folder}/{user_folder}" if user_folder else root_folder
+        target_out["imgbedUrl"] = perm_url
+        target_out["storage"] = "imgbed"
+        target_out["sourceExpired"] = False
+        target_out["imgbedFolder"] = folder_name
+        target_out["imgbedSyncedAt"] = int(time.time())
+        db_update_task(str(task_id), {"outputs": outputs, "updatedAt": int(time.time())})
+        return {"status": "ok", "message": "该作品已成功备份至图床", "imgbedUrl": perm_url}
+    else:
+        raise HTTPException(status_code=500, detail="转存失败，图床接口响应异常")
 
 @router.post("/api/admin/imgbed/sync_all")
 async def admin_sync_all_to_imgbed(_: Dict[str, Any] = Depends(get_current_admin)):
@@ -775,10 +915,10 @@ async def admin_sync_all_to_imgbed(_: Dict[str, Any] = Depends(get_current_admin
             for t in tasks:
                 tid = str(t.get("taskId"))
                 outs = t.get("outputs", [])
-                needs_sync = any(not o.get("imgbedUrl") for o in outs)
+                needs_sync = any(not o.get("imgbedUrl") and not o.get("sourceExpired") for o in outs)
                 if needs_sync:
                     await sync_task_outputs_to_imgbed(tid)
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(0.3)
         finally:
             _SYNC_ALL_RUNNING = False
 

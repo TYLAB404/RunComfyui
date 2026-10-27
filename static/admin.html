@@ -1391,13 +1391,23 @@
                     <span>连通性测试</span>
                   </button>
 
+                  <!-- 一键备份未备份文件专属按钮 -->
+                  <button 
+                    @click="syncPendingToImgbed" 
+                    :disabled="syncingPending || (imgbedInfo.pendingSync || 0) === 0"
+                    class="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50 shadow-lg shadow-orange-950/40">
+                    <span v-if="syncingPending" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <i v-else data-lucide="cloud-lightning" class="w-3.5 h-3.5"></i>
+                    <span>{{ syncingPending ? (syncProgressText || '正在备份...') : ('一键备份未备份文件 (' + (imgbedInfo.pendingSync || 0) + ')') }}</span>
+                  </button>
+
                   <button 
                     @click="syncAllToImgbed" 
                     :disabled="syncingAllImgbed"
-                    class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50 shadow-lg shadow-indigo-950/40">
+                    class="px-3.5 py-1.5 rounded-xl bg-indigo-600/80 hover:bg-indigo-600 text-slate-200 text-xs font-semibold transition flex items-center gap-1.5 disabled:opacity-50 border border-indigo-500/30">
                     <span v-if="syncingAllImgbed" class="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
                     <i v-else data-lucide="cloud-upload" class="w-3.5 h-3.5"></i>
-                    <span>一键平稳同步历史成果</span>
+                    <span>全量历史平稳归档</span>
                   </button>
 
                   <button 
@@ -1624,6 +1634,17 @@
                         <i data-lucide="cloud" class="w-3 h-3"></i>
                         <span>查看图床备份文件</span>
                       </a>
+                    </div>
+                    <!-- 未备份成果快速备份单张按钮 -->
+                    <div v-else-if="!item.sourceExpired" class="mt-1">
+                      <button 
+                        @click="adminBackupSingleItem(item)" 
+                        :disabled="item._backingUp"
+                        class="inline-flex items-center gap-1 text-[11px] text-amber-400 hover:text-amber-300 font-medium hover:underline bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/30 transition disabled:opacity-50">
+                        <span v-if="item._backingUp" class="w-2.5 h-2.5 border-2 border-amber-400 border-t-transparent rounded-full animate-spin"></span>
+                        <i v-else data-lucide="cloud-upload" class="w-3 h-3"></i>
+                        <span>{{ item._backingUp ? '正在备份...' : '立即备份该作品' }}</span>
+                      </button>
                     </div>
 
                     <!-- 文件名与 Prompt -->
@@ -2212,6 +2233,8 @@
         const showImgbedModal = ref(false);
         const testingImgbed = ref(false);
         const syncingAllImgbed = ref(false);
+        const syncingPending = ref(false);
+        const syncProgressText = ref('');
         const imgbedForm = ref({
           enabled: true,
           uploadUrl: 'https://imgbed.2364498.xyz/upload',
@@ -2794,6 +2817,100 @@
             }
           } catch (e) {
             showToastNotification('保存异常: ' + e.message, 'error');
+          }
+        };
+
+        // 一键备份未备份文件
+        const syncPendingToImgbed = async () => {
+          const pendingCount = imgbedInfo.value.pendingSync || 0;
+          if (pendingCount === 0) {
+            showToastNotification('当前没有待备份的文件（所有有效成果已全部备份归档）', 'info');
+            return;
+          }
+
+          const confirmed = await confirmAction({
+            title: '一键备份未备份文件',
+            message: `系统将对当前全站 ${pendingCount} 个待转存成果进行内存流直传，按用户隔离分流存入自建图床。\n\n服务器 0 磁盘占用并支持安全并发限流，确定立即启动备份吗？`,
+            confirmText: `立即备份全部 (${pendingCount} 个)`,
+            type: 'info'
+          });
+          if (!confirmed) return;
+
+          syncingPending.value = true;
+          syncProgressText.value = '正在启动备份队列...';
+          try {
+            const res = await authFetch('/api/admin/imgbed/sync_pending', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) {
+              throw new Error(data.detail || data.message || '启动未备份转存失败');
+            }
+            showToastNotification('✓ ' + data.message, 'success');
+
+            // 轮询备份进度
+            const pollTimer = setInterval(async () => {
+              try {
+                const progRes = await authFetch('/api/admin/imgbed/sync_progress');
+                if (progRes.ok) {
+                  const p = await progRes.json();
+                  if (p.running) {
+                    syncProgressText.value = `正在备份 (${p.synced}/${p.total})...`;
+                  } else {
+                    clearInterval(pollTimer);
+                    syncingPending.value = false;
+                    syncProgressText.value = '';
+                    showToastNotification(p.message || '未备份文件全部备份完成！', 'success');
+                    loadImgbedInfo();
+                    loadAdminGallery();
+                  }
+                }
+              } catch (e) {
+                // 忽略轮询网络波动
+              }
+            }, 1000);
+
+            // 兜底最长轮询 120 秒
+            setTimeout(() => {
+              clearInterval(pollTimer);
+              syncingPending.value = false;
+              syncProgressText.value = '';
+              loadImgbedInfo();
+              loadAdminGallery();
+            }, 120000);
+
+          } catch (e) {
+            showToastNotification('备份启动异常: ' + e.message, 'error');
+            syncingPending.value = false;
+            syncProgressText.value = '';
+          }
+        };
+
+        // 单个文件立即手动备份到图床
+        const adminBackupSingleItem = async (item) => {
+          item._backingUp = true;
+          try {
+            const res = await authFetch('/api/admin/imgbed/sync_item', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ taskId: item.taskId, filename: item.filename })
+            });
+            const data = await res.json();
+            if (res.ok && data.status === 'ok') {
+              item.imgbedUrl = data.imgbedUrl;
+              item.storage = 'imgbed';
+              item.sourceExpired = false;
+              showToastNotification('✓ ' + (data.message || '文件已成功备份至图床'), 'success');
+              loadImgbedInfo();
+            } else if (data.status === 'expired') {
+              item.sourceExpired = true;
+              showToastNotification('源端文件已在云端过期失效，无法备份', 'warning');
+            } else {
+              showToastNotification('备份失败: ' + (data.detail || data.message || '接口异常'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('备份请求异常: ' + e.message, 'error');
+          } finally {
+            item._backingUp = false;
+            refreshIcons();
           }
         };
 
@@ -3586,6 +3703,10 @@
           testImgbedConnection,
           submitSaveImgbedConfig,
           syncAllToImgbed,
+          syncingPending,
+          syncProgressText,
+          syncPendingToImgbed,
+          adminBackupSingleItem,
           adminDeleteGalleryItem: adminTakedownGalleryItem,
           adminTakedownGalleryItem,
           adminRestoreGalleryItem,
