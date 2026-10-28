@@ -513,12 +513,24 @@ async def dispatch_queued_task(
                 break
 
             else:
+                instance_type = getattr(req, "instanceType", None)
+                if not instance_type:
+                    req_tt = getattr(req, "taskType", "Standard")
+                    instance_type = "default" if req_tt and req_tt.strip().lower() == "lite" else "plus"
+
+                cfg = load_config()
+                matched_wf = next((w for w in cfg.get("workflows", []) if str(w.get("id")) == str(req.workflowId)), None)
+                if matched_wf and matched_wf.get("instanceType"):
+                    instance_type = matched_wf["instanceType"]
+
                 payload = {
                     "apiKey": api_key,
                     "workflowId": str(req.workflowId),
-                    "nodeInfoList": req.nodeInfoList,
-                    "taskType": task_type
+                    "instanceType": instance_type
                 }
+                if req.nodeInfoList:
+                    payload["nodeInfoList"] = req.nodeInfoList
+
                 headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
                 try:
                     res = await asyncio.to_thread(
@@ -538,7 +550,12 @@ async def dispatch_queued_task(
                 msg = str(data.get("msg") or "")
 
                 if code != 0:
-                    if is_key_fatal_error(code, msg):
+                    if code == 421 or "TASK_QUEUE_MAXED" in msg:
+                        print(f"[Silent Failover In Queue] Key {key_id} ({key_name}) cloud queue maxed (421). Trying next key...")
+                        await KEY_POOL_MANAGER.release_key(key_id, local_task_id)
+                        excluded.add(key_id)
+                        continue
+                    elif is_key_fatal_error(code, msg):
                         print(f"[Silent Failover In Queue] Key {key_id} ({key_name}) rejected with [{code}] {msg}. Silently failing over...")
                         await KEY_POOL_MANAGER.mark_key_unhealthy(key_id, f"云端拒绝任务 [{code}]: {msg}")
                         excluded.add(key_id)

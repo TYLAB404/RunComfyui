@@ -1248,6 +1248,7 @@ createApp({
         negativePrompt: dynamicPrompts.value.length > 1 ? dynamicPrompts.value[1].currentValue : '',
         nodeInfoList: nodeInfoList,
         taskType: selectedTaskType.value || 'Standard',
+        instanceType: selectedTaskType.value === 'Lite' ? 'default' : 'plus',
         customPrompt: isCustom ? customWorkflow.value.prompt : null
       };
 
