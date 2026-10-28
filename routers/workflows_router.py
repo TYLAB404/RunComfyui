@@ -15,7 +15,7 @@ from core.auth import get_current_user_optional, get_current_admin
 from core.http_client import HTTP_SESSION
 from services.workflow_service import (
     parse_nodes_to_dynamic_schema, get_cached_object_info,
-    convert_ui_workflow_to_prompt
+    convert_ui_workflow_to_prompt, build_visual_graph
 )
 
 router = APIRouter(tags=["Workflows"])
@@ -216,10 +216,13 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
         nodes = {}
 
     parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
+    visual_graph = build_visual_graph(nodes, set(parsed.get("hiddenAuxiliaryNodeIds") or []))
     return {
         "status": "ok",
         "workflowId": str(workflow_id),
         "totalNodes": len(nodes),
+        "rawPrompt": nodes,
+        "visualGraph": visual_graph,
         "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
         "dynamicSchema": parsed["dynamicSchema"]
     }
@@ -253,11 +256,14 @@ async def parse_workflow_json_endpoint(
         raise HTTPException(status_code=400, detail="未能识别出有效的 ComfyUI 工作流节点拓扑，请确保为 ComfyUI 格式 JSON。")
 
     parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
+    visual_graph = build_visual_graph(nodes, set(parsed.get("hiddenAuxiliaryNodeIds") or []))
     return {
         "status": "ok",
         "workflowName": filename,
         "totalNodes": len(nodes),
+        "rawPrompt": nodes,
         "customPrompt": nodes,
+        "visualGraph": visual_graph,
         "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
         "dynamicSchema": parsed["dynamicSchema"]
     }
