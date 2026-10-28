@@ -390,8 +390,8 @@
 
           <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        <!-- 左侧动态参数调节面板 (7 cols) -->
-        <div class="lg:col-span-7 space-y-5">
+        <!-- 左侧动态参数调节面板 (7 cols, 展开时自适应 12 cols) -->
+        <div :class="canvasExpanded && paramMode === 'canvas' ? 'lg:col-span-12' : 'lg:col-span-7'" class="space-y-5 transition-all duration-300">
           
           <!-- 工作流选择与状态 -->
           <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-sm space-y-3">
@@ -432,6 +432,42 @@
             </div>
             <p v-else-if="currentWorkflow?.description" class="text-xs text-slate-400">{{ currentWorkflow.description }}</p>
           </div>
+
+          <!-- 模式切换控制器: 简易参数面板 (Form) ⇄ 可视化工作流画布 (Canvas) -->
+          <div class="flex items-center justify-between p-1.5 bg-slate-900/90 border border-slate-800 rounded-2xl shadow-sm">
+            <div class="flex items-center gap-1.5">
+              <button 
+                type="button"
+                @click="setParamMode('form')"
+                :class="paramMode === 'form' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-white bg-slate-950/70 border border-slate-800/80'"
+                class="px-3.5 py-1.5 rounded-xl text-xs transition flex items-center gap-1.5">
+                <span>📝</span>
+                <span>简易参数面板</span>
+              </button>
+              <button 
+                type="button"
+                @click="setParamMode('canvas')"
+                :class="paramMode === 'canvas' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-white bg-slate-950/70 border border-slate-800/80'"
+                class="px-3.5 py-1.5 rounded-xl text-xs transition flex items-center gap-1.5">
+                <span>🎨</span>
+                <span>可视化工作流画布</span>
+                <span class="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-300 font-mono">全景直改</span>
+              </button>
+            </div>
+
+            <div class="flex items-center gap-3 pr-2 text-xs">
+              <span v-if="modifiedParamsCount > 0" class="text-[11px] font-mono text-amber-300 bg-amber-500/15 border border-amber-500/30 px-2 py-0.5 rounded-full font-semibold">
+                已调整 {{ modifiedParamsCount }} 项
+              </span>
+              <span class="text-slate-400 text-[11px] hidden sm:flex items-center gap-1.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>双模式实时同步</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- 1. 简易表单模式容器 (Form Mode) -->
+          <div v-show="paramMode === 'form'" class="space-y-5">
 
 
           <!-- 1. 动态提示词列表 -->
@@ -771,6 +807,293 @@
               </div>
             </div>
           </div>
+          </div> <!-- end paramMode === 'form' -->
+
+          <!-- 2. 可视化工作流画布模式 (Canvas Mode) -->
+          <div v-show="paramMode === 'canvas'" class="space-y-4">
+            
+            <!-- 画布全功能工具栏 -->
+            <div class="flex flex-wrap items-center justify-between gap-2.5 p-3 bg-slate-900 border border-slate-800 rounded-2xl text-xs shadow-sm">
+              
+              <!-- 视图控制区 (放大、缩小、复位、自适应居中) -->
+              <div class="flex items-center gap-1.5">
+                <button 
+                  type="button" 
+                  @click="zoomIn" 
+                  title="放大视图" 
+                  class="p-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                </button>
+                <button 
+                  type="button" 
+                  @click="zoomOut" 
+                  title="缩小视图" 
+                  class="p-2 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white transition flex items-center justify-center">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"></path></svg>
+                </button>
+                <button 
+                  type="button" 
+                  @click="zoomReset" 
+                  title="重置缩放" 
+                  class="px-2.5 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white font-mono text-[11px] transition">
+                  {{ Math.round(canvasZoom * 100) }}%
+                </button>
+                <button 
+                  type="button" 
+                  @click="zoomFit" 
+                  title="自适应全图居中" 
+                  class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-800 hover:border-slate-700 text-slate-300 hover:text-white font-medium transition flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+                  <span>全景居中</span>
+                </button>
+              </div>
+
+              <!-- 辅助节点屏蔽控制 (满足用户核心需求) -->
+              <div class="flex items-center gap-2">
+                <button 
+                  type="button"
+                  @click="canvasHideAuxiliary = !canvasHideAuxiliary"
+                  :class="canvasHideAuxiliary ? 'bg-indigo-950/80 border-indigo-700/80 text-indigo-300 shadow-sm shadow-indigo-950/50' : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'"
+                  class="px-3 py-1.5 rounded-xl border text-xs font-medium transition flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path></svg>
+                  <span>{{ canvasHideAuxiliary ? '系统辅助节点已屏蔽' : '已展开系统辅助节点' }}</span>
+                  <span v-if="hiddenAuxiliaryCount > 0" class="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-500/30 text-indigo-200 font-mono">
+                    {{ hiddenAuxiliaryCount }}
+                  </span>
+                </button>
+              </div>
+
+              <!-- 节点搜索定位与全屏宽屏模式 -->
+              <div class="flex items-center gap-2 flex-1 sm:flex-initial justify-end">
+                <div class="relative w-36 sm:w-44">
+                  <input 
+                    type="text" 
+                    v-model="canvasSearch" 
+                    placeholder="🔍 搜索节点定位..." 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+                  <button 
+                    v-if="canvasSearch" 
+                    type="button"
+                    @click="canvasSearch = ''" 
+                    class="absolute right-2 top-1.5 text-slate-400 hover:text-white text-xs">✕</button>
+                </div>
+                <button 
+                  type="button" 
+                  @click="toggleCanvasExpanded" 
+                  :title="canvasExpanded ? '收起宽屏模式' : '展开全景宽屏画布'"
+                  :class="canvasExpanded ? 'bg-indigo-600 text-white border-indigo-500' : 'bg-slate-950 border-slate-800 text-slate-300 hover:text-white'"
+                  class="px-2.5 py-1.5 rounded-xl border text-xs font-medium transition flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5h-4m4 0v4m0-4l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+                  <span>{{ canvasExpanded ? '收起' : '宽屏' }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 画布视口主容器 (支持鼠标平移、滚轮缩放、节点拖拽) -->
+            <div 
+              id="workflowCanvas"
+              ref="canvasViewport"
+              class="relative w-full rounded-2xl border border-slate-800 overflow-hidden select-none cursor-grab active:cursor-grabbing shadow-inner"
+              :class="canvasExpanded ? 'h-[750px]' : 'h-[600px]'"
+              style="background-color: #0b0f19; background-image: radial-gradient(circle, rgba(148, 163, 184, 0.15) 1px, transparent 1px); background-size: 24px 24px;"
+              @mousedown="onCanvasMouseDown"
+              @mousemove="onCanvasMouseMove"
+              @mouseup="onCanvasMouseUp"
+              @mouseleave="onCanvasMouseUp"
+              @wheel.prevent="onCanvasWheel">
+              
+              <!-- 快捷交互提示胶囊 -->
+              <div class="absolute bottom-3 left-3 z-10 pointer-events-none flex items-center gap-2 text-[10px] text-slate-400 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800/80 backdrop-blur-sm">
+                <span>🖱️ 背景拖拽平移</span>
+                <span>•</span>
+                <span>滚轮自由缩放</span>
+                <span>•</span>
+                <span>把手拖拽移动节点</span>
+                <span>•</span>
+                <span>修改直接实时生效</span>
+              </div>
+
+              <!-- 宽屏展开模式下的悬浮立即运行底栏 -->
+              <div v-if="canvasExpanded" class="absolute bottom-3 right-3 z-10 flex items-center gap-3 bg-slate-900/90 border border-slate-800 p-2 rounded-2xl shadow-2xl backdrop-blur-md">
+                <span class="text-xs text-slate-300 pl-2">
+                  消耗算力: <strong class="text-indigo-400 font-mono">{{ currentWorkflow?.pointsCost || 5 }}</strong> 点
+                </span>
+                <button 
+                  type="button" 
+                  @click="submitDynamicGeneration" 
+                  :disabled="isGenerating || isLoadingSchema || (publicConfig.maintenance && publicConfig.maintenance.enabled && (!currentUser || currentUser.role !== 'admin'))"
+                  class="px-5 py-2.5 rounded-xl font-bold text-xs text-white bg-indigo-600 hover:bg-indigo-500 transition flex items-center gap-2 shadow-lg shadow-indigo-600/30">
+                  <span v-if="!isGenerating">🚀 立即以当前画布参数运行生成</span>
+                  <span v-else class="flex items-center gap-1.5">
+                    <span class="w-3.5 h-3.5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span>
+                    <span>任务调度生成中...</span>
+                  </span>
+                </button>
+              </div>
+
+              <!-- 视口平移与缩放矩阵变换层 -->
+              <div 
+                class="absolute top-0 left-0"
+                :style="{
+                  transform: `translate(${canvasPan.x}px, ${canvasPan.y}px) scale(${canvasZoom})`,
+                  transformOrigin: '0 0'
+                }">
+                
+                <!-- SVG 贝塞尔曲线连线层 -->
+                <svg 
+                  class="absolute top-0 left-0 pointer-events-none" 
+                  style="width: 20000px; height: 20000px; overflow: visible;">
+                  <defs>
+                    <filter id="canvasGlow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="3" result="glow"/>
+                      <feMerge>
+                        <feMergeNode in="glow"/>
+                        <feMergeNode in="SourceGraphic"/>
+                      </feMerge>
+                    </filter>
+                  </defs>
+                  
+                  <path 
+                    v-for="edge in visibleCanvasEdges" 
+                    :key="edge.id"
+                    :d="getEdgePath(edge)"
+                    :stroke="getEdgeColor(edge)"
+                    :stroke-width="selectedCanvasNodeId === String(edge.from) || selectedCanvasNodeId === String(edge.to) ? 3.5 : 2"
+                    :stroke-dasharray="edge.isAuxiliary ? '4 3' : 'none'"
+                    :filter="selectedCanvasNodeId === String(edge.from) || selectedCanvasNodeId === String(edge.to) ? 'url(#canvasGlow)' : 'none'"
+                    fill="none"
+                    stroke-linecap="round"
+                    class="transition-all duration-75" />
+                </svg>
+
+                <!-- 节点卡片层 -->
+                <div 
+                  v-for="node in visibleCanvasNodes" 
+                  :key="node.id"
+                  :id="'canvas_node_' + node.id"
+                  :class="[
+                    selectedCanvasNodeId === String(node.id) ? 'ring-2 ring-sky-400 shadow-2xl shadow-sky-500/20' : 'ring-1 ring-slate-800/90 shadow-lg',
+                    node.category === 'loader' ? 'border-emerald-500/40' :
+                    node.category === 'prompt' ? 'border-indigo-500/40' :
+                    node.category === 'sampler' ? 'border-amber-500/40' :
+                    node.category === 'latent' ? 'border-cyan-500/40' :
+                    node.category === 'output' ? 'border-purple-500/40' : 'border-slate-700/60'
+                  ]"
+                  class="canvas-node-card absolute rounded-2xl border bg-slate-900/95 backdrop-blur-md select-none transition-shadow"
+                  :style="{
+                    transform: `translate(${node.x}px, ${node.y}px)`,
+                    width: (node.width || 300) + 'px'
+                  }"
+                  @mousedown="e => onNodeMouseDown(e, node)">
+                  
+                  <!-- 节点标题栏 (抓取移动把手) -->
+                  <div 
+                    class="flex items-center justify-between px-3 py-2 border-b cursor-grab active:cursor-grabbing rounded-t-2xl"
+                    :class="[
+                      node.category === 'loader' ? 'bg-emerald-950/80 border-emerald-800/40 text-emerald-300' :
+                      node.category === 'prompt' ? 'bg-indigo-950/80 border-indigo-800/40 text-indigo-300' :
+                      node.category === 'sampler' ? 'bg-amber-950/80 border-amber-800/40 text-amber-300' :
+                      node.category === 'latent' ? 'bg-cyan-950/80 border-cyan-800/40 text-cyan-300' :
+                      node.category === 'output' ? 'bg-purple-950/80 border-purple-800/40 text-purple-300' : 'bg-slate-800/80 border-slate-700 text-slate-200'
+                    ]">
+                    <div class="flex items-center gap-1.5 truncate pr-1">
+                      <span class="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/40 font-bold">#{{ node.id }}</span>
+                      <span class="text-xs font-bold truncate" :title="node.title">{{ node.title }}</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <span class="text-[9px] font-mono opacity-60 truncate max-w-[85px]" :title="node.class_type">{{ node.class_type }}</span>
+                      <button 
+                        type="button"
+                        @click.stop="resetNode(node.id)" 
+                        title="恢复该节点为默认参数"
+                        class="p-0.5 text-slate-400 hover:text-white rounded hover:bg-black/20 text-[10px]">
+                        ↺
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- 连线输入端口 (左侧连接孔) -->
+                  <div v-if="node.linkedInputs && node.linkedInputs.length" class="p-2 space-y-1.5 bg-black/25 border-b border-slate-800/60">
+                    <div 
+                      v-for="inp in node.linkedInputs" 
+                      :key="inp.name" 
+                      class="flex items-center justify-between text-[11px] text-slate-300">
+                      <span class="flex items-center gap-1.5 truncate">
+                        <span class="w-2.5 h-2.5 rounded-full bg-indigo-400 border border-indigo-200/50 inline-block"></span>
+                        <span class="font-mono text-[10px] truncate" :title="inp.name">{{ inp.name }}</span>
+                      </span>
+                      <span class="text-[10px] font-mono text-slate-500">← #{{ inp.sourceId }}</span>
+                    </div>
+                  </div>
+
+                  <!-- 可直接在画布上修改的字面量参数 -->
+                  <div v-if="node.literals && node.literals.length && nodeOverrides[node.id]" class="p-2.5 space-y-2.5 max-h-[300px] overflow-y-auto">
+                    <div 
+                      v-for="lit in node.literals" 
+                      :key="lit.name" 
+                      class="space-y-1">
+                      
+                      <div class="flex items-center justify-between text-[11px]">
+                        <span class="font-mono text-slate-300 truncate" :title="lit.name">{{ lit.name }}</span>
+                        <div class="flex items-center gap-1">
+                          <span v-if="isFieldModified(node.id, lit.name)" class="text-[9px] text-amber-300 bg-amber-500/20 px-1 rounded font-bold">已修改</span>
+                          <button 
+                            v-if="isFieldModified(node.id, lit.name)" 
+                            type="button"
+                            @click="resetField(node.id, lit.name)" 
+                            title="恢复默认" 
+                            class="text-slate-500 hover:text-white text-[10px]">✕</button>
+                        </div>
+                      </div>
+
+                      <!-- 文本提示词多行文本框 -->
+                      <textarea 
+                        v-if="lit.name === 'text' || lit.name === 'prompt' || (typeof lit.value === 'string' && lit.value.length > 25)"
+                        v-model="nodeOverrides[node.id][lit.name]"
+                        rows="2"
+                        class="w-full bg-slate-950 border border-slate-800 rounded-lg p-1.5 text-xs text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition resize-none"></textarea>
+
+                      <!-- 数值输入框 -->
+                      <input 
+                        v-else-if="lit.type === 'int' || lit.type === 'float'"
+                        type="number"
+                        :step="lit.type === 'float' ? '0.1' : '1'"
+                        v-model.number="nodeOverrides[node.id][lit.name]"
+                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs font-mono text-slate-100 focus:outline-none focus:border-indigo-500 transition">
+
+                      <!-- 布尔开关 -->
+                      <div v-else-if="lit.type === 'bool'" class="flex items-center justify-between pt-0.5">
+                        <span class="text-[10px] font-mono text-slate-400">{{ nodeOverrides[node.id]?.[lit.name] ? 'TRUE' : 'FALSE' }}</span>
+                        <input 
+                          type="checkbox" 
+                          v-model="nodeOverrides[node.id][lit.name]" 
+                          class="w-4 h-4 rounded accent-indigo-500 cursor-pointer">
+                      </div>
+
+                      <!-- 常规单行文本输入框 -->
+                      <input 
+                        v-else
+                        type="text"
+                        v-model="nodeOverrides[node.id][lit.name]"
+                        class="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-xs text-slate-100 focus:outline-none focus:border-indigo-500 transition">
+                    </div>
+                  </div>
+
+                  <!-- 输出端口槽位 (右侧信号源) -->
+                  <div v-if="node.outputs && node.outputs.length" class="px-2.5 py-1.5 bg-black/25 border-t border-slate-800/60 rounded-b-2xl flex justify-end gap-3 text-[10px] text-slate-400">
+                    <div 
+                      v-for="out in node.outputs" 
+                      :key="out.slot" 
+                      class="flex items-center gap-1 font-mono">
+                      <span>{{ out.name }}</span>
+                      <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 border border-emerald-200/50 inline-block"></span>
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+          </div>
 
           <!-- 运行算力档位与队列通道选择卡片 -->
           <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-2.5 shadow-sm">
@@ -858,8 +1181,8 @@
           </button>
         </div>
 
-        <!-- 右侧实时成果预览与最新输出 (5 cols) -->
-        <div class="lg:col-span-5 space-y-5">
+        <!-- 右侧实时成果预览与最新输出 (5 cols, 宽屏全景画布时自动收起) -->
+        <div :class="canvasExpanded && paramMode === 'canvas' ? 'hidden' : 'lg:col-span-5'" class="space-y-5">
           <div class="bg-slate-900 border border-slate-800 rounded-2xl p-4 min-h-[520px] flex flex-col justify-between shadow-sm sticky top-20">
             <div>
               <div class="flex items-center justify-between mb-3">

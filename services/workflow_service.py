@@ -282,6 +282,171 @@ def detect_silent_audio_subgraphs(nodes: Dict[str, Any]) -> Set[str]:
                                     hidden_ids.update(chain)
     return hidden_ids
 
+def build_visual_graph(nodes: Dict[str, Any], hidden_node_ids: Optional[Set[str]] = None) -> Dict[str, Any]:
+    """
+    将 ComfyUI API Prompt 节点字典自动编译为高保真可视化画布拓扑模型：
+    1. 自动计算 DAG 拓扑分层深度（从左至右自然排布，清晰展示数据流向）
+    2. 严格区分端口连线输入与字面量可编辑参数
+    3. 提取输出端口与下游连线引用
+    4. 标注辅助静音占位节点（以便前端画布自由显隐过滤）
+    5. 自动推断端口数据类型与色彩规范 (Model, Clip, VAE, Latent, Image, etc.)
+    """
+    if not isinstance(nodes, dict):
+        return {"nodes": [], "edges": []}
+
+    from collections import defaultdict
+    hidden_set = set(str(x) for x in (hidden_node_ids or []))
+
+    # 1. 深度优先搜索计算 DAG 拓扑层级 (Rank / Depth)
+    depths = {}
+    def get_node_depth(nid: str, visited: Optional[Set[str]] = None) -> int:
+        if visited is None:
+            visited = set()
+        if nid in depths:
+            return depths[nid]
+        if nid in visited or len(visited) > 40:
+            return 0
+        visited.add(nid)
+
+        node_spec = nodes.get(nid, {})
+        inputs = node_spec.get("inputs", {}) if isinstance(node_spec, dict) else {}
+        max_d = 0
+        if isinstance(inputs, dict):
+            for v in inputs.values():
+                if isinstance(v, (list, tuple)) and len(v) >= 1:
+                    src_id = str(v[0])
+                    if src_id in nodes:
+                        max_d = max(max_d, get_node_depth(src_id, visited) + 1)
+        depths[nid] = max_d
+        return max_d
+
+    for nid in nodes.keys():
+        get_node_depth(str(nid))
+
+    # 2. 分列分组排布坐标
+    cols = defaultdict(list)
+    for nid, d in depths.items():
+        cols[d].append(str(nid))
+
+    for d in cols:
+        def _sort_key(n):
+            try:
+                return (0, int(n))
+            except Exception:
+                return (1, str(n))
+        cols[d].sort(key=_sort_key)
+
+    NODE_WIDTH = 300
+    COL_GAP = 140
+    
+    graph_nodes = []
+    graph_edges = []
+
+    # 统计每个节点的下游引用（生成输出端口）
+    downstream_refs = defaultdict(list)
+    for target_id, n_data in nodes.items():
+        target_id_str = str(target_id)
+        if not isinstance(n_data, dict):
+            continue
+        inputs = n_data.get("inputs", {})
+        if isinstance(inputs, dict):
+            for param_name, val in inputs.items():
+                if isinstance(val, (list, tuple)) and len(val) >= 2:
+                    src_id = str(val[0])
+                    src_slot = int(val[1]) if str(val[1]).isdigit() else 0
+                    downstream_refs[src_id].append((src_slot, target_id_str, param_name))
+
+    for depth, nids in sorted(cols.items()):
+        for row_idx, nid in enumerate(nids):
+            n_data = nodes.get(nid, {})
+            if not isinstance(n_data, dict):
+                continue
+            ctype = str(n_data.get("class_type", "Node"))
+            meta = n_data.get("_meta", {})
+            title = meta.get("title") if isinstance(meta, dict) else None
+            title = title or ctype
+            is_aux = nid in hidden_set
+
+            inputs = n_data.get("inputs", {}) if isinstance(n_data.get("inputs"), dict) else {}
+            literals = []
+            linked_inputs = []
+
+            for k, v in inputs.items():
+                if isinstance(v, (list, tuple)) and len(v) >= 2:
+                    src_id = str(v[0])
+                    src_slot = int(v[1]) if str(v[1]).isdigit() else 0
+                    linked_inputs.append({
+                        "name": k,
+                        "sourceId": src_id,
+                        "sourceSlot": src_slot
+                    })
+                    
+                    k_lower = k.lower()
+                    data_type = "generic"
+                    if "model" in k_lower: data_type = "model"
+                    elif "clip" in k_lower or "conditioning" in k_lower or "prompt" in k_lower: data_type = "clip"
+                    elif "vae" in k_lower: data_type = "vae"
+                    elif "latent" in k_lower: data_type = "latent"
+                    elif "image" in k_lower or "mask" in k_lower: data_type = "image"
+                    elif "video" in k_lower or "audio" in k_lower: data_type = "media"
+
+                    graph_edges.append({
+                        "id": f"e_{src_id}_{src_slot}->{nid}_{k}",
+                        "from": src_id,
+                        "fromSlot": src_slot,
+                        "to": nid,
+                        "toParam": k,
+                        "dataType": data_type,
+                        "isAuxiliary": is_aux or (src_id in hidden_set)
+                    })
+                else:
+                    ftype = "str"
+                    if isinstance(v, bool): ftype = "bool"
+                    elif isinstance(v, int): ftype = "int"
+                    elif isinstance(v, float): ftype = "float"
+                    literals.append({
+                        "name": k,
+                        "value": v,
+                        "type": ftype
+                    })
+
+            outputs = []
+            slots_used = {slot for slot, _, _ in downstream_refs.get(nid, [])}
+            if not slots_used:
+                slots_used = {0}
+            for s in sorted(slots_used):
+                outputs.append({"slot": s, "name": f"OUT {s}" if s > 0 else "OUT"})
+
+            ctype_lower = ctype.lower()
+            category = "other"
+            if any(w in ctype_lower for w in ["load", "loader", "checkpoint", "lora"]): category = "loader"
+            elif any(w in ctype_lower for w in ["clip", "text", "prompt"]): category = "prompt"
+            elif any(w in ctype_lower for w in ["sampler", "ksampler", "scheduler"]): category = "sampler"
+            elif any(w in ctype_lower for w in ["latent", "resize", "scale", "crop", "image"]): category = "latent"
+            elif any(w in ctype_lower for w in ["save", "preview", "output"]): category = "output"
+
+            init_x = depth * (NODE_WIDTH + COL_GAP) + 60
+            init_y = row_idx * 290 + 60
+
+            graph_nodes.append({
+                "id": str(nid),
+                "class_type": ctype,
+                "title": title,
+                "category": category,
+                "isAuxiliary": is_aux,
+                "x": init_x,
+                "y": init_y,
+                "width": NODE_WIDTH,
+                "literals": literals,
+                "linkedInputs": linked_inputs,
+                "outputs": outputs
+            })
+
+    return {
+        "nodes": graph_nodes,
+        "edges": graph_edges
+    }
+
 def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
     """对 ComfyUI 节点结构做深度动态解析，提取提示词、尺寸、采样器、参考图视频、以及全节点可调项"""
     prompt_nodes = []

@@ -1,4 +1,4 @@
-const { createApp, ref, computed, onMounted, onUnmounted } = Vue;
+const { createApp, ref, computed, onMounted, onUnmounted, nextTick } = Vue;
 
 createApp({
   setup() {
@@ -208,6 +208,297 @@ createApp({
     const originalDefaults = ref({});
     const showAllNodes = ref(false);
     const allNodesSearch = ref('');
+
+    // ================= 工作流配置双模式: 简易参数面板 vs 可视化节点画布 =================
+    const paramMode = ref('form'); // 'form' | 'canvas'
+    const visualGraph = ref({ nodes: [], edges: [] });
+    const hiddenAuxiliaryNodeIds = ref([]);
+    const canvasViewport = ref(null);
+    const canvasPan = ref({ x: 40, y: 40 });
+    const canvasZoom = ref(0.75);
+    const canvasHideAuxiliary = ref(true); // 默认开启：视觉屏蔽静音占位等系统辅助节点
+    const canvasSearch = ref('');
+    const canvasExpanded = ref(false);
+    const selectedCanvasNodeId = ref('');
+    let isDraggingCanvas = false;
+    let canvasDragStart = { x: 0, y: 0 };
+    let draggedNode = null;
+    let nodeDragOffset = { x: 0, y: 0 };
+
+    const hiddenAuxiliaryCount = computed(() => {
+      return (hiddenAuxiliaryNodeIds.value || []).length;
+    });
+
+    const visualGraphNodesMap = computed(() => {
+      const map = {};
+      (visualGraph.value.nodes || []).forEach(n => {
+        map[String(n.id)] = n;
+      });
+      return map;
+    });
+
+    const visibleCanvasNodes = computed(() => {
+      let list = visualGraph.value.nodes || [];
+      if (canvasHideAuxiliary.value) {
+        list = list.filter(n => !n.isAuxiliary);
+      }
+      if (canvasSearch.value && canvasSearch.value.trim()) {
+        const q = canvasSearch.value.trim().toLowerCase();
+        list = list.filter(n => 
+          String(n.id).includes(q) || 
+          (n.title && n.title.toLowerCase().includes(q)) || 
+          (n.class_type && n.class_type.toLowerCase().includes(q))
+        );
+      }
+      return list;
+    });
+
+    const visibleCanvasEdges = computed(() => {
+      let list = visualGraph.value.edges || [];
+      if (canvasHideAuxiliary.value) {
+        list = list.filter(e => !e.isAuxiliary);
+      }
+      const visibleNodeIds = new Set(visibleCanvasNodes.value.map(n => String(n.id)));
+      return list.filter(e => visibleNodeIds.has(String(e.from)) && visibleNodeIds.has(String(e.to)));
+    });
+
+    // 计算平滑贝塞尔曲线连线
+    const getEdgePath = (edge) => {
+      const srcNode = visualGraphNodesMap.value[String(edge.from)];
+      const tgtNode = visualGraphNodesMap.value[String(edge.to)];
+      if (!srcNode || !tgtNode) return '';
+
+      const srcSlot = Number(edge.fromSlot) || 0;
+      const x1 = srcNode.x + (srcNode.width || 300);
+      const y1 = srcNode.y + 18 + srcSlot * 22;
+
+      const tgtInputs = tgtNode.linkedInputs || [];
+      const tgtIndex = Math.max(0, tgtInputs.findIndex(i => i.name === edge.toParam));
+      const x2 = tgtNode.x;
+      const y2 = tgtNode.y + 42 + tgtIndex * 24 + 12;
+
+      const dx = Math.max(50, Math.abs(x2 - x1) * 0.45);
+      return `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
+    };
+
+    // 端口连线色彩语义推断
+    const getEdgeColor = (edge) => {
+      if (selectedCanvasNodeId.value === String(edge.from) || selectedCanvasNodeId.value === String(edge.to)) {
+        return '#38bdf8'; // 高亮选中天蓝
+      }
+      const colors = {
+        model: '#c084fc',
+        clip: '#facc15',
+        vae: '#f472b6',
+        latent: '#fb923c',
+        image: '#38bdf8',
+        media: '#34d399',
+        generic: '#818cf8'
+      };
+      return colors[edge.dataType] || '#818cf8';
+    };
+
+    // 画布缩放与平移控制
+    const zoomIn = () => {
+      canvasZoom.value = Math.min(2.0, Number((canvasZoom.value + 0.12).toFixed(2)));
+    };
+    const zoomOut = () => {
+      canvasZoom.value = Math.max(0.2, Number((canvasZoom.value - 0.12).toFixed(2)));
+    };
+    const zoomReset = () => {
+      canvasZoom.value = 0.75;
+      canvasPan.value = { x: 40, y: 40 };
+    };
+    const zoomFit = () => {
+      const nodes = visibleCanvasNodes.value;
+      if (!nodes.length) return;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      nodes.forEach(n => {
+        minX = Math.min(minX, n.x);
+        minY = Math.min(minY, n.y);
+        maxX = Math.max(maxX, n.x + (n.width || 300));
+        maxY = Math.max(maxY, n.y + 360);
+      });
+      const width = maxX - minX;
+      const height = maxY - minY;
+      const containerW = canvasViewport.value?.clientWidth || 800;
+      const containerH = canvasViewport.value?.clientHeight || 600;
+      const zoomX = (containerW - 80) / Math.max(width, 100);
+      const zoomY = (containerH - 80) / Math.max(height, 100);
+      const targetZoom = Math.min(1.0, Math.max(0.25, Math.min(zoomX, zoomY)));
+      canvasZoom.value = Number(targetZoom.toFixed(2));
+      canvasPan.value = {
+        x: Math.round((containerW - width * targetZoom) / 2 - minX * targetZoom),
+        y: Math.round((containerH - height * targetZoom) / 2 - minY * targetZoom)
+      };
+    };
+
+    // 画布与节点拖拽交互
+    const onCanvasMouseDown = (e) => {
+      if (e.target.closest('.canvas-node-card')) return;
+      isDraggingCanvas = true;
+      canvasDragStart = {
+        x: e.clientX - canvasPan.value.x,
+        y: e.clientY - canvasPan.value.y
+      };
+    };
+
+    const onNodeMouseDown = (e, node) => {
+      selectedCanvasNodeId.value = String(node.id);
+      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) {
+        return;
+      }
+      draggedNode = node;
+      nodeDragOffset = {
+        x: (e.clientX - canvasPan.value.x) / canvasZoom.value - node.x,
+        y: (e.clientY - canvasPan.value.y) / canvasZoom.value - node.y
+      };
+      e.stopPropagation();
+    };
+
+    const onCanvasMouseMove = (e) => {
+      if (draggedNode) {
+        draggedNode.x = Math.round((e.clientX - canvasPan.value.x) / canvasZoom.value - nodeDragOffset.x);
+        draggedNode.y = Math.round((e.clientY - canvasPan.value.y) / canvasZoom.value - nodeDragOffset.y);
+      } else if (isDraggingCanvas) {
+        canvasPan.value.x = e.clientX - canvasDragStart.x;
+        canvasPan.value.y = e.clientY - canvasDragStart.y;
+      }
+    };
+
+    const onCanvasMouseUp = () => {
+      isDraggingCanvas = false;
+      draggedNode = null;
+    };
+
+    const onCanvasWheel = (e) => {
+      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+      const newZoom = Math.min(2.0, Math.max(0.2, canvasZoom.value * zoomFactor));
+      const rect = canvasViewport.value?.getBoundingClientRect();
+      if (!rect) return;
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      canvasPan.value.x = mouseX - (mouseX - canvasPan.value.x) * (newZoom / canvasZoom.value);
+      canvasPan.value.y = mouseY - (mouseY - canvasPan.value.y) * (newZoom / canvasZoom.value);
+      canvasZoom.value = Number(newZoom.toFixed(3));
+    };
+
+    const focusCanvasNode = (nid) => {
+      const n = visualGraphNodesMap.value[String(nid)];
+      if (!n) return;
+      selectedCanvasNodeId.value = String(nid);
+      const containerW = canvasViewport.value?.clientWidth || 800;
+      const containerH = canvasViewport.value?.clientHeight || 600;
+      canvasPan.value = {
+        x: Math.round(containerW / 2 - (n.x + (n.width || 300) / 2) * canvasZoom.value),
+        y: Math.round(containerH / 2 - (n.y + 150) * canvasZoom.value)
+      };
+    };
+
+    // 双向参数同步：表单 -> nodeOverrides
+    const syncFromFormToOverrides = () => {
+      dynamicPrompts.value.forEach(p => {
+        const pId = String(p.nodeId);
+        if (nodeOverrides.value[pId] && originalDefaults.value[pId]?.[p.fieldName] !== undefined) {
+          nodeOverrides.value[pId][p.fieldName] = p.currentValue;
+        }
+      });
+      if (dynamicSampler.value) {
+        const snId = String(dynamicSampler.value.nodeId);
+        if (nodeOverrides.value[snId]) {
+          for (const [k, val] of Object.entries(dynamicSampler.value.fields)) {
+            if (originalDefaults.value[snId]?.[k] !== undefined) {
+              nodeOverrides.value[snId][k] = typeof originalDefaults.value[snId][k] === 'number' ? Number(val) : val;
+            }
+          }
+        }
+      }
+      if (dynamicLatent.value) {
+        const lnId = String(dynamicLatent.value.nodeId);
+        if (nodeOverrides.value[lnId]) {
+          const f = dynamicLatent.value.fields;
+          if (f.width !== undefined && originalDefaults.value[lnId]?.width !== undefined) nodeOverrides.value[lnId]['width'] = Number(f.width);
+          if (f.height !== undefined && originalDefaults.value[lnId]?.height !== undefined) nodeOverrides.value[lnId]['height'] = Number(f.height);
+        }
+      }
+      dynamicQuality.value.forEach(q => {
+        const qId = String(q.nodeId);
+        if (nodeOverrides.value[qId] && originalDefaults.value[qId]?.[q.fieldName] !== undefined) {
+          nodeOverrides.value[qId][q.fieldName] = Number(q.currentValue);
+        }
+      });
+      dynamicImages.value.forEach(im => {
+        const imId = String(im.nodeId);
+        if (im.uploadedFileName && nodeOverrides.value[imId]) {
+          nodeOverrides.value[imId][im.fieldName] = im.uploadedFileName;
+        }
+      });
+      dynamicVideos.value.forEach(vm => {
+        const vmId = String(vm.nodeId);
+        if (vm.uploadedFileName && nodeOverrides.value[vmId]) {
+          nodeOverrides.value[vmId][vm.fieldName] = vm.uploadedFileName;
+        }
+      });
+      dynamicAudios.value.forEach(am => {
+        const amId = String(am.nodeId);
+        if (am.uploadedFileName && nodeOverrides.value[amId]) {
+          nodeOverrides.value[amId][am.fieldName] = am.uploadedFileName;
+        }
+      });
+    };
+
+    // 双向参数同步：nodeOverrides -> 表单
+    const syncFromOverridesToForm = () => {
+      dynamicPrompts.value.forEach(p => {
+        const pId = String(p.nodeId);
+        if (nodeOverrides.value[pId]?.[p.fieldName] !== undefined) {
+          p.currentValue = String(nodeOverrides.value[pId][p.fieldName]);
+        }
+      });
+      if (dynamicSampler.value) {
+        const snId = String(dynamicSampler.value.nodeId);
+        if (nodeOverrides.value[snId]) {
+          for (const k of Object.keys(dynamicSampler.value.fields)) {
+            if (nodeOverrides.value[snId][k] !== undefined) {
+              dynamicSampler.value.fields[k] = nodeOverrides.value[snId][k];
+            }
+          }
+        }
+      }
+      if (dynamicLatent.value) {
+        const lnId = String(dynamicLatent.value.nodeId);
+        if (nodeOverrides.value[lnId]) {
+          if (nodeOverrides.value[lnId]['width'] !== undefined) dynamicLatent.value.fields.width = Number(nodeOverrides.value[lnId]['width']);
+          if (nodeOverrides.value[lnId]['height'] !== undefined) dynamicLatent.value.fields.height = Number(nodeOverrides.value[lnId]['height']);
+        }
+      }
+      dynamicQuality.value.forEach(q => {
+        const qId = String(q.nodeId);
+        if (nodeOverrides.value[qId]?.[q.fieldName] !== undefined) {
+          q.currentValue = Number(nodeOverrides.value[qId][q.fieldName]);
+        }
+      });
+    };
+
+    const setParamMode = (mode) => {
+      if (mode === 'form') {
+        syncFromOverridesToForm();
+        paramMode.value = 'form';
+      } else {
+        syncFromFormToOverrides();
+        paramMode.value = 'canvas';
+        nextTick(() => {
+          zoomFit();
+        });
+      }
+    };
+
+    const toggleCanvasExpanded = () => {
+      canvasExpanded.value = !canvasExpanded.value;
+      nextTick(() => {
+        zoomFit();
+      });
+    };
 
     // 现代化交互通知系统 (Toast)
     const toastState = ref({
@@ -461,6 +752,24 @@ createApp({
         overrides[node.nodeId] = { ...node.fields };
         defaults[node.nodeId] = { ...node.fields };
       });
+
+      // 覆盖/补充画布上的全部节点（包含系统辅助节点与非标节点），保障画布实时双向绑定与防空指针崩溃
+      if (data.visualGraph?.nodes) {
+        data.visualGraph.nodes.forEach(node => {
+          const nid = String(node.id);
+          if (!overrides[nid]) overrides[nid] = {};
+          if (!defaults[nid]) defaults[nid] = {};
+          (node.literals || []).forEach(lit => {
+            if (overrides[nid][lit.name] === undefined) {
+              overrides[nid][lit.name] = lit.value;
+            }
+            if (defaults[nid][lit.name] === undefined) {
+              defaults[nid][lit.name] = lit.value;
+            }
+          });
+        });
+      }
+
       nodeOverrides.value = overrides;
       originalDefaults.value = defaults;
       allEditableNodes.value = data.dynamicSchema.allEditableNodes || [];
@@ -539,6 +848,17 @@ createApp({
         defaultValue: qm.defaultValue,
         currentValue: qm.defaultValue
       }));
+
+      // 7. 存储可视化画布拓扑与系统辅助屏蔽清单
+      if (data.visualGraph) {
+        visualGraph.value = data.visualGraph;
+      }
+      hiddenAuxiliaryNodeIds.value = data.hiddenAuxiliaryNodeIds || [];
+      if (paramMode.value === 'canvas') {
+        nextTick(() => {
+          zoomFit();
+        });
+      }
     };
 
     // 动态拉取指定工作流在云端的真实节点拓扑
@@ -1925,6 +2245,35 @@ createApp({
       allNodesSearch,
       filteredAllNodes,
       modifiedParamsCount,
+      // 双模式配置与可视化节点画布
+      paramMode,
+      setParamMode,
+      visualGraph,
+      hiddenAuxiliaryNodeIds,
+      hiddenAuxiliaryCount,
+      canvasViewport,
+      canvasPan,
+      canvasZoom,
+      canvasHideAuxiliary,
+      canvasSearch,
+      canvasExpanded,
+      toggleCanvasExpanded,
+      nextTick,
+      selectedCanvasNodeId,
+      visibleCanvasNodes,
+      visibleCanvasEdges,
+      getEdgePath,
+      getEdgeColor,
+      zoomIn,
+      zoomOut,
+      zoomReset,
+      zoomFit,
+      onCanvasMouseDown,
+      onNodeMouseDown,
+      onCanvasMouseMove,
+      onCanvasMouseUp,
+      onCanvasWheel,
+      focusCanvasNode,
       workflowIssues,
       applyRecommendedFixes,
       newWf,
