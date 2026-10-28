@@ -19,9 +19,15 @@ class KeyPoolManager:
         cfg = load_config()
         return cfg.get("apiKeys", [])
 
-    async def acquire_free_key(self, task_id: str, exclude_key_ids: Optional[Set[str]] = None) -> Optional[Tuple[str, str, str]]:
+    async def acquire_free_key(
+        self, 
+        task_id: str, 
+        exclude_key_ids: Optional[Set[str]] = None,
+        preferred_key_id: Optional[str] = None
+    ) -> Optional[Tuple[str, str, str]]:
         """
         原子挑选一个【空闲且健康】的 API Key。
+        若传入 preferred_key_id，优先分配该生效密钥（如当前用户或系统全局选中的生效 Key）。
         若传入 exclude_key_ids，则直接跳过指定的故障 Key（用于静默无感自动故障转移）。
         """
         async with self._lock:
@@ -30,6 +36,11 @@ class KeyPoolManager:
                 return None
             
             excludes = exclude_key_ids or set()
+            
+            # 若指定了优选生效 Key，将其置顶优先分配
+            if preferred_key_id:
+                all_keys = sorted(all_keys, key=lambda k: 0 if k.get("id") == preferred_key_id else 1)
+
             for k in all_keys:
                 kid = k.get("id")
                 if kid in excludes:
@@ -51,10 +62,20 @@ class KeyPoolManager:
                         return kid, raw, k.get("name", "未命名密钥")
             return None
 
-    async def wait_for_free_key(self, task_id: str, timeout: float = 300.0, exclude_key_ids: Optional[Set[str]] = None) -> Optional[Tuple[str, str, str]]:
+    async def wait_for_free_key(
+        self, 
+        task_id: str, 
+        timeout: float = 300.0, 
+        exclude_key_ids: Optional[Set[str]] = None,
+        preferred_key_id: Optional[str] = None
+    ) -> Optional[Tuple[str, str, str]]:
         start = time.time()
         while time.time() - start < timeout:
-            key_info = await self.acquire_free_key(task_id, exclude_key_ids=exclude_key_ids)
+            key_info = await self.acquire_free_key(
+                task_id, 
+                exclude_key_ids=exclude_key_ids,
+                preferred_key_id=preferred_key_id
+            )
             if key_info:
                 return key_info
             

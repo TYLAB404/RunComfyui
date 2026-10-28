@@ -454,7 +454,9 @@ async def dispatch_queued_task(
             if local_task_id in CANCELLED_TASKS:
                 return
 
-            key_info = await KEY_POOL_MANAGER.wait_for_free_key(local_task_id, timeout=15.0, exclude_key_ids=excluded)
+            cfg = load_config()
+            preferred_key_id = cfg.get("activeKeyId")
+            key_info = await KEY_POOL_MANAGER.wait_for_free_key(local_task_id, timeout=15.0, exclude_key_ids=excluded, preferred_key_id=preferred_key_id)
             
             if local_task_id in CANCELLED_TASKS:
                 if key_info:

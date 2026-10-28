@@ -125,10 +125,13 @@ async def generate_task(
         assigned_key_id = None
         assigned_api_key = None
 
+        cfg = load_config()
+        preferred_key_id = cfg.get("activeKeyId")
+
         while True:
-            key_info = await KEY_POOL_MANAGER.acquire_free_key(temp_id, exclude_key_ids=excluded_key_ids)
+            key_info = await KEY_POOL_MANAGER.acquire_free_key(temp_id, exclude_key_ids=excluded_key_ids, preferred_key_id=preferred_key_id)
             if not key_info:
-                key_info = await KEY_POOL_MANAGER.wait_for_free_key(temp_id, timeout=1.5, exclude_key_ids=excluded_key_ids)
+                key_info = await KEY_POOL_MANAGER.wait_for_free_key(temp_id, timeout=1.5, exclude_key_ids=excluded_key_ids, preferred_key_id=preferred_key_id)
 
             all_keys = KEY_POOL_MANAGER._get_all_keys()
             remaining_healthy = [
