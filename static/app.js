@@ -949,7 +949,7 @@ createApp({
         const res = await authFetch('/api/tasks');
         const data = await res.json();
         if (Array.isArray(data)) {
-          const newHash = data.map(t => `${t.taskId}:${t.status}:${(t.outputs||[]).length}`).join('|');
+          const newHash = data.map(t => `${t.taskId}:${t.status}:${t.duration}:${t.progressPercent}:${t.currentStep}:${t.statusText}:${t.updatedAt}:${(t.outputs||[]).length}`).join('|');
           if (newHash !== lastTasksHash) {
             lastTasksHash = newHash;
             tasks.value = data;
@@ -2143,6 +2143,7 @@ createApp({
     };
 
     let galleryTimer = null;
+    let tickTimer = null;
     onMounted(async () => {
       await fetchPublicConfig();
       await fetchCurrentUser();
@@ -2150,6 +2151,16 @@ createApp({
       await fetchConfig();
       await refreshTasks();
       await refreshGallery();
+
+      // 本地秒级平滑跳秒心跳：为运行中和排队中的任务实时递增已等待秒数，彻底消除网络轮询间歇的停滞感
+      tickTimer = setInterval(() => {
+        if (document.hidden) return;
+        (tasks.value || []).forEach(t => {
+          if (t.status === 'RUNNING' || t.status === 'QUEUED') {
+            t.duration = (t.duration || 0) + 1;
+          }
+        });
+      }, 1000);
 
       // 智能自适应静默轮询：
       // 1. 标签页处于后台静默或切换到其他窗口时自动跳过轮询，彻底释放浏览器线程
@@ -2171,6 +2182,7 @@ createApp({
     onUnmounted(() => {
       if (pollingTimer) clearInterval(pollingTimer);
       if (galleryTimer) clearInterval(galleryTimer);
+      if (tickTimer) clearInterval(tickTimer);
       if (userEventSource) {
         try { userEventSource.close(); } catch(e){}
         userEventSource = null;
