@@ -38,6 +38,7 @@ class GenerateRequest(BaseModel):
     negativePrompt: Optional[str] = ""
     nodeInfoList: Optional[List[Dict[str, Any]]] = []
     taskType: Optional[str] = "Standard"
+    instanceType: Optional[str] = None
     customPrompt: Optional[Dict[str, Any]] = None
 
 
@@ -127,6 +128,19 @@ async def generate_task(
 
         cfg = load_config()
         preferred_key_id = cfg.get("activeKeyId")
+
+        # 映射通道类型到 RunningHub 官方 OpenAPI 规范 instanceType：
+        # Standard 标准极速 -> plus (48GB 极速独享显存，免排队，与网页端一模一样)
+        # Lite 经济模式 -> default (24GB 基础共享算力)
+        instance_type = "plus"
+        if req.instanceType:
+            instance_type = req.instanceType.lower()
+        elif task_type == "Lite":
+            instance_type = "default"
+
+        matched_wf = next((w for w in cfg.get("workflows", []) if str(w.get("id")) == str(req.workflowId)), None)
+        if matched_wf and matched_wf.get("instanceType"):
+            instance_type = matched_wf["instanceType"]
 
         while True:
             key_info = await KEY_POOL_MANAGER.acquire_free_key(temp_id, exclude_key_ids=excluded_key_ids, preferred_key_id=preferred_key_id)
@@ -225,7 +239,7 @@ async def generate_task(
                 payload = {
                     "apiKey": api_key,
                     "workflowId": str(req.workflowId),
-                    "taskType": task_type
+                    "instanceType": instance_type
                 }
                 if req.nodeInfoList:
                     payload["nodeInfoList"] = req.nodeInfoList
@@ -248,7 +262,12 @@ async def generate_task(
                 msg = data.get("msg") or "云端未知异常"
 
                 if code != 0:
-                    if is_key_fatal_error(code, msg):
+                    if code == 421 or "TASK_QUEUE_MAXED" in str(msg):
+                        print(f"[Key Queue Full] Key {key_id} ({key_name}) cloud queue maxed (421). Silently failing over to next free key...")
+                        await KEY_POOL_MANAGER.release_key(key_id, temp_id)
+                        excluded_key_ids.add(key_id)
+                        continue
+                    elif is_key_fatal_error(code, msg):
                         print(f"[Silent Failover] Key {key_id} ({key_name}) fatal error [{code}]: {msg}. Isolating and trying next key...")
                         await KEY_POOL_MANAGER.mark_key_unhealthy(key_id, f"OpenAPI返回致命拒绝 [{code}]: {msg}")
                         excluded_key_ids.add(key_id)
@@ -274,7 +293,7 @@ async def generate_task(
             "taskId": str(real_task_id),
             "workflowId": str(req.workflowId),
             "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
-            "taskType": "Proxy-Native" if is_custom_proxy else task_type,
+            "taskType": "Proxy-Native" if is_custom_proxy else ("Plus" if instance_type == "plus" else instance_type.capitalize()),
             "userId": user_id,
             "username": user_name,
             "positivePrompt": req.positivePrompt or "",
