@@ -943,6 +943,13 @@
                     <i data-lucide="rotate-cw" :class="{'animate-spin': workflowsLoading}" class="w-3.5 h-3.5"></i>
                     <span>{{ workflowsLoading ? '刷新中...' : '刷新' }}</span>
                   </button>
+
+                  <button 
+                    @click="openAddWorkflowModal"
+                    class="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-xs font-bold text-white shadow-md shadow-indigo-600/20 transition flex items-center gap-1.5">
+                    <i data-lucide="plus-circle" class="w-4 h-4"></i>
+                    <span>录入/上传工作流</span>
+                  </button>
                 </div>
               </div>
 
@@ -963,12 +970,20 @@
                   <tbody class="divide-y divide-slate-800/60">
                     <tr v-for="wf in filteredWorkflows" :key="wf.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
-                        <div class="font-bold text-white flex items-center gap-1.5">
-                          <span>{{ wf.name }}</span>
-                          <span v-if="wf.isPinned" class="text-amber-400 text-xs" title="当前已置顶">📌</span>
+                        <div class="flex items-center gap-2.5">
+                          <img v-if="wf.coverImage" :src="wf.coverImage" class="w-9 h-9 rounded-lg object-cover border border-slate-800 flex-shrink-0" alt="cover" />
+                          <div v-else class="w-9 h-9 rounded-lg bg-slate-800/80 border border-slate-700 flex items-center justify-center text-slate-500 flex-shrink-0">
+                            <i data-lucide="image" class="w-4 h-4"></i>
+                          </div>
+                          <div class="min-w-0">
+                            <div class="font-bold text-white flex items-center gap-1.5">
+                              <span class="truncate">{{ wf.name }}</span>
+                              <span v-if="wf.isPinned" class="text-amber-400 text-xs flex-shrink-0" title="当前已置顶">📌</span>
+                            </div>
+                            <div class="text-[10px] text-slate-500 font-mono mt-0.5 truncate">{{ wf.id }}</div>
+                            <div v-if="wf.description" class="text-[11px] text-slate-400 truncate max-w-[240px] mt-0.5">{{ wf.description }}</div>
+                          </div>
                         </div>
-                        <div class="text-[10px] text-slate-500 font-mono mt-0.5">{{ wf.id }}</div>
-                        <div v-if="wf.description" class="text-[11px] text-slate-400 truncate max-w-[240px] mt-0.5">{{ wf.description }}</div>
                       </td>
                       <td class="py-3 px-3">
                         <span v-if="wf.isOfficial" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/15 text-indigo-300 border border-indigo-500/30">
@@ -1005,6 +1020,14 @@
                       </td>
                       <td class="py-3 px-3 text-right">
                         <div class="flex items-center justify-end gap-1.5">
+                          <!-- 编辑工作流 -->
+                          <button 
+                            @click="openEditWorkflowModal(wf)" 
+                            title="编辑工作流配置"
+                            class="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 transition">
+                            <i data-lucide="edit-3" class="w-3.5 h-3.5"></i>
+                          </button>
+
                           <!-- 设为官方 / 取消官方 -->
                           <button 
                             @click="adminToggleWorkflowOfficial(wf.id)" 
@@ -2063,6 +2086,268 @@
       </div>
     </div>
 
+    <!-- 工作流录入 / 上传 / 编辑模态弹窗 Workflow Modal -->
+    <div v-if="workflowModal.show" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 space-y-4 shadow-2xl my-8 max-h-[90vh] flex flex-col">
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3 flex-shrink-0">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+              <i :data-lucide="workflowModal.isEdit ? 'edit-3' : 'plus-circle'" class="w-4 h-4"></i>
+            </div>
+            <div>
+              <h3 class="font-bold text-white text-base">{{ workflowModal.isEdit ? '编辑工作流配置' : '录入 / 上传工作流' }}</h3>
+              <p class="text-xs text-slate-400 mt-0.5">支持云端 WorkflowId 探测同步或直接上传 ComfyUI JSON</p>
+            </div>
+          </div>
+          <button @click="closeWorkflowModal" class="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <!-- Scrollable Body -->
+        <div class="space-y-4 overflow-y-auto pr-1 flex-1 text-xs">
+          <!-- 录入模式切换 (仅新增模式展示) -->
+          <div v-if="!workflowModal.isEdit" class="flex p-1 bg-slate-950 rounded-xl border border-slate-800">
+            <button 
+              type="button"
+              @click="workflowModal.sourceType = 'cloud'"
+              :class="workflowModal.sourceType === 'cloud' ? 'bg-indigo-600 text-white font-bold shadow' : 'text-slate-400 hover:text-slate-200'"
+              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1.5">
+              <i data-lucide="cloud" class="w-3.5 h-3.5"></i>
+              <span>云端工作流 ID 同步</span>
+            </button>
+            <button 
+              type="button"
+              @click="workflowModal.sourceType = 'json'"
+              :class="workflowModal.sourceType === 'json' ? 'bg-indigo-600 text-white font-bold shadow' : 'text-slate-400 hover:text-slate-200'"
+              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1.5">
+              <i data-lucide="file-code" class="w-3.5 h-3.5"></i>
+              <span>上传本地 JSON 工作流</span>
+            </button>
+          </div>
+
+          <!-- Method A: 云端 ID 快速导入与在线探测 -->
+          <div v-if="!workflowModal.isEdit && workflowModal.sourceType === 'cloud'" class="p-3.5 bg-slate-950 rounded-xl border border-indigo-500/20 space-y-2.5">
+            <label class="text-slate-300 font-medium block">
+              RunningHub 云端 Workflow ID <span class="text-rose-400">*</span>
+            </label>
+            <div class="flex gap-2">
+              <input 
+                type="text" 
+                v-model="workflowModal.form.id" 
+                placeholder="例如: 1982348572847528934" 
+                class="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-indigo-500">
+              <button 
+                type="button"
+                @click="inspectCloudWorkflowInModal" 
+                :disabled="workflowModal.inspecting || !workflowModal.form.id.trim()"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-medium transition flex items-center gap-1.5 flex-shrink-0">
+                <span v-if="workflowModal.inspecting" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <i v-else data-lucide="search" class="w-3.5 h-3.5"></i>
+                <span>{{ workflowModal.inspecting ? '探测中...' : '在线探测校验' }}</span>
+              </button>
+            </div>
+            <div v-if="workflowModal.inspectResult && workflowModal.sourceType === 'cloud'" class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                <span>探测成功！共解析出 <strong>{{ workflowModal.inspectResult.totalNodes }}</strong> 个节点参数</span>
+              </div>
+              <span class="text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded text-emerald-300 font-mono">Ready</span>
+            </div>
+            <p class="text-[11px] text-slate-500 leading-normal">
+              💡 提示：输入你在 RunningHub 网页端的工作流 ID，点击探测后系统将自动调用 OpenAPI 探测节点拓扑并预填名称。
+            </p>
+          </div>
+
+          <!-- Method B: 本地 ComfyUI JSON 文件导入 -->
+          <div v-if="!workflowModal.isEdit && workflowModal.sourceType === 'json'" class="p-3.5 bg-slate-950 rounded-xl border border-indigo-500/20 space-y-2.5">
+            <label class="text-slate-300 font-medium block">
+              上传 ComfyUI 工作流 JSON 文件 <span class="text-rose-400">*</span>
+            </label>
+            <input 
+              type="file" 
+              ref="workflowFileInput" 
+              accept=".json" 
+              @change="handleWorkflowJsonFile" 
+              class="hidden">
+            <div 
+              @click="triggerWorkflowJsonSelect"
+              class="border-2 border-dashed border-slate-700 hover:border-indigo-500/70 rounded-xl p-5 text-center cursor-pointer transition bg-slate-900/60 hover:bg-slate-900 flex flex-col items-center justify-center gap-2">
+              <div class="w-10 h-10 rounded-full bg-indigo-500/15 flex items-center justify-center text-indigo-400">
+                <span v-if="workflowModal.parsingJson" class="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
+                <i v-else data-lucide="upload-cloud" class="w-5 h-5"></i>
+              </div>
+              <div>
+                <p class="text-slate-300 font-medium">{{ workflowModal.parsingJson ? '正在解析工作流 JSON 拓扑...' : '点击或拖拽上传 ComfyUI API JSON 文件' }}</p>
+                <p class="text-[11px] text-slate-500 mt-0.5">支持 ComfyUI WebUI 导出的 API 格式或工程格式</p>
+              </div>
+            </div>
+            <div v-if="workflowModal.inspectResult && workflowModal.sourceType === 'json'" class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                <span>解析成功！包含 <strong>{{ workflowModal.inspectResult.totalNodes }}</strong> 个节点</span>
+              </div>
+              <span class="text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded text-emerald-300 font-mono">{{ workflowModal.form.id }}</span>
+            </div>
+          </div>
+
+          <!-- 基本信息表单 -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+            <div>
+              <label class="text-slate-300 font-medium block mb-1">
+                工作流名称 <span class="text-rose-400">*</span>
+              </label>
+              <input 
+                type="text" 
+                v-model="workflowModal.form.name" 
+                placeholder="例如: FLUX.1 真实感写真生成" 
+                class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <div>
+              <label class="text-slate-300 font-medium block mb-1">
+                工作流 ID / 标识码 <span class="text-rose-400">*</span>
+              </label>
+              <input 
+                type="text" 
+                v-model="workflowModal.form.id" 
+                :disabled="workflowModal.isEdit"
+                placeholder="工作流唯一 ID" 
+                class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed">
+            </div>
+
+            <div>
+              <label class="text-slate-300 font-medium block mb-1">
+                所属分类标签
+              </label>
+              <input 
+                type="text" 
+                v-model="workflowModal.form.category" 
+                list="workflow-category-options"
+                placeholder="选择或输入分类" 
+                class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+              <datalist id="workflow-category-options">
+                <option value="官方预设"></option>
+                <option value="文生图"></option>
+                <option value="图生图"></option>
+                <option value="AI视频"></option>
+                <option value="人像写真"></option>
+                <option value="动漫插画"></option>
+                <option value="高清放大"></option>
+                <option value="声音克隆"></option>
+                <option value="三维建模"></option>
+              </datalist>
+            </div>
+
+            <div>
+              <label class="text-slate-300 font-medium block mb-1">
+                单次生图耗币点数 (Points)
+              </label>
+              <input 
+                type="number" 
+                min="0"
+                v-model.number="workflowModal.form.pointsCost" 
+                placeholder="5" 
+                class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-indigo-500">
+            </div>
+
+            <div class="md:col-span-2">
+              <label class="text-slate-300 font-medium block mb-1">
+                云端 GPU 算力档位 (Instance Type)
+              </label>
+              <select 
+                v-model="workflowModal.form.instanceType"
+                class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white focus:outline-none focus:border-indigo-500">
+                <option value="plus">🚀 极速专享 48GB (秒级免排队调度 - 推荐)</option>
+                <option value="default">⚡ 标准算力 24GB (普通公共并发队列)</option>
+                <option value="ultra">🔥 旗舰算力 84GB (超大显存特大模型专享)</option>
+              </select>
+              <p class="text-[11px] text-slate-500 mt-1">
+                配置为【极速专享 48GB】将直连 RunningHub 秒级免排队通道，彻底消除长时间死等排队现象。
+              </p>
+            </div>
+
+            <div class="md:col-span-2">
+              <label class="text-slate-300 font-medium block mb-1">
+                工作流封面图片 (URL 或本地上传)
+              </label>
+              <input 
+                type="file" 
+                ref="workflowCoverInput" 
+                accept="image/*" 
+                @change="handleCoverFileUpload" 
+                class="hidden">
+              <div class="flex gap-2">
+                <input 
+                  type="text" 
+                  v-model="workflowModal.form.coverImage" 
+                  placeholder="https://... 或点击右侧上传" 
+                  class="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500">
+                <button 
+                  type="button"
+                  @click="triggerCoverUpload" 
+                  :disabled="workflowModal.uploadingCover"
+                  class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl transition flex items-center gap-1.5 flex-shrink-0 border border-slate-700">
+                  <span v-if="workflowModal.uploadingCover" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <i v-else data-lucide="image" class="w-3.5 h-3.5"></i>
+                  <span>{{ workflowModal.uploadingCover ? '上传中...' : '本地上传' }}</span>
+                </button>
+              </div>
+              <div v-if="workflowModal.form.coverImage" class="mt-2 flex items-center gap-2">
+                <img :src="workflowModal.form.coverImage" class="w-16 h-16 object-cover rounded-lg border border-slate-800 shadow" alt="封面预览" />
+                <span class="text-[11px] text-slate-400">封面图片预览正常</span>
+              </div>
+            </div>
+
+            <div class="md:col-span-2">
+              <label class="text-slate-300 font-medium block mb-1">工作流描述 / 提示说明</label>
+              <textarea 
+                v-model="workflowModal.form.description" 
+                rows="2" 
+                placeholder="工作流的特色功能与推荐生图配置说明..." 
+                class="w-full bg-slate-950 border border-slate-700 rounded-xl p-2.5 text-white focus:outline-none focus:border-indigo-500"></textarea>
+            </div>
+          </div>
+
+          <!-- 状态开关选项 -->
+          <div class="p-3 bg-slate-950 rounded-xl border border-slate-800 grid grid-cols-1 md:grid-cols-3 gap-3">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="workflowModal.form.isOfficial" class="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700">
+              <span class="text-xs text-slate-300 font-medium">🌟 设为官方预设</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="workflowModal.form.isActive" class="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700">
+              <span class="text-xs text-slate-300 font-medium">✅ 上架展示 (前台可见)</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="workflowModal.form.isPinned" class="w-4 h-4 rounded text-indigo-600 bg-slate-900 border-slate-700">
+              <span class="text-xs text-slate-300 font-medium">📌 置顶推荐</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800 flex-shrink-0">
+          <button 
+            type="button"
+            @click="closeWorkflowModal" 
+            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs transition">
+            取消
+          </button>
+          <button 
+            type="button"
+            @click="submitWorkflowForm" 
+            :disabled="workflowModal.saving || !workflowModal.form.name.trim() || !workflowModal.form.id.trim()"
+            class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30 transition flex items-center gap-1.5">
+            <span v-if="workflowModal.saving" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+            <i v-else data-lucide="check" class="w-4 h-4"></i>
+            <span>{{ workflowModal.saving ? '正在保存...' : (workflowModal.isEdit ? '保存修改' : '确认录入并发布') }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- 全局操作确认模态弹窗 Confirm Modal (替代浏览器原生黑框 confirm) -->
       <div 
         v-if="confirmModal.show" 
@@ -2625,6 +2910,248 @@
             }
           } catch (e) {
             showToastNotification('删除失败', 'error');
+          }
+        };
+
+        const workflowModal = ref({
+          show: false,
+          isEdit: false,
+          sourceType: 'cloud',
+          inspecting: false,
+          uploadingCover: false,
+          parsingJson: false,
+          inspectResult: null,
+          saving: false,
+          form: {
+            id: '',
+            name: '',
+            category: '官方预设',
+            pointsCost: 5,
+            instanceType: 'plus',
+            coverImage: '',
+            description: '',
+            isOfficial: true,
+            isActive: true,
+            isPinned: false,
+            customPrompt: null,
+            defaultParams: null
+          }
+        });
+        const workflowFileInput = ref(null);
+        const workflowCoverInput = ref(null);
+
+        const openAddWorkflowModal = () => {
+          workflowModal.value = {
+            show: true,
+            isEdit: false,
+            sourceType: 'cloud',
+            inspecting: false,
+            uploadingCover: false,
+            parsingJson: false,
+            inspectResult: null,
+            saving: false,
+            form: {
+              id: '',
+              name: '',
+              category: '官方预设',
+              pointsCost: 5,
+              instanceType: 'plus',
+              coverImage: '',
+              description: '',
+              isOfficial: true,
+              isActive: true,
+              isPinned: false,
+              customPrompt: null,
+              defaultParams: null
+            }
+          };
+          refreshIcons();
+        };
+
+        const openEditWorkflowModal = (wf) => {
+          workflowModal.value = {
+            show: true,
+            isEdit: true,
+            sourceType: 'cloud',
+            inspecting: false,
+            uploadingCover: false,
+            parsingJson: false,
+            inspectResult: null,
+            saving: false,
+            form: {
+              id: wf.id || '',
+              name: wf.name || '',
+              category: wf.category || '官方预设',
+              pointsCost: wf.pointsCost !== undefined ? wf.pointsCost : 5,
+              instanceType: wf.instanceType || 'plus',
+              coverImage: wf.coverImage || '',
+              description: wf.description || '',
+              isOfficial: wf.isOfficial !== undefined ? wf.isOfficial : true,
+              isActive: wf.isActive !== undefined ? wf.isActive : true,
+              isPinned: wf.isPinned !== undefined ? wf.isPinned : false,
+              customPrompt: wf.customPrompt || null,
+              defaultParams: wf.defaultParams || null
+            }
+          };
+          refreshIcons();
+        };
+
+        const closeWorkflowModal = () => {
+          workflowModal.value.show = false;
+        };
+
+        const inspectCloudWorkflowInModal = async () => {
+          const wfId = workflowModal.value.form.id.trim();
+          if (!wfId) {
+            showToastNotification('请先输入云端工作流 ID', 'error');
+            return;
+          }
+          workflowModal.value.inspecting = true;
+          try {
+            const res = await authFetch('/api/workflows/inspect', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ workflowId: wfId })
+            });
+            const data = await res.json();
+            if (res.ok && data.status === 'ok') {
+              workflowModal.value.inspectResult = data;
+              if (!workflowModal.value.form.name) {
+                workflowModal.value.form.name = 'RunningHub 工作流 ' + wfId;
+              }
+              showToastNotification(`探测成功，识别出 ${data.totalNodes} 个节点拓扑`, 'success');
+              refreshIcons();
+            } else {
+              showToastNotification(data.detail || '探测工作流失败，请核对工作流 ID', 'error');
+            }
+          } catch (e) {
+            showToastNotification('探测异常: ' + e.message, 'error');
+          } finally {
+            workflowModal.value.inspecting = false;
+            refreshIcons();
+          }
+        };
+
+        const triggerWorkflowJsonSelect = () => {
+          workflowFileInput.value?.click();
+        };
+
+        const handleWorkflowJsonFile = async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          workflowModal.value.parsingJson = true;
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await authFetch('/api/workflows/parse_json', {
+              method: 'POST',
+              body: formData
+            });
+            const data = await res.json();
+            if (res.ok && data.status === 'ok') {
+              workflowModal.value.inspectResult = data;
+              workflowModal.value.form.customPrompt = data.customPrompt || data.rawPrompt;
+              if (!workflowModal.value.form.id) {
+                workflowModal.value.form.id = 'wf_json_' + Date.now().toString(36);
+              }
+              if (!workflowModal.value.form.name) {
+                const baseName = file.name.replace(/\.[^/.]+$/, "");
+                workflowModal.value.form.name = baseName || '自定义本地工作流';
+              }
+              showToastNotification(`JSON 解析成功！解析出 ${data.totalNodes} 个节点`, 'success');
+              refreshIcons();
+            } else {
+              showToastNotification(data.detail || '工作流 JSON 解析失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('解析异常: ' + e.message, 'error');
+          } finally {
+            workflowModal.value.parsingJson = false;
+            if (e.target) e.target.value = '';
+            refreshIcons();
+          }
+        };
+
+        const triggerCoverUpload = () => {
+          workflowCoverInput.value?.click();
+        };
+
+        const handleCoverFileUpload = async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          workflowModal.value.uploadingCover = true;
+          try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await authFetch('/api/upload', {
+              method: 'POST',
+              body: formData
+            });
+            const data = await res.json();
+            if (res.ok && data.fileUrl) {
+              workflowModal.value.form.coverImage = data.fileUrl;
+              showToastNotification('封面图上传成功', 'success');
+              refreshIcons();
+            } else {
+              showToastNotification(data.detail || '封面图上传失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('上传异常: ' + e.message, 'error');
+          } finally {
+            workflowModal.value.uploadingCover = false;
+            if (e.target) e.target.value = '';
+            refreshIcons();
+          }
+        };
+
+        const submitWorkflowForm = async () => {
+          const form = workflowModal.value.form;
+          if (!form.id.trim()) {
+            showToastNotification('工作流 ID 不能为空', 'error');
+            return;
+          }
+          if (!form.name.trim()) {
+            showToastNotification('工作流名称不能为空', 'error');
+            return;
+          }
+          workflowModal.value.saving = true;
+          try {
+            const payload = {
+              id: form.id.trim(),
+              name: form.name.trim(),
+              category: form.category ? form.category.trim() : '官方预设',
+              pointsCost: Math.max(0, parseInt(form.pointsCost) || 0),
+              instanceType: form.instanceType || 'plus',
+              coverImage: form.coverImage || '',
+              description: form.description ? form.description.trim() : '',
+              isOfficial: Boolean(form.isOfficial),
+              isActive: Boolean(form.isActive),
+              isPinned: Boolean(form.isPinned)
+            };
+            if (form.customPrompt) {
+              payload.customPrompt = form.customPrompt;
+            }
+            if (form.defaultParams) {
+              payload.defaultParams = form.defaultParams;
+            }
+            const res = await authFetch('/api/workflows', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (res.ok && data.status === 'ok') {
+              showToastNotification(workflowModal.value.isEdit ? '工作流配置更新成功！' : '工作流已成功录入并发布！', 'success');
+              workflowModal.value.show = false;
+              await loadWorkflows();
+            } else {
+              showToastNotification(data.detail || '保存工作流失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('保存异常: ' + e.message, 'error');
+          } finally {
+            workflowModal.value.saving = false;
+            refreshIcons();
           }
         };
 
@@ -3684,6 +4211,18 @@
           adminToggleWorkflowPin,
           adminToggleWorkflowOfficial,
           adminDeleteWorkflow,
+          workflowModal,
+          workflowFileInput,
+          workflowCoverInput,
+          openAddWorkflowModal,
+          openEditWorkflowModal,
+          closeWorkflowModal,
+          inspectCloudWorkflowInModal,
+          triggerWorkflowJsonSelect,
+          handleWorkflowJsonFile,
+          triggerCoverUpload,
+          handleCoverFileUpload,
+          submitWorkflowForm,
           broadcastForm,
           maintenanceForm,
           saveBroadcast,
