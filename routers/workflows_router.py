@@ -30,6 +30,9 @@ class WorkflowModel(BaseModel):
     isOfficial: Optional[bool] = None
     isActive: Optional[bool] = True
     isPinned: Optional[bool] = False
+    coverImage: Optional[str] = ""
+    instanceType: Optional[str] = "plus"
+    customPrompt: Optional[Dict[str, Any]] = None
 
 @router.get("/api/workflows")
 def get_workflows(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
@@ -89,7 +92,11 @@ def add_or_update_workflow(wf: WorkflowModel, current_user: Optional[Dict[str, A
                 wf_data["ownerName"] = current_user.get("username", "管理员") if current_user else "管理员"
                 
     if existing_idx is not None:
-        workflows[existing_idx] = wf_data
+        merged = dict(existing_wf)
+        for k, v in wf_data.items():
+            if v is not None:
+                merged[k] = v
+        workflows[existing_idx] = merged
     else:
         workflows.append(wf_data)
         
