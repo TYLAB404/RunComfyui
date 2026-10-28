@@ -22,6 +22,7 @@ router = APIRouter(tags=["Workflows"])
 
 class WorkflowModel(BaseModel):
     id: str
+    originalId: Optional[str] = None
     name: str
     description: Optional[str] = ""
     category: Optional[str] = "官方预设"
@@ -42,20 +43,30 @@ def get_workflows(current_user: Optional[Dict[str, Any]] = Depends(get_current_u
 
 @router.post("/api/workflows")
 def add_or_update_workflow(wf: WorkflowModel, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
-    """添加或修改工作流（具备租户隔离与官方工作流防篡改防护）"""
+    """添加或修改工作流（支持修改工作流 ID，具备租户隔离与官方工作流防篡改防护）"""
     cfg = load_config()
     workflows = cfg.get("workflows", [])
     is_admin = current_user and current_user.get("role") == "admin"
     
+    target_id = str(wf.id).strip()
+    lookup_id = str(wf.originalId).strip() if wf.originalId else target_id
+    
     existing_idx = None
     existing_wf = None
     for i, w in enumerate(workflows):
-        if str(w.get("id")) == str(wf.id):
+        if str(w.get("id")) == lookup_id:
             existing_idx = i
             existing_wf = w
             break
+
+    # 查重：防止新修改的 ID 与其他已有工作流冲突
+    for i, w in enumerate(workflows):
+        if i != existing_idx and str(w.get("id")) == target_id:
+            raise HTTPException(status_code=400, detail=f"工作流 ID '{target_id}' 已被其他工作流占用，请更换不同 ID")
             
     wf_data = wf.dict()
+    wf_data.pop("originalId", None)
+    wf_data["id"] = target_id
     wf_data["updatedAt"] = int(time.time())
     
     if not is_admin:
@@ -96,13 +107,16 @@ def add_or_update_workflow(wf: WorkflowModel, current_user: Optional[Dict[str, A
         for k, v in wf_data.items():
             if v is not None:
                 merged[k] = v
+        merged["id"] = target_id
         workflows[existing_idx] = merged
+        result_wf = merged
     else:
         workflows.append(wf_data)
+        result_wf = wf_data
         
     cfg["workflows"] = workflows
     save_config(cfg)
-    return {"status": "ok", "workflow": wf_data}
+    return {"status": "ok", "workflow": result_wf}
 
 @router.delete("/api/workflows/{workflow_id}")
 def delete_workflow(workflow_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):

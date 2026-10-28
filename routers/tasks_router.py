@@ -129,18 +129,15 @@ async def generate_task(
         cfg = load_config()
         preferred_key_id = cfg.get("activeKeyId")
 
-        # 映射通道类型到 RunningHub 官方 OpenAPI 规范 instanceType：
-        # Standard 标准极速 -> plus (48GB 极速独享显存，免排队，与网页端一模一样)
-        # Lite 经济模式 -> default (24GB 基础共享算力)
-        instance_type = "plus"
+        # 严格依据用户生图时所选档位决定云端算力调度通道：
+        # Standard 标准极速 -> plus (48GB 极速独享显存，秒级免排队)
+        # Lite 经济队列 -> default (24GB 基础共享算力)
         if req.instanceType:
-            instance_type = req.instanceType.lower()
-        elif task_type == "Lite":
+            instance_type = "default" if req.instanceType.lower() == "default" else "plus"
+        elif str(task_type).upper() == "LITE":
             instance_type = "default"
-
-        matched_wf = next((w for w in cfg.get("workflows", []) if str(w.get("id")) == str(req.workflowId)), None)
-        if matched_wf and matched_wf.get("instanceType"):
-            instance_type = matched_wf["instanceType"]
+        else:
+            instance_type = "plus"
 
         while True:
             key_info = await KEY_POOL_MANAGER.acquire_free_key(temp_id, exclude_key_ids=excluded_key_ids, preferred_key_id=preferred_key_id)

@@ -517,11 +517,8 @@ async def dispatch_queued_task(
                 if not instance_type:
                     req_tt = getattr(req, "taskType", "Standard")
                     instance_type = "default" if req_tt and req_tt.strip().lower() == "lite" else "plus"
-
-                cfg = load_config()
-                matched_wf = next((w for w in cfg.get("workflows", []) if str(w.get("id")) == str(req.workflowId)), None)
-                if matched_wf and matched_wf.get("instanceType"):
-                    instance_type = matched_wf["instanceType"]
+                else:
+                    instance_type = "default" if str(instance_type).strip().lower() == "default" else "plus"
 
                 payload = {
                     "apiKey": api_key,
