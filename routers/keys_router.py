@@ -33,13 +33,14 @@ def get_config(current_user: Optional[Dict[str, Any]] = Depends(get_current_user
         "hasKey": bool(active_key_str),
         "workflows": filter_workflows_for_user(cfg.get("workflows", []), current_user),
         "system": get_system_config_safe(cfg) if is_admin else {
-            "siteTitle": cfg.get("system", {}).get("siteTitle", "RunningHub 智能创作平台"),
+            "siteTitle": cfg.get("system", {}).get("siteTitle", "RunComfyui"),
             "allowRegistration": bool(cfg.get("system", {}).get("allowRegistration", True)),
             "requireLoginToGenerate": bool(cfg.get("system", {}).get("requireLoginToGenerate", False)),
             "defaultUserPoints": cfg.get("system", {}).get("defaultUserPoints", 100),
             "hideAuxiliaryAudioChain": bool(cfg.get("system", {}).get("hideAuxiliaryAudioChain", True)),
             "broadcast": cfg.get("system", {}).get("broadcast", {"enabled": False, "message": "", "level": "info"}),
-            "maintenance": cfg.get("system", {}).get("maintenance", {"enabled": False, "message": "系统维护中"})
+            "maintenance": cfg.get("system", {}).get("maintenance", {"enabled": False, "message": "系统维护中"}),
+            "pricing": cfg.get("system", {}).get("pricing", {"standardRate": 0.2, "plusRate": 0.4, "minBalanceRequired": 5.0})
         }
     }
     
