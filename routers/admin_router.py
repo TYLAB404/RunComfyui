@@ -118,6 +118,7 @@ class SmtpConfigRequest(BaseModel):
     user: str = ""
     password: Optional[str] = None
     adminEmail: str = ""
+    fromEmail: Optional[str] = ""
 
 
 # ==================== 1. 概览大盘 ====================
@@ -881,6 +882,7 @@ async def admin_get_smtp_config(_: Dict[str, Any] = Depends(get_current_admin)):
         "host": smtp_cfg.get("host", ""),
         "port": smtp_cfg.get("port", 465),
         "user": smtp_cfg.get("user", ""),
+        "fromEmail": smtp_cfg.get("fromEmail", ""),
         "hasPassword": bool(smtp_cfg.get("passwordEncrypted")),
         "adminEmail": smtp_cfg.get("adminEmail", ""),
     }
@@ -898,6 +900,7 @@ async def admin_save_smtp_config(req: SmtpConfigRequest, _: Dict[str, Any] = Dep
     smtp_cfg["host"] = req.host.strip()
     smtp_cfg["port"] = req.port
     smtp_cfg["user"] = req.user.strip()
+    smtp_cfg["fromEmail"] = (req.fromEmail or "").strip()
     smtp_cfg["adminEmail"] = req.adminEmail.strip()
 
     if req.password is not None and req.password.strip():

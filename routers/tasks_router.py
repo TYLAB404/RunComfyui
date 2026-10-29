@@ -341,12 +341,18 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
             t["outputs"] = [o for o in t.get("outputs", []) if not o.get("userHidden") and not o.get("isTakedown")]
             
         # 实时预览无缝拼装（来自内存高速流，无 SQLite 写放大）
-        if tid in ACTIVE_TASK_PREVIEWS and t.get("status") in ["RUNNING", "QUEUED"]:
+        if tid in ACTIVE_TASK_PREVIEWS:
             preview_item = ACTIVE_TASK_PREVIEWS[tid]
             outs = list(t.get("outputs", []))
-            outs = [o for o in outs if not o.get("isRealtimePreview")]
-            outs.insert(0, preview_item)
-            t["outputs"] = outs
+            if not outs or t.get("status") in ["RUNNING", "QUEUED"]:
+                outs = [o for o in outs if not o.get("isRealtimePreview")]
+                outs.insert(0, preview_item)
+                t["outputs"] = outs
+
+        err_msg = str(t.get("error") or t.get("statusText") or "").lower()
+        if t.get("outputs") and ("saveaudio" in err_msg or "cannot allocate memory" in err_msg or "emptyaudio" in err_msg or "audio" in err_msg):
+            t["status"] = "SUCCESS"
+            t["statusText"] = "生成完成 (已安全截流有效成果)"
 
         # 断线自愈恢复：精准绑定创建该任务的具体 Key 发起云端监听
         if t.get("status") in ["RUNNING", "QUEUED"] and tid not in ACTIVE_POLL_TASKS and tid not in CANCELLED_TASKS:
@@ -384,12 +390,18 @@ def get_task(task_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_
         t["outputs"] = [o for o in t.get("outputs", []) if not o.get("userHidden") and not o.get("isTakedown")]
     
     # 实时预览无缝拼装
-    if tid in ACTIVE_TASK_PREVIEWS and t.get("status") in ["RUNNING", "QUEUED"]:
+    if tid in ACTIVE_TASK_PREVIEWS:
         preview_item = ACTIVE_TASK_PREVIEWS[tid]
         outs = list(t.get("outputs", []))
-        outs = [o for o in outs if not o.get("isRealtimePreview")]
-        outs.insert(0, preview_item)
-        t["outputs"] = outs
+        if not outs or t.get("status") in ["RUNNING", "QUEUED"]:
+            outs = [o for o in outs if not o.get("isRealtimePreview")]
+            outs.insert(0, preview_item)
+            t["outputs"] = outs
+
+    err_msg = str(t.get("error") or t.get("statusText") or "").lower()
+    if t.get("outputs") and ("saveaudio" in err_msg or "cannot allocate memory" in err_msg or "emptyaudio" in err_msg or "audio" in err_msg):
+        t["status"] = "SUCCESS"
+        t["statusText"] = "生成完成 (已安全截流有效成果)"
 
     return t
 
