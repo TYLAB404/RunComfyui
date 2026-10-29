@@ -1756,12 +1756,8 @@ createApp({
     };
 
     const openAuthModal = (tab = 'signin') => {
-      authTab.value = tab;
-      authError.value = '';
-      authSuccessMsg.value = '';
-      authForm.value.turnstileToken = '';
-      showAuthModal.value = true;
-      renderTurnstileWidget();
+      const targetTab = tab === 'signup' ? 'register' : 'login';
+      window.location.href = `/sign-in?tab=${targetTab}&redirect=` + encodeURIComponent(window.location.pathname + window.location.search);
     };
 
     const closeAuthModal = () => {

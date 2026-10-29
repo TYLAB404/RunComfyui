@@ -45,6 +45,9 @@ class KeyPoolManager:
                 kid = k.get("id")
                 if kid in excludes:
                     continue
+                # 严格过滤被禁用的 Key (isActive == False)
+                if k.get("isActive") is False:
+                    continue
                 st = self._states.setdefault(kid, {
                     "is_busy": False, 
                     "task_id": None, 
@@ -97,13 +100,19 @@ class KeyPoolManager:
         async with self._lock:
             if key_id in self._states:
                 st = self._states[key_id]
-                if task_id is None or st.get("task_id") == str(task_id):
-                    st["is_busy"] = False
-                    st["task_id"] = None
-                    st["busy_since"] = None
+                # 无论 task_id 传入的是临时 ID 还是真实云端 taskId，均安全重置为空闲
+                st["is_busy"] = False
+                st["task_id"] = None
+                st["busy_since"] = None
             for w in self._waiters:
                 w.set()
             self._waiters.clear()
+
+    async def update_task_id(self, key_id: str, new_task_id: str):
+        """将临时任务 ID (temp_id) 动态更新为云端真实分配的 taskId"""
+        async with self._lock:
+            if key_id in self._states:
+                self._states[key_id]["task_id"] = str(new_task_id)
 
     async def release_key_by_task_id(self, task_id: str):
         async with self._lock:

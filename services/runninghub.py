@@ -130,9 +130,19 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
     client_id = qs.get("clientId", [""])[0]
     auth_query = parsed.query
 
+    rh_user_id = ""
+    if "Rh-Comfy-Auth" in qs:
+        try:
+            raw_auth = urllib.parse.unquote(qs["Rh-Comfy-Auth"][0])
+            raw_auth += "=" * ((4 - len(raw_auth) % 4) % 4)
+            auth_data = json.loads(base64.b64decode(raw_auth).decode("utf-8", errors="ignore"))
+            rh_user_id = str(auth_data.get("userId", "")).strip()
+        except Exception:
+            pass
+
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.ws_connect(net_wss_url, timeout=None, ssl=False, heartbeat=20.0) as ws:
+            async with session.ws_connect(net_wss_url, ssl=False, heartbeat=20.0) as ws:
                 async for msg in ws:
                     if str(task_id) in CANCELLED_TASKS:
                         await ws.close()
@@ -216,7 +226,9 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
 
                                     is_video = any(fname.lower().endswith(ext) for ext in [".mp4", ".webm", ".mov", ".gif"]) or (cos_url and any(ext in cos_url.lower() for ext in [".mp4", ".webm", ".mov", ".gif"])) or "video" in str(m_format).lower()
 
-                                    view_url = cos_url or m_info.get("url")
+                                    sub_prefix = f"{subfolder}/" if subfolder else ""
+                                    cos_direct_url = f"https://rh-hk-images.xiaoyaoyou.com/{rh_user_id}/{m_type}/{sub_prefix}{fname}" if rh_user_id and fname else ""
+                                    view_url = cos_url or cos_direct_url or m_info.get("url")
                                     if not view_url and fname:
                                         if auth_query:
                                             view_url = f"https://www.runninghub.ai/c_instance/view?filename={fname}&subfolder={subfolder}&type={m_type}&format={m_format}&{auth_query}"
@@ -226,32 +238,79 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
                                             view_url = f"{target_url}/view?filename={fname}&subfolder={subfolder}&type={m_type}&clientId={client_id}"
 
                                     if view_url:
+                                        print(f"[Interceptor] Task {task_id} intercepted media from Node #{node_id}: {fname} ({m_type}) -> {view_url}", flush=True)
+                                        is_temp_media = (
+                                            str(m_type).lower() == "temp"
+                                            or "/temp/" in str(view_url)
+                                            or str(fname).startswith("ComfyUI_temp_")
+                                        )
                                         cur_t = db_get_task(str(task_id))
                                         if cur_t:
                                             outs = cur_t.get("outputs", [])
                                             existing = [o.get("url") for o in outs]
                                             if view_url not in existing:
+                                                has_formal_output = any(
+                                                    not (
+                                                        o.get("mediaType") == "temp"
+                                                        or "/temp/" in str(o.get("remoteUrl", "") or o.get("url", ""))
+                                                        or str(o.get("filename", "")).startswith("ComfyUI_temp_")
+                                                    )
+                                                    for o in outs
+                                                )
+                                                # 若已有正式 SaveImage (output) 图像，则跳过冗余的 temp 临时预览图
+                                                if is_temp_media and has_formal_output:
+                                                    continue
+                                                # 若当前到达的是正式 SaveImage (output) 图像，自动清理此前暂存的冗余 temp 预览图
+                                                if not is_temp_media:
+                                                    outs = [
+                                                        o for o in outs
+                                                        if not (
+                                                            o.get("mediaType") == "temp"
+                                                            or "/temp/" in str(o.get("remoteUrl", "") or o.get("url", ""))
+                                                            or str(o.get("filename", "")).startswith("ComfyUI_temp_")
+                                                        )
+                                                    ]
                                                 outs.insert(0, {
                                                     "filename": fname or f"{task_id}_node_{node_id}",
                                                     "url": view_url,
                                                     "remoteUrl": view_url,
-                                                    "size": 0,
+                                                    "size": m_info.get("size", 0),
                                                     "nodeId": node_id,
                                                     "title": f"Node #{node_id} {'截流视频' if is_video else '截流图像'}",
                                                     "isRealtime": True,
+                                                    "mediaType": "temp" if is_temp_media else "output",
                                                     "fileType": "video" if is_video else "image"
                                                 })
                                                 db_update_task(str(task_id), {"outputs": outs, "updatedAt": int(time.time())})
-                        except Exception:
-                            pass
+
+                            elif mtype == "execution_error":
+                                node_id = str(mdata.get("node_id", ""))
+                                node_type = str(mdata.get("node_type", ""))
+                                exp_msg = str(mdata.get("exception_message", ""))
+                                print(f"[WS] Task {task_id} execution_error at Node #{node_id} ({node_type}): {exp_msg}", flush=True)
+                                is_dummy_tail = any(a in node_type.lower() for a in ["audio", "saveaudio", "emptyaudio"]) or "cannot allocate memory" in exp_msg.lower()
+                                if is_dummy_tail:
+                                    cur_t = db_get_task(str(task_id))
+                                    if cur_t and cur_t.get("outputs"):
+                                        print(f"[Interceptor] Task {task_id} successfully intercepted output before audio crash. Marking SUCCESS.", flush=True)
+                                        db_update_task(str(task_id), {
+                                            "status": "SUCCESS",
+                                            "statusText": "生成完成 (已安全截流有效成果)",
+                                            "updatedAt": int(time.time())
+                                        })
+                                        asyncio.create_task(sync_task_outputs_to_imgbed(str(task_id)))
+
+                        except Exception as e:
+                            print(f"[WS] Parse error in task {task_id}: {e}", flush=True)
                     elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                         break
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[WS] Connection error in task {task_id}: {e}", flush=True)
 
 async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = None):
     """后台异步轮询 RunningHub 任务执行状态流水"""
     start_time = time.time()
+    run_start_time: Optional[float] = None
     outputs_url = f"{RUNNINGHUB_API_URL}/task/openapi/outputs"
     headers = {"Host": "www.runninghub.cn", "Content-Type": "application/json"}
     
@@ -284,7 +343,9 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                     })
 
                 elif code == 804:
-                    run_duration = int(time.time() - start_time)
+                    if run_start_time is None:
+                        run_start_time = time.time()
+                    run_duration = int(time.time() - run_start_time)
                     cur_t = db_get_task(str(task_id))
                     cur_text = cur_t.get("statusText", "") if cur_t else ""
                     if "采样" not in cur_text and "节点" not in cur_text and "排队等待" not in cur_text:
@@ -307,9 +368,16 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                     output_items = data["data"]
                     saved_files = []
                     total_coins = "0"
+                    official_cost_time: Optional[int] = None
                     for idx, item in enumerate(output_items):
                         file_url = item.get("fileUrl")
                         total_coins = item.get("consumeCoins", total_coins)
+                        raw_cost_time = item.get("taskCostTime")
+                        if raw_cost_time is not None and str(raw_cost_time).strip():
+                            try:
+                                official_cost_time = int(float(raw_cost_time))
+                            except Exception:
+                                pass
                         if file_url:
                             ext = item.get("fileType", "png").lower()
                             is_video = ext in ["mp4", "webm", "mov", "gif"] or any(e in file_url.lower() for e in [".mp4", ".webm", ".mov", ".gif"])
@@ -339,9 +407,12 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                             seen_fps.add(fp)
                             final_outputs.append(f)
 
+                    # 优先采用 RunningHub 官方结算的纯运行计费时长 (taskCostTime)，否则采用剔除排队后的纯运行计时
+                    final_duration = official_cost_time if (official_cost_time and official_cost_time > 0) else int(time.time() - (run_start_time or start_time))
+
                     db_update_task(str(task_id), {
                         "status": "SUCCESS",
-                        "duration": int(time.time() - start_time),
+                        "duration": final_duration,
                         "consumeCoins": total_coins,
                         "outputs": final_outputs,
                         "statusText": "生成任务已圆满完成",
@@ -352,24 +423,73 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                     return
                 
                 elif code in (803, 804) or "RUNNING" in str(msg) or "QUEUED" in str(msg):
+                    if code == 804 or "RUNNING" in str(msg):
+                        if run_start_time is None:
+                            run_start_time = time.time()
                     db_update_task(str(task_id), {
                         "status": "RUNNING",
-                        "duration": int(time.time() - start_time),
+                        "duration": int(time.time() - (run_start_time or start_time)),
                         "updatedAt": int(time.time())
                     })
                 else:
-                    cur_t = db_get_task(str(task_id))
+                    fail_data = data.get("data")
+                    raw_err = str(msg or "")
+                    err_msg = raw_err or "任务执行异常"
+                    is_timeout = False
+
+                    failed_node_name = ""
+                    failed_exp_msg = ""
+                    if isinstance(fail_data, dict):
+                        failed_reason = fail_data.get("failedReason")
+                        if isinstance(failed_reason, dict):
+                            failed_node_name = str(failed_reason.get("node_name") or "")
+                            failed_exp_msg = str(failed_reason.get("exception_message") or "")
+                            if any(k in failed_exp_msg.lower() for k in ["timeout", "time_out", "超时", "timed out"]):
+                                is_timeout = True
+                            err_msg = f"云端节点 #{failed_reason.get('node_id', '')} ({failed_node_name}) 报错: {failed_exp_msg}"
+                        elif isinstance(failed_reason, str):
+                            if any(k in failed_reason.lower() for k in ["timeout", "time_out", "超时", "timed out"]):
+                                is_timeout = True
+                            err_msg = failed_reason
+
+                    # 特异性检测：是否命中尾部故意报错的占位音频防盗节点 (SaveAudioAdvanced / EmptyAudio)
+                    is_dummy_tail_error = (
+                        any(d in failed_node_name.lower() for d in ["saveaudio", "emptyaudio", "audio"])
+                        or "cannot allocate memory" in failed_exp_msg.lower()
+                    )
+
+                    # 核心截流缓冲宽限：当云端报错时，可能 WebSocket 数据包正在网络传输中，给予最多 5 秒的截流捕获宽限
                     has_captured_real_media = False
-                    if cur_t:
-                        for o in cur_t.get("outputs", []):
-                            if (o.get("isRealtime") and not o.get("isRealtimePreview")) or o.get("remoteUrl"):
+                    for check_round in range(6):
+                        cur_t = db_get_task(str(task_id))
+                        if cur_t:
+                            outs = cur_t.get("outputs", [])
+                            if outs and len(outs) > 0:
                                 has_captured_real_media = True
                                 break
+                        # 若 outputs 暂未入库，检查 ACTIVE_TASK_PREVIEWS 内存高速截流池
+                        preview_item = ACTIVE_TASK_PREVIEWS.get(str(task_id))
+                        if preview_item and preview_item.get("url"):
+                            has_captured_real_media = True
+                            cur_outs = cur_t.get("outputs", []) if cur_t else []
+                            cur_outs.append({
+                                "filename": f"{task_id}_intercepted.png",
+                                "url": preview_item["url"],
+                                "remoteUrl": preview_item.get("remoteUrl") or preview_item["url"],
+                                "size": preview_item.get("size", 0),
+                                "title": "截流成果",
+                                "isRealtime": True,
+                                "fileType": "image"
+                            })
+                            db_update_task(str(task_id), {"outputs": cur_outs, "updatedAt": int(time.time())})
+                            break
+                        await asyncio.sleep(0.8)
 
                     if has_captured_real_media:
+                        print(f"[Interceptor] Task {task_id} successfully intercepted media despite cloud tail node error ({failed_node_name}). Marking SUCCESS.", flush=True)
                         db_update_task(str(task_id), {
                             "status": "SUCCESS",
-                            "duration": int(time.time() - start_time),
+                            "duration": int(time.time() - (run_start_time or start_time)),
                             "statusText": "生成完成 (已安全截流有效成果)",
                             "updatedAt": int(time.time())
                         })
@@ -377,25 +497,6 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                         asyncio.create_task(sync_task_outputs_to_imgbed(str(task_id)))
                         return
                     else:
-                        fail_data = data.get("data")
-                        raw_err = str(msg or "")
-                        err_msg = raw_err or "任务执行异常"
-                        is_timeout = False
-
-                        if code in (806, 807, 810) or any(k in raw_err.lower() for k in ["timeout", "time_out", "超时", "timed out", "timedout"]):
-                            is_timeout = True
-
-                        if isinstance(fail_data, dict):
-                            failed_reason = fail_data.get("failedReason")
-                            if isinstance(failed_reason, dict):
-                                exp_msg = str(failed_reason.get("exception_message") or "")
-                                if any(k in exp_msg.lower() for k in ["timeout", "time_out", "超时", "timed out"]):
-                                    is_timeout = True
-                                err_msg = f"云端节点 #{failed_reason.get('node_id', '')} ({failed_reason.get('node_name', '')}) 报错: {exp_msg}"
-                            elif isinstance(failed_reason, str):
-                                if any(k in failed_reason.lower() for k in ["timeout", "time_out", "超时", "timed out"]):
-                                    is_timeout = True
-                                err_msg = failed_reason
 
                         if is_timeout:
                             err_msg = "云端渲染超时：该任务计算量极大，已达到 RunningHub 云端单任务运行上限。系统已为您全额退还扣除的算力点数。"

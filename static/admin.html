@@ -1812,7 +1812,7 @@
           <div class="flex items-center justify-between border-b border-slate-800 pb-3">
             <h3 class="text-sm font-bold text-white flex items-center gap-2">
               <i data-lucide="mail" class="w-4 h-4 text-amber-400"></i>
-              <span>运维告警邮箱与 SMTP 通知设置</span>
+              <span>系统统一发信中心 (SMTP 验证码与运维告警)</span>
             </h3>
             <button @click="showSmtpModal = false" class="text-slate-400 hover:text-white">
               <i data-lucide="x" class="w-4 h-4"></i>
@@ -1820,8 +1820,16 @@
           </div>
 
           <p class="text-xs text-slate-400 leading-relaxed">
-            当 RunningHub 账号发生封禁、失效、欠费或被限制时，系统将自动熔断并向指定邮箱发送告警通知。
+            统一用于向注册用户发送 6 位数验证码，并在 RunningHub 账号发生封禁、失效、欠费时向站长发送熔断告警。
           </p>
+
+          <!-- 域名发信推荐引导卡片 -->
+          <div class="p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-500/20 text-[11px] text-indigo-300 leading-relaxed">
+            💡 <strong>域名发信推荐配置（Moyuu 同款）</strong>：<br>
+            • <strong>阿里云 DirectMail</strong>：Host 填 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">smtpdm.aliyun.com</code>，端口 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">465</code>，账号填 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">admin@notify.你的域名.xyz</code><br>
+            • <strong>腾讯企业邮箱</strong>：Host 填 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">smtp.exmail.qq.com</code>，端口 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">465</code><br>
+            • <strong>个人 QQ 邮箱</strong>：Host 填 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">smtp.qq.com</code>，端口 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">465</code>
+          </div>
 
           <div class="space-y-3 text-xs">
             <div class="flex items-center justify-between p-3 rounded-xl bg-slate-950 border border-slate-800">
@@ -1844,8 +1852,14 @@
             </div>
 
             <div>
-              <label class="block text-slate-300 mb-1">发信邮箱账号 (User)</label>
-              <input type="email" v-model="smtpForm.user" placeholder="如 your_email@qq.com" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+              <label class="block text-slate-300 mb-1">发信认证账号 (User)</label>
+              <input type="text" v-model="smtpForm.user" placeholder="如 admin@notify.yourdomain.xyz 或 resend" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
+              <span class="text-[10px] text-slate-500">常规邮箱填完整邮箱；若使用 Resend 此处固定填 resend</span>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 mb-1">对外发信地址 (From Email，选填)</label>
+              <input type="email" v-model="smtpForm.fromEmail" placeholder="留空则与 User 相同；Resend 必填如 admin@notify.yourdomain.xyz" class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white">
             </div>
 
             <div>
@@ -2141,16 +2155,16 @@
               <button 
                 type="button"
                 @click="inspectCloudWorkflowInModal" 
-                :disabled="workflowModal.inspecting || !workflowModal.form.id.trim()"
-                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-medium transition flex items-center gap-1.5 flex-shrink-0">
-                <span v-if="workflowModal.inspecting" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                <i v-else data-lucide="search" class="w-3.5 h-3.5"></i>
+                :disabled="workflowModal.inspecting"
+                class="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl font-medium transition flex items-center gap-1.5 flex-shrink-0 cursor-pointer disabled:cursor-not-allowed">
+                <span v-show="workflowModal.inspecting" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <svg v-show="!workflowModal.inspecting" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
                 <span>{{ workflowModal.inspecting ? '探测中...' : '在线探测校验' }}</span>
               </button>
             </div>
             <div v-if="workflowModal.inspectResult && workflowModal.sourceType === 'cloud'" class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                <svg class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                 <span>探测成功！共解析出 <strong>{{ workflowModal.inspectResult.totalNodes }}</strong> 个节点参数</span>
               </div>
               <span class="text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded text-emerald-300 font-mono">Ready</span>
@@ -2175,8 +2189,8 @@
               @click="triggerWorkflowJsonSelect"
               class="border-2 border-dashed border-slate-700 hover:border-indigo-500/70 rounded-xl p-5 text-center cursor-pointer transition bg-slate-900/60 hover:bg-slate-900 flex flex-col items-center justify-center gap-2">
               <div class="w-10 h-10 rounded-full bg-indigo-500/15 flex items-center justify-center text-indigo-400">
-                <span v-if="workflowModal.parsingJson" class="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
-                <i v-else data-lucide="upload-cloud" class="w-5 h-5"></i>
+                <span v-show="workflowModal.parsingJson" class="w-5 h-5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></span>
+                <svg v-show="!workflowModal.parsingJson" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14.899A7 7 0 1 1 15.71 8h1.79a4.5 4.5 0 0 1 2.5 8.242"/><path d="M12 12v9"/><path d="m16 16-4-4-4 4"/></svg>
               </div>
               <div>
                 <p class="text-slate-300 font-medium">{{ workflowModal.parsingJson ? '正在解析工作流 JSON 拓扑...' : '点击或拖拽上传 ComfyUI API JSON 文件' }}</p>
@@ -2185,7 +2199,7 @@
             </div>
             <div v-if="workflowModal.inspectResult && workflowModal.sourceType === 'json'" class="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 flex items-center justify-between">
               <div class="flex items-center gap-2">
-                <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-400"></i>
+                <svg class="w-4 h-4 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
                 <span>解析成功！包含 <strong>{{ workflowModal.inspectResult.totalNodes }}</strong> 个节点</span>
               </div>
               <span class="text-[10px] bg-emerald-500/20 px-2 py-0.5 rounded text-emerald-300 font-mono">{{ workflowModal.form.id }}</span>
@@ -2274,8 +2288,8 @@
                   @click="triggerCoverUpload" 
                   :disabled="workflowModal.uploadingCover"
                   class="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl transition flex items-center gap-1.5 flex-shrink-0 border border-slate-700">
-                  <span v-if="workflowModal.uploadingCover" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-                  <i v-else data-lucide="image" class="w-3.5 h-3.5"></i>
+                  <span v-show="workflowModal.uploadingCover" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <svg v-show="!workflowModal.uploadingCover" class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
                   <span>{{ workflowModal.uploadingCover ? '上传中...' : '本地上传' }}</span>
                 </button>
               </div>
@@ -2334,10 +2348,10 @@
             <button 
               type="button"
               @click="submitWorkflowForm" 
-              :disabled="workflowModal.saving || !workflowModal.form.name.trim() || !workflowModal.form.id.trim()"
-              class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30 transition flex items-center gap-1.5">
-              <span v-if="workflowModal.saving" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
-              <i v-else data-lucide="check" class="w-4 h-4"></i>
+              :disabled="workflowModal.saving"
+              class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-indigo-600/30 transition flex items-center gap-1.5 cursor-pointer disabled:cursor-not-allowed">
+              <span v-show="workflowModal.saving" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+              <svg v-show="!workflowModal.saving" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
               <span>{{ workflowModal.saving ? '正在保存...' : (workflowModal.isEdit ? '保存修改' : '确认录入并发布') }}</span>
             </button>
           </div>
@@ -3029,9 +3043,10 @@
         };
 
         const inspectCloudWorkflowInModal = async () => {
-          const wfId = workflowModal.value.form.id.trim();
+          const form = workflowModal.value.form || {};
+          const wfId = String(form.id || '').trim();
           if (!wfId) {
-            showToastNotification('请先输入云端工作流 ID', 'error');
+            showToastNotification('请先输入云端工作流 ID', 'warning');
             return;
           }
           workflowModal.value.inspecting = true;
@@ -3041,6 +3056,10 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ workflowId: wfId })
             });
+            if (res.status === 401 || res.status === 403) {
+              showToastNotification('登录已过期，请重新登录管理后台', 'error');
+              return;
+            }
             const data = await res.json();
             if (res.ok && data.status === 'ok') {
               workflowModal.value.inspectResult = data;
@@ -3133,25 +3152,27 @@
         };
 
         const submitWorkflowForm = async () => {
-          const form = workflowModal.value.form;
-          if (!form.id.trim()) {
-            showToastNotification('工作流 ID 不能为空', 'error');
+          const form = workflowModal.value.form || {};
+          const id = String(form.id || '').trim();
+          const name = String(form.name || '').trim();
+          if (!id) {
+            showToastNotification('请填写 RunningHub 云端 Workflow ID', 'warning');
             return;
           }
-          if (!form.name.trim()) {
-            showToastNotification('工作流名称不能为空', 'error');
+          if (!name) {
+            showToastNotification('请填写工作流名称', 'warning');
             return;
           }
           workflowModal.value.saving = true;
           try {
             const payload = {
-              id: form.id.trim(),
-              originalId: form.originalId ? form.originalId.trim() : null,
-              name: form.name.trim(),
-              category: form.category ? form.category.trim() : '官方预设',
+              id: id,
+              originalId: form.originalId ? String(form.originalId).trim() : null,
+              name: name,
+              category: form.category ? String(form.category).trim() : '官方预设',
               pointsCost: Math.max(0, parseInt(form.pointsCost) || 0),
               coverImage: form.coverImage || '',
-              description: form.description ? form.description.trim() : '',
+              description: form.description ? String(form.description).trim() : '',
               isOfficial: Boolean(form.isOfficial),
               isActive: Boolean(form.isActive),
               isPinned: Boolean(form.isPinned)
@@ -3167,6 +3188,10 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
             });
+            if (res.status === 401 || res.status === 403) {
+              showToastNotification('登录已过期或权限不足，请重新登录管理后台', 'error');
+              return;
+            }
             const data = await res.json();
             if (res.ok && data.status === 'ok') {
               showToastNotification(workflowModal.value.isEdit ? '工作流配置更新成功！' : '工作流已成功录入并发布！', 'success');
@@ -3960,6 +3985,7 @@
               smtpForm.value.host = data.host || 'smtp.qq.com';
               smtpForm.value.port = data.port || 465;
               smtpForm.value.user = data.user || '';
+              smtpForm.value.fromEmail = data.fromEmail || '';
               smtpForm.value.adminEmail = data.adminEmail || '';
               smtpForm.value.hasPassword = !!data.hasPassword;
               smtpForm.value.password = '';
@@ -3976,6 +4002,7 @@
               host: smtpForm.value.host,
               port: parseInt(smtpForm.value.port || 465),
               user: smtpForm.value.user,
+              fromEmail: smtpForm.value.fromEmail,
               password: smtpForm.value.password ? smtpForm.value.password : undefined,
               adminEmail: smtpForm.value.adminEmail
             };

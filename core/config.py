@@ -116,6 +116,7 @@ def _sanitize_and_migrate_config(cfg: Dict[str, Any]) -> Tuple[Dict[str, Any], b
             "host": "smtp.qq.com",
             "port": 465,
             "user": "",
+            "fromEmail": "",
             "passwordEncrypted": "",
             "adminEmail": ""
         }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>登录 / 注册 - RunningHub Cloud Studio</title>
+  <title>账户中心 - RunningHub Cloud Studio</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -27,8 +27,6 @@
   </script>
   <!-- Vue 3 -->
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <!-- Lucide Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
   <!-- Cloudflare Turnstile Explicit Script -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <style>
@@ -61,7 +59,10 @@
     <!-- 顶部 Brand Header -->
     <div class="sm:mx-auto sm:w-full sm:max-w-md text-center mb-6">
       <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-purple-500 shadow-xl shadow-indigo-500/25 border border-indigo-400/30 mb-4 transform hover:scale-105 transition duration-300">
-        <i data-lucide="sparkles" class="w-7 h-7 text-white"></i>
+        <svg class="w-7 h-7 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/>
+          <path d="M5 3v4"/><path d="M19 17v4"/><path d="M3 5h4"/><path d="M17 19h4"/>
+        </svg>
       </div>
       <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">
         {{ siteTitle || 'RunningHub Cloud' }}
@@ -71,176 +72,533 @@
       </p>
     </div>
 
-    <!-- 主登录/注册卡片 (玻璃拟态 Glassmorphism) -->
+    <!-- 主登录/注册/找回密码卡片 (玻璃拟态 Glassmorphism) -->
     <div class="w-full max-w-md">
-      <div class="bg-slate-900/80 backdrop-blur-2xl border border-slate-700/60 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-indigo-950/40 relative">
+      <div class="bg-slate-900/85 backdrop-blur-2xl border border-slate-700/60 rounded-3xl p-6 sm:p-8 shadow-2xl shadow-indigo-950/40 relative">
         
         <!-- 首次部署站长提示旗标 -->
         <div v-if="isFirstUser" class="mb-5 p-3 rounded-2xl bg-gradient-to-r from-amber-500/15 to-amber-600/10 border border-amber-500/30 text-amber-300 text-xs flex items-start gap-2.5">
-          <i data-lucide="crown" class="w-5 h-5 flex-shrink-0 text-amber-400 mt-0.5"></i>
+          <span class="text-base flex-shrink-0 mt-0.5">👑</span>
           <div>
             <div class="font-bold">系统初始化部署模式</div>
             <div class="text-[11px] text-amber-400/90 mt-0.5">当前系统尚无任何用户，首位完成注册的用户将自动加冕为系统【超级管理员 (Admin)】并拥有全站控制权！</div>
           </div>
         </div>
 
-        <!-- 登录 / 注册 切换 Tab -->
-        <div class="flex items-center p-1 bg-slate-950/80 border border-slate-800 rounded-2xl mb-6">
+        <!-- 登录 / 注册 / 找回密码 头部切换 Tab -->
+        <div v-if="tab !== 'forgot'" class="flex items-center p-1 bg-slate-950/80 border border-slate-800 rounded-2xl mb-6">
           <button 
             type="button"
             @click="switchTab('login')" 
             :class="tab === 'login' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-white'"
             class="flex-1 py-2 rounded-xl text-xs sm:text-sm transition-all duration-200 flex items-center justify-center gap-1.5">
-            <i data-lucide="log-in" class="w-4 h-4"></i>
-            <span>账号登录</span>
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg>
+            <span>登录</span>
           </button>
           <button 
             type="button"
             @click="switchTab('register')" 
             :class="tab === 'register' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-white'"
             class="flex-1 py-2 rounded-xl text-xs sm:text-sm transition-all duration-200 flex items-center justify-center gap-1.5">
-            <i data-lucide="user-plus" class="w-4 h-4"></i>
+            <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" x2="19" y1="8" y2="14"/><line x1="22" x2="16" y1="11" y2="11"/></svg>
             <span>新用户注册</span>
           </button>
         </div>
 
-        <!-- 错误与提示信息条 -->
-        <div v-if="errorMessage" class="mb-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2 animate-shake">
-          <i data-lucide="alert-circle" class="w-4 h-4 flex-shrink-0 text-rose-400"></i>
-          <span class="flex-1">{{ errorMessage }}</span>
-          <button @click="errorMessage = ''" class="text-rose-400 hover:text-rose-200"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+        <!-- 找回密码模式下的标题返回栏 -->
+        <div v-else class="flex items-center justify-between mb-6 pb-3 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <div class="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+              <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </div>
+            <div>
+              <h3 class="text-sm font-bold text-white">找回账户密码</h3>
+              <p class="text-[11px] text-slate-400">验证注册邮箱并重置安全登录密码</p>
+            </div>
+          </div>
+          <button 
+            type="button" 
+            @click="switchTab('login')" 
+            class="text-xs text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 transition">
+            <span>返回登录</span>
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
         </div>
 
+        <!-- 错误提示条 -->
+        <div v-if="errorMessage" class="mb-4 p-3 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
+          <svg class="w-4 h-4 flex-shrink-0 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>
+          <span class="flex-1">{{ errorMessage }}</span>
+          <button @click="errorMessage = ''" class="text-rose-400 hover:text-rose-200">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+        </div>
+
+        <!-- 成功提示条 -->
         <div v-if="successMessage" class="mb-4 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2">
-          <i data-lucide="check-circle" class="w-4 h-4 flex-shrink-0 text-emerald-400"></i>
+          <svg class="w-4 h-4 flex-shrink-0 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
           <span class="flex-1">{{ successMessage }}</span>
         </div>
 
-        <!-- 表单核心 -->
-        <form @submit.prevent="handleSubmit" class="space-y-4">
-
-          <!-- 用户名 / 账号 -->
+        <!-- ================= 表单模式 1: 登录 (对标 Moyuu) ================= -->
+        <form v-if="tab === 'login'" @submit.prevent="handleLogin" class="space-y-4">
+          <!-- 用户名或邮箱 -->
           <div>
             <label class="block text-xs font-medium text-slate-300 mb-1.5">
-              {{ tab === 'login' ? '用户名或邮箱' : '登录用户名' }}
+              用户名或电子邮件
             </label>
             <div class="relative">
               <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                <i data-lucide="user" class="w-4 h-4"></i>
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
               </div>
               <input 
-                v-model="form.username" 
+                v-model="loginForm.identifier" 
                 type="text" 
                 required 
                 autocomplete="username"
-                :placeholder="tab === 'login' ? '输入用户名或已绑定的邮箱' : '设置个性登录用户名 (3-30字符)'"
+                placeholder="输入用户名或已绑定邮箱"
                 class="w-full pl-10 pr-4 py-2.5 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
             </div>
           </div>
 
-          <!-- 邮箱 (仅注册时显示) -->
-          <div v-if="tab === 'register'">
-            <label class="block text-xs font-medium text-slate-300 mb-1.5">电子邮箱 <span class="text-slate-500">(选填，支持邮箱找回与登录)</span></label>
-            <div class="relative">
-              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                <i data-lucide="mail" class="w-4 h-4"></i>
-              </div>
-              <input 
-                v-model="form.email" 
-                type="email" 
-                autocomplete="email"
-                placeholder="name@example.com"
-                class="w-full pl-10 pr-4 py-2.5 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
-            </div>
-          </div>
-
-          <!-- 密码 -->
+          <!-- 密码与找回密码 -->
           <div>
             <div class="flex items-center justify-between mb-1.5">
               <label class="block text-xs font-medium text-slate-300">密码</label>
-              <span v-if="tab === 'register'" class="text-[11px] text-slate-500">至少 6 个字符</span>
+              <button 
+                type="button" 
+                @click="switchTab('forgot')" 
+                class="text-xs text-indigo-400 hover:text-indigo-300 transition">
+                忘记密码?
+              </button>
             </div>
             <div class="relative">
               <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                <i data-lucide="lock" class="w-4 h-4"></i>
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
               </div>
               <input 
-                v-model="form.password" 
-                :type="showPassword ? 'text' : 'password'" 
+                v-model="loginForm.password" 
+                :type="showLoginPassword ? 'text' : 'password'" 
                 required 
                 autocomplete="current-password"
                 placeholder="••••••••"
                 class="w-full pl-10 pr-10 py-2.5 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
               <button 
                 type="button" 
-                @click="showPassword = !showPassword" 
+                @click="showLoginPassword = !showLoginPassword" 
                 class="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition">
-                <i :data-lucide="showPassword ? 'eye-off' : 'eye'" class="w-4 h-4"></i>
+                <svg v-if="!showLoginPassword" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg v-else class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
               </button>
             </div>
           </div>
 
-          <!-- 确认密码 (仅注册时显示) -->
-          <div v-if="tab === 'register'">
-            <label class="block text-xs font-medium text-slate-300 mb-1.5">确认密码</label>
-            <div class="relative">
-              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
-                <i data-lucide="shield-check" class="w-4 h-4"></i>
-              </div>
-              <input 
-                v-model="form.confirmPassword" 
-                :type="showPassword ? 'text' : 'password'" 
-                required 
-                autocomplete="new-password"
-                placeholder="再次输入以确认"
-                class="w-full pl-10 pr-4 py-2.5 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
-            </div>
+          <!-- Turnstile 人机验证 -->
+          <div v-show="turnstileEnabled && turnstileSiteKey" class="py-2 flex flex-col items-center justify-center">
+            <div id="turnstile-container-login" class="min-h-[65px] flex items-center justify-center"></div>
           </div>
 
-          <!-- Cloudflare Turnstile 人机验证容器 (参考 Moyuu) -->
-          <div v-if="turnstileEnabled" class="py-2 flex flex-col items-center justify-center">
-            <div class="text-[11px] text-slate-400 mb-2 flex items-center gap-1.5">
-              <i data-lucide="shield" class="w-3.5 h-3.5 text-indigo-400"></i>
-              <span>Cloudflare 智能无感安全验证</span>
-            </div>
-            <!-- Turnstile 挂载节点 -->
-            <div id="turnstile-container" class="min-h-[65px] flex items-center justify-center"></div>
+          <!-- 用户协议勾选 -->
+          <div class="flex items-start gap-2 pt-1">
+            <input 
+              id="agree-login" 
+              type="checkbox" 
+              v-model="loginForm.agreeTerms"
+              class="mt-1 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-950 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-600">
+            <label for="agree-login" class="text-xs text-slate-400 select-none cursor-pointer leading-relaxed">
+              我已阅读并同意 
+              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
+              和 
+              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>
+            </label>
           </div>
 
-          <!-- 提交按钮 -->
+          <!-- 登录按钮 -->
           <button 
             type="submit" 
             :disabled="isSubmitting || (turnstileEnabled && !turnstileToken)"
             class="w-full mt-2 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-white bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:from-indigo-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 focus:ring-offset-slate-900 shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-[0.98] transition-all flex items-center justify-center gap-2">
-            <i v-if="isSubmitting" data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
-            <span>{{ isSubmitting ? '正在处理中...' : (tab === 'login' ? '立即登录' : '创建新账户') }}</span>
+            <svg v-if="isSubmitting" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            <span>{{ isSubmitting ? '正在登录中...' : '登录 ->' }}</span>
+          </button>
+        </form>
+
+        <!-- ================= 表单模式 2: 创建账户 / 注册 (对标 Moyuu) ================= -->
+        <form v-if="tab === 'register'" @submit.prevent="handleRegister" class="space-y-3.5">
+          <!-- 用户名 -->
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">
+              用户名
+            </label>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              </div>
+              <input 
+                v-model="registerForm.username" 
+                type="text" 
+                required 
+                autocomplete="username"
+                placeholder="设置个性登录用户名 (3-25字符)"
+                class="w-full pl-10 pr-4 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+            </div>
+            <p class="mt-1 text-[11px] text-slate-500">支持 3-25 位字母、数字、中文、下划线及连字符</p>
+          </div>
+
+          <!-- 密码 (8-20 个字符) -->
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <label class="block text-xs font-medium text-slate-300">密码 (8-20 个字符)</label>
+            </div>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <input 
+                v-model="registerForm.password" 
+                :type="showRegisterPassword ? 'text' : 'password'" 
+                required 
+                autocomplete="new-password"
+                placeholder="••••••••"
+                class="w-full pl-10 pr-10 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+              <button 
+                type="button" 
+                @click="showRegisterPassword = !showRegisterPassword" 
+                class="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition">
+                <svg v-if="!showRegisterPassword" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg v-else class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 确认密码 -->
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">确认密码</label>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+              </div>
+              <input 
+                v-model="registerForm.confirmPassword" 
+                :type="showRegisterPassword ? 'text' : 'password'" 
+                required 
+                autocomplete="new-password"
+                placeholder="再次输入密码"
+                class="w-full pl-10 pr-4 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+            </div>
+          </div>
+
+          <!-- 电子邮件 (验证必需) -->
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">
+              电子邮件 <span class="text-indigo-400 font-normal">(验证必需)</span>
+            </label>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+              </div>
+              <input 
+                v-model="registerForm.email" 
+                type="email" 
+                required 
+                autocomplete="email"
+                placeholder="name@example.com"
+                class="w-full pl-10 pr-4 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+            </div>
+          </div>
+
+          <!-- 验证码与发送按钮 -->
+          <div v-if="emailVerifyEnabled">
+            <label class="block text-xs font-medium text-slate-300 mb-1">
+              验证码
+            </label>
+            <div class="flex gap-2">
+              <div class="relative flex-1">
+                <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/></svg>
+                </div>
+                <input 
+                  v-model="registerForm.code" 
+                  type="text" 
+                  maxlength="6"
+                  required
+                  placeholder="6 位数字验证码"
+                  class="w-full pl-10 pr-4 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 tracking-wider font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+              </div>
+              <button 
+                type="button" 
+                @click="sendVerificationCode('register')"
+                :disabled="isSendingCode || registerCooldown > 0 || !registerForm.email"
+                class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap transition flex items-center justify-center gap-1.5 shadow">
+                <svg v-if="isSendingCode" class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                <span>{{ registerCooldown > 0 ? `重新发送 (${registerCooldown}s)` : '发送验证码' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Turnstile 人机验证 -->
+          <div v-show="turnstileEnabled && turnstileSiteKey" class="py-2 flex flex-col items-center justify-center">
+            <div id="turnstile-container-register" class="min-h-[65px] flex items-center justify-center"></div>
+          </div>
+
+          <!-- 用户协议勾选 -->
+          <div class="flex items-start gap-2 pt-1">
+            <input 
+              id="agree-register" 
+              type="checkbox" 
+              v-model="registerForm.agreeTerms"
+              class="mt-1 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-950 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-600">
+            <label for="agree-register" class="text-xs text-slate-400 select-none cursor-pointer leading-relaxed">
+              我已阅读并同意 
+              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
+              和 
+              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>
+            </label>
+          </div>
+
+          <!-- 创建账户按钮 -->
+          <button 
+            type="submit" 
+            :disabled="isSubmitting"
+            class="w-full mt-2 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-white bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:from-indigo-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 focus:ring-offset-slate-900 shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+            <svg v-if="isSubmitting" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            <span>{{ isSubmitting ? '正在创建账户...' : '创建账户' }}</span>
+          </button>
+        </form>
+
+        <!-- ================= 表单模式 3: 找回密码 (对标 Moyuu) ================= -->
+        <form v-if="tab === 'forgot'" @submit.prevent="handleResetPassword" class="space-y-3.5">
+          <!-- 注册邮箱 -->
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">
+              注册邮箱
+            </label>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg>
+              </div>
+              <input 
+                v-model="forgotForm.email" 
+                type="email" 
+                required 
+                autocomplete="email"
+                placeholder="输入您注册时绑定的邮箱"
+                class="w-full pl-10 pr-4 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+            </div>
+          </div>
+
+          <!-- 验证码与发送按钮 -->
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">
+              重置验证码
+            </label>
+            <div class="flex gap-2">
+              <div class="relative flex-1">
+                <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                  <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/></svg>
+                </div>
+                <input 
+                  v-model="forgotForm.code" 
+                  type="text" 
+                  maxlength="6"
+                  required
+                  placeholder="6 位数字验证码"
+                  class="w-full pl-10 pr-4 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 tracking-wider font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+              </div>
+              <button 
+                type="button" 
+                @click="sendVerificationCode('reset')"
+                :disabled="isSendingCode || resetCooldown > 0 || !forgotForm.email"
+                class="px-3.5 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-indigo-300 disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap transition flex items-center justify-center gap-1.5 shadow">
+                <svg v-if="isSendingCode" class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+                <span>{{ resetCooldown > 0 ? `重新发送 (${resetCooldown}s)` : '发送重置验证码' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 新密码 (8-20 个字符) -->
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">新密码 (8-20 个字符)</label>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <input 
+                v-model="forgotForm.newPassword" 
+                :type="showForgotPassword ? 'text' : 'password'" 
+                required 
+                autocomplete="new-password"
+                placeholder="设置新密码"
+                class="w-full pl-10 pr-10 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+              <button 
+                type="button" 
+                @click="showForgotPassword = !showForgotPassword" 
+                class="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-500 hover:text-slate-300 transition">
+                <svg v-if="!showForgotPassword" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg v-else class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/><path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/><line x1="2" x2="22" y1="2" y2="22"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- 确认新密码 -->
+          <div>
+            <label class="block text-xs font-medium text-slate-300 mb-1">确认新密码</label>
+            <div class="relative">
+              <div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></svg>
+              </div>
+              <input 
+                v-model="forgotForm.confirmPassword" 
+                :type="showForgotPassword ? 'text' : 'password'" 
+                required 
+                autocomplete="new-password"
+                placeholder="再次输入新密码"
+                class="w-full pl-10 pr-4 py-2 bg-slate-950/70 border border-slate-700/80 rounded-xl text-xs sm:text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition">
+            </div>
+          </div>
+
+          <!-- Turnstile 人机验证 -->
+          <div v-show="turnstileEnabled && turnstileSiteKey" class="py-2 flex flex-col items-center justify-center">
+            <div id="turnstile-container-forgot" class="min-h-[65px] flex items-center justify-center"></div>
+          </div>
+
+          <!-- 用户协议勾选 -->
+          <div class="flex items-start gap-2 pt-1">
+            <input 
+              id="agree-forgot" 
+              type="checkbox" 
+              v-model="forgotForm.agreeTerms"
+              class="mt-1 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-950 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-600">
+            <label for="agree-forgot" class="text-xs text-slate-400 select-none cursor-pointer leading-relaxed">
+              我已阅读并同意 
+              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
+              和 
+              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>
+            </label>
+          </div>
+
+          <!-- 提交重置按钮 -->
+          <button 
+            type="submit" 
+            :disabled="isSubmitting"
+            class="w-full mt-2 py-3 px-4 rounded-xl font-bold text-xs sm:text-sm text-white bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500 hover:from-indigo-600 hover:to-pink-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 focus:ring-offset-slate-900 shadow-lg shadow-indigo-500/25 disabled:opacity-50 disabled:cursor-not-allowed transform active:scale-[0.98] transition-all flex items-center justify-center gap-2">
+            <svg v-if="isSubmitting" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+            <span>{{ isSubmitting ? '正在重置中...' : '确认重置密码' }}</span>
           </button>
         </form>
 
         <!-- 底部快速指引 -->
         <div class="mt-6 pt-5 border-t border-slate-800 text-center">
           <p class="text-xs text-slate-400">
-            {{ tab === 'login' ? '还没有账号？' : '已有系统账号？' }}
-            <button 
-              type="button" 
-              @click="switchTab(tab === 'login' ? 'register' : 'login')" 
-              class="font-semibold text-indigo-400 hover:text-indigo-300 ml-1 transition">
-              {{ tab === 'login' ? '立即免费注册' : '直接登录' }}
-            </button>
+            <span v-if="tab === 'login'">
+              还没有账号？
+              <button 
+                type="button" 
+                @click="switchTab('register')" 
+                class="font-semibold text-indigo-400 hover:text-indigo-300 ml-1 transition">
+                立即免费注册
+              </button>
+            </span>
+            <span v-else-if="tab === 'register'">
+              已有系统账号？
+              <button 
+                type="button" 
+                @click="switchTab('login')" 
+                class="font-semibold text-indigo-400 hover:text-indigo-300 ml-1 transition">
+                直接登录
+              </button>
+            </span>
+            <span v-else>
+              想起密码了？
+              <button 
+                type="button" 
+                @click="switchTab('login')" 
+                class="font-semibold text-indigo-400 hover:text-indigo-300 ml-1 transition">
+                返回直接登录
+              </button>
+            </span>
           </p>
         </div>
 
       </div>
     </div>
 
-    <!-- 底部版权与安全说明 -->
+    <!-- 底部安全与环境说明 -->
     <div class="mt-8 text-center text-[11px] text-slate-500 space-y-1">
       <div class="flex items-center justify-center gap-3">
-        <span class="flex items-center gap-1"><i data-lucide="lock" class="w-3 h-3 text-emerald-400"></i> PBKDF2 10万次哈希加密</span>
+        <span class="flex items-center gap-1">
+          <svg class="w-3 h-3 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          PBKDF2-HMAC 加密防护
+        </span>
         <span class="text-slate-700">|</span>
-        <span class="flex items-center gap-1"><i data-lucide="database" class="w-3 h-3 text-indigo-400"></i> SQLite WAL 事务并发持久化</span>
+        <span class="flex items-center gap-1">
+          <svg class="w-3 h-3 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
+          Cloudflare 智能防护
+        </span>
       </div>
       <div>RunningHub Cloud Controller &copy; 2026. All rights reserved.</div>
+    </div>
+
+    <!-- ================= 用户协议与服务规范 Modal ================= -->
+    <div v-if="showTermsModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" @click.self="showTermsModal = false">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full max-h-[80vh] flex flex-col shadow-2xl relative">
+        <div class="flex items-center justify-between p-5 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="text-base">📜</span>
+            <h3 class="text-sm font-bold text-white">用户服务协议</h3>
+          </div>
+          <button @click="showTermsModal = false" class="text-slate-400 hover:text-white text-xs p-1">✕</button>
+        </div>
+        <div class="p-6 overflow-y-auto space-y-4 text-xs text-slate-300 leading-relaxed">
+          <h4 class="font-bold text-white text-sm">1. 协议概述与服务范围</h4>
+          <p>欢迎使用 RunningHub Cloud Studio（以下简称“本平台”）。本协议由您与本平台共同缔结，适用于您对 ComfyUI 云端工作流调度、AI 图像与音视频生成、算力资源管理等所有相关服务的使用。</p>
+          
+          <h4 class="font-bold text-white text-sm">2. 账号安全与使用准则</h4>
+          <p>您应妥善保管自己的用户名及登录凭证。本平台支持以用户名或绑定邮箱作为登录凭证。您同意不对外转让、出租或非法共享账号。由于用户自身密码泄露导致的任何责任由用户自行承担。</p>
+          
+          <h4 class="font-bold text-white text-sm">3. AI 生成内容合规与知识产权</h4>
+          <p>您承诺在使用本平台运行 ComfyUI 流程时，遵守相关法律法规。禁止利用本平台算力生成、传播含有暴力、色情、侵犯他人肖像权与名誉权、危害国家安全等违法违规内容。合规运行所生成之成果知识产权归创作者所有。</p>
+          
+          <h4 class="font-bold text-white text-sm">4. 算力计费与服务变动</h4>
+          <p>平台算力额度根据不同工作流复杂度进行计算扣除。平台保留在法律允许范围内，因技术架构升级、算法更新或不可抗力对服务功能进行调整的权利。</p>
+        </div>
+        <div class="p-4 border-t border-slate-800 flex justify-end">
+          <button @click="showTermsModal = false" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow">
+            我已阅读并理解
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ================= 隐私合规政策 Modal ================= -->
+    <div v-if="showPrivacyModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md" @click.self="showPrivacyModal = false">
+      <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-lg w-full max-h-[80vh] flex flex-col shadow-2xl relative">
+        <div class="flex items-center justify-between p-5 border-b border-slate-800">
+          <div class="flex items-center gap-2">
+            <span class="text-base">🔒</span>
+            <h3 class="text-sm font-bold text-white">隐私合规保护政策</h3>
+          </div>
+          <button @click="showPrivacyModal = false" class="text-slate-400 hover:text-white text-xs p-1">✕</button>
+        </div>
+        <div class="p-6 overflow-y-auto space-y-4 text-xs text-slate-300 leading-relaxed">
+          <h4 class="font-bold text-white text-sm">1. 我们收集的信息</h4>
+          <p>为了保障账号安全与服务顺畅，我们收集您主动提供的注册用户名、电子邮箱地址，以及您在运行 ComfyUI 任务时提交的工作流参数与生成产物。</p>
+          
+          <h4 class="font-bold text-white text-sm">2. 密码加密与存储安全</h4>
+          <p>我们采用业界高强度 PBKDF2-HMAC-SHA256 算法（具备随机盐值与高达 100,000 次哈希迭代）对密码进行不可逆单向加密。系统服务器与任何平台管理人员均无法查阅您的原始明文密码。</p>
+          
+          <h4 class="font-bold text-white text-sm">3. 邮箱验证码的安全传输</h4>
+          <p>您在注册与重置密码时收到的邮箱验证码采用高位随机生成，有效期严格限定为 5 分钟，且实行一次性核销与频次防刷限制，绝不会将您的邮箱数据共享予任何商业第三方。</p>
+          
+          <h4 class="font-bold text-white text-sm">4. 数据自主权与销毁</h4>
+          <p>您可以随时向平台管理员申请清除历史生成记录、工作流缓存或注销账号。相关数据将在安全周期结束后彻底粉碎抹除。</p>
+        </div>
+        <div class="p-4 border-t border-slate-800 flex justify-end">
+          <button @click="showPrivacyModal = false" class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold shadow">
+            我已知晓并同意
+          </button>
+        </div>
+      </div>
     </div>
 
   </div>
@@ -250,60 +608,94 @@
 
     createApp({
       setup() {
-        const tab = ref('login');
+        const tab = ref('login'); // 'login' | 'register' | 'forgot'
         const siteTitle = ref('RunningHub Cloud Studio');
-        const showPassword = ref(false);
+        
+        // 密码显隐控制
+        const showLoginPassword = ref(false);
+        const showRegisterPassword = ref(false);
+        const showForgotPassword = ref(false);
+        
+        // 提交与发信加载态
         const isSubmitting = ref(false);
+        const isSendingCode = ref(false);
         const errorMessage = ref('');
         const successMessage = ref('');
         
+        // 协议 Modal 开关
+        const showTermsModal = ref(false);
+        const showPrivacyModal = ref(false);
+
+        // 系统配置
         const isFirstUser = ref(false);
         const turnstileEnabled = ref(false);
         const turnstileSiteKey = ref('');
         const turnstileToken = ref('');
+        const emailVerifyEnabled = ref(true);
         let turnstileWidgetId = null;
 
-        const form = ref({
+        // 验证码冷却倒计时
+        const registerCooldown = ref(0);
+        const resetCooldown = ref(0);
+        let cooldownTimer = null;
+
+        // 登录表单
+        const loginForm = ref({
+          identifier: '',
+          password: '',
+          agreeTerms: true
+        });
+
+        // 注册表单
+        const registerForm = ref({
           username: '',
           email: '',
           password: '',
-          confirmPassword: ''
+          confirmPassword: '',
+          code: '',
+          agreeTerms: true
         });
 
-        // 刷新渲染 Lucide 图标
-        const refreshIcons = () => {
-          nextTick(() => {
-            if (window.lucide) {
-              window.lucide.createIcons();
-            }
-          });
-        };
+        // 找回密码表单
+        const forgotForm = ref({
+          email: '',
+          code: '',
+          newPassword: '',
+          confirmPassword: '',
+          agreeTerms: true
+        });
 
-        // 切换 Tab (从 URL hash 自动支持 #register)
-        const switchTab = (newTab) => {
-          tab.value = newTab;
-          errorMessage.value = '';
-          successMessage.value = '';
-          refreshIcons();
-          // 如果开启了 Turnstile，切换 tab 时重置 token
-          if (turnstileEnabled.value && window.turnstile && turnstileWidgetId !== null) {
-            try {
-              window.turnstile.reset(turnstileWidgetId);
-              turnstileToken.value = '';
-            } catch (e) {}
+        // 启动倒计时逻辑
+        const startCooldown = (type) => {
+          if (type === 'register') {
+            registerCooldown.value = 60;
+          } else {
+            resetCooldown.value = 60;
           }
+          if (cooldownTimer) clearInterval(cooldownTimer);
+          cooldownTimer = setInterval(() => {
+            if (registerCooldown.value > 0) registerCooldown.value--;
+            if (resetCooldown.value > 0) resetCooldown.value--;
+            if (registerCooldown.value <= 0 && resetCooldown.value <= 0) {
+              clearInterval(cooldownTimer);
+              cooldownTimer = null;
+            }
+          }, 1000);
         };
 
-        // 渲染 Cloudflare Turnstile
+        // 挂载 Cloudflare Turnstile
         const renderTurnstile = () => {
           if (!turnstileEnabled.value || !turnstileSiteKey.value) return;
+          const targetId = tab.value === 'login' 
+            ? 'turnstile-container-login' 
+            : (tab.value === 'register' ? 'turnstile-container-register' : 'turnstile-container-forgot');
           
-          const tryRender = () => {
-            const container = document.getElementById('turnstile-container');
+          nextTick(() => {
+            const container = document.getElementById(targetId);
             if (window.turnstile && container) {
               container.innerHTML = '';
               try {
-                turnstileWidgetId = window.turnstile.render('#turnstile-container', {
+                turnstileWidgetId = window.turnstile.render('#' + targetId, {
                   sitekey: turnstileSiteKey.value,
                   theme: 'dark',
                   callback: (token) => {
@@ -320,13 +712,21 @@
                 console.error("Turnstile render error:", e);
               }
             } else {
-              setTimeout(tryRender, 200);
+              setTimeout(renderTurnstile, 200);
             }
-          };
-          nextTick(tryRender);
+          });
         };
 
-        // 读取公开配置 (Turnstile, 站点名称, 首次安装提示)
+        // 切换 Tab (login, register, forgot)
+        const switchTab = (newTab) => {
+          tab.value = newTab;
+          errorMessage.value = '';
+          successMessage.value = '';
+          turnstileToken.value = '';
+          renderTurnstile();
+        };
+
+        // 读取公开配置
         const loadPublicConfig = async () => {
           try {
             const res = await fetch('/api/auth/public-config');
@@ -336,6 +736,7 @@
               isFirstUser.value = !!data.isFirstUser;
               turnstileEnabled.value = !!data.turnstileEnabled;
               turnstileSiteKey.value = data.turnstileSiteKey || '';
+              emailVerifyEnabled.value = data.emailVerifyEnabled !== false;
               
               if (turnstileEnabled.value && turnstileSiteKey.value) {
                 renderTurnstile();
@@ -346,7 +747,7 @@
           }
         };
 
-        // 检查用户是否已登录 (如果已登录且有效，直接重定向回前台工作台)
+        // 检查用户是否已登录
         const checkExistingAuth = async () => {
           const token = localStorage.getItem('rh_auth_token');
           if (!token) return;
@@ -366,20 +767,68 @@
           }
         };
 
-        // 提交登录或注册
-        const handleSubmit = async () => {
+        // 发送邮箱验证码 (注册或重置)
+        const sendVerificationCode = async (purpose) => {
           errorMessage.value = '';
           successMessage.value = '';
 
-          if (tab.value === 'register') {
-            if (form.value.password.length < 6) {
-              errorMessage.value = '密码长度不能少于 6 位';
-              return;
+          const email = purpose === 'register' ? registerForm.value.email.trim() : forgotForm.value.email.trim();
+          if (!email) {
+            errorMessage.value = '请先输入您的电子邮箱地址';
+            return;
+          }
+          if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+            errorMessage.value = '请输入格式正确的电子邮箱（例如 name@example.com）';
+            return;
+          }
+
+          if (turnstileEnabled.value && !turnstileToken.value) {
+            errorMessage.value = '请先完成下方 Cloudflare 人机安全验证，再发送验证码';
+            return;
+          }
+
+          isSendingCode.value = true;
+          try {
+            const res = await fetch('/api/auth/send-code', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: email,
+                purpose: purpose,
+                turnstileToken: turnstileToken.value
+              })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              throw new Error(data.detail || '发送验证码失败');
             }
-            if (form.value.password !== form.value.confirmPassword) {
-              errorMessage.value = '两次输入的密码不一致，请仔细核对';
-              return;
+
+            successMessage.value = data.message || '验证码已发送至您的邮箱，请前往查收';
+            startCooldown(purpose);
+
+            // 发信成功后重置 turnstile，方便后续表单提交自动获取新凭证
+            if (turnstileEnabled.value && window.turnstile && turnstileWidgetId !== null) {
+              try {
+                window.turnstile.reset(turnstileWidgetId);
+                turnstileToken.value = '';
+              } catch(e){}
             }
+
+          } catch (err) {
+            errorMessage.value = err.message || '发信服务连接异常';
+          } finally {
+            isSendingCode.value = false;
+          }
+        };
+
+        // 提交登录
+        const handleLogin = async () => {
+          errorMessage.value = '';
+          successMessage.value = '';
+
+          if (!loginForm.value.agreeTerms) {
+            errorMessage.value = '请阅读并勾选同意《用户协议》和《隐私政策》';
+            return;
           }
 
           if (turnstileEnabled.value && !turnstileToken.value) {
@@ -389,32 +838,21 @@
 
           isSubmitting.value = true;
           try {
-            const url = tab.value === 'login' ? '/api/auth/login' : '/api/auth/register';
-            const payload = tab.value === 'login' 
-              ? {
-                  identifier: form.value.username.trim(),
-                  password: form.value.password,
-                  turnstileToken: turnstileToken.value
-                }
-              : {
-                  username: form.value.username.trim(),
-                  email: form.value.email.trim() || undefined,
-                  password: form.value.password,
-                  turnstileToken: turnstileToken.value
-                };
-
-            const res = await fetch(url, {
+            const res = await fetch('/api/auth/login', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload)
+              body: JSON.stringify({
+                identifier: loginForm.value.identifier.trim(),
+                password: loginForm.value.password,
+                agreeTerms: loginForm.value.agreeTerms,
+                turnstileToken: turnstileToken.value
+              })
             });
             const data = await res.json();
-
             if (!res.ok) {
-              throw new Error(data.detail || (tab.value === 'login' ? '登录失败，请检查账号密码' : '注册失败'));
+              throw new Error(data.detail || '登录失败，请检查账号密码');
             }
 
-            // 保存 Token 与用户信息
             if (data.token) {
               localStorage.setItem('rh_auth_token', data.token);
               if (data.user) {
@@ -422,13 +860,10 @@
               }
             }
 
-            successMessage.value = data.message || (tab.value === 'login' ? '登录成功，正在进入工作台...' : '注册成功！正在进入工作台...');
-            
-            // 跳转目标页面
+            successMessage.value = data.message || '登录成功，正在进入工作台...';
             setTimeout(() => {
               const params = new URLSearchParams(window.location.search);
               let redirect = params.get('redirect') || '/';
-              // 如果用户是管理员且想进后台
               if (data.user && data.user.role === 'admin' && redirect === '/admin') {
                 window.location.href = '/admin';
               } else {
@@ -437,8 +872,7 @@
             }, 600);
 
           } catch (err) {
-            errorMessage.value = err.message || '网络连接异常，请重试';
-            // 失败后如果开启了 Turnstile，重置人机验证
+            errorMessage.value = err.message || '网络连接异常';
             if (turnstileEnabled.value && window.turnstile && turnstileWidgetId !== null) {
               try {
                 window.turnstile.reset(turnstileWidgetId);
@@ -447,33 +881,206 @@
             }
           } finally {
             isSubmitting.value = false;
-            refreshIcons();
+          }
+        };
+
+        // 提交注册
+        const handleRegister = async () => {
+          errorMessage.value = '';
+          successMessage.value = '';
+
+          const form = registerForm.value;
+          if (!form.agreeTerms) {
+            errorMessage.value = '请阅读并勾选同意《用户协议》和《隐私政策》';
+            return;
+          }
+
+          const username = form.username.trim();
+          if (username.length < 3 || username.length > 25) {
+            errorMessage.value = '用户名长度需在 3 到 25 个字符之间';
+            return;
+          }
+
+          if (form.password.length < 8 || form.password.length > 20) {
+            errorMessage.value = '密码长度必须在 8 到 20 个字符之间';
+            return;
+          }
+
+          if (form.password !== form.confirmPassword) {
+            errorMessage.value = '两次输入的密码不一致，请仔细核对';
+            return;
+          }
+
+          if (!form.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) {
+            errorMessage.value = '请输入有效的电子邮箱';
+            return;
+          }
+
+          if (emailVerifyEnabled.value && !form.code) {
+            errorMessage.value = '请输入邮箱收到的 6 位数验证码';
+            return;
+          }
+
+          isSubmitting.value = true;
+          try {
+            const res = await fetch('/api/auth/register', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                username: username,
+                email: form.email.trim(),
+                password: form.password,
+                confirmPassword: form.confirmPassword,
+                code: form.code.trim(),
+                agreeTerms: form.agreeTerms,
+                turnstileToken: turnstileToken.value
+              })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              throw new Error(data.detail || '注册失败');
+            }
+
+            if (data.token) {
+              localStorage.setItem('rh_auth_token', data.token);
+              if (data.user) {
+                localStorage.setItem('rh_auth_user', JSON.stringify(data.user));
+              }
+            }
+
+            successMessage.value = data.message || '注册成功！正在进入工作台...';
+            setTimeout(() => {
+              const params = new URLSearchParams(window.location.search);
+              let redirect = params.get('redirect') || '/';
+              if (data.user && data.user.role === 'admin' && redirect === '/admin') {
+                window.location.href = '/admin';
+              } else {
+                window.location.href = redirect;
+              }
+            }, 700);
+
+          } catch (err) {
+            errorMessage.value = err.message || '网络连接异常';
+            if (turnstileEnabled.value && window.turnstile && turnstileWidgetId !== null) {
+              try {
+                window.turnstile.reset(turnstileWidgetId);
+                turnstileToken.value = '';
+              } catch (e) {}
+            }
+          } finally {
+            isSubmitting.value = false;
+          }
+        };
+
+        // 提交找回密码
+        const handleResetPassword = async () => {
+          errorMessage.value = '';
+          successMessage.value = '';
+
+          const form = forgotForm.value;
+          if (!form.agreeTerms) {
+            errorMessage.value = '请阅读并勾选同意《用户协议》和《隐私政策》';
+            return;
+          }
+
+          if (!form.email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) {
+            errorMessage.value = '请输入有效的电子邮箱';
+            return;
+          }
+
+          if (!form.code) {
+            errorMessage.value = '请输入邮箱收到的 6 位数重置验证码';
+            return;
+          }
+
+          if (form.newPassword.length < 8 || form.newPassword.length > 20) {
+            errorMessage.value = '新密码长度必须在 8 到 20 个字符之间';
+            return;
+          }
+
+          if (form.newPassword !== form.confirmPassword) {
+            errorMessage.value = '两次输入的新密码不一致，请仔细核对';
+            return;
+          }
+
+          isSubmitting.value = true;
+          try {
+            const res = await fetch('/api/auth/reset-password', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                email: form.email.trim(),
+                code: form.code.trim(),
+                newPassword: form.newPassword,
+                confirmPassword: form.confirmPassword,
+                agreeTerms: form.agreeTerms,
+                turnstileToken: turnstileToken.value
+              })
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              throw new Error(data.detail || '重置密码失败');
+            }
+
+            successMessage.value = data.message || '密码已成功重置，即将跳转登录页面...';
+            setTimeout(() => {
+              switchTab('login');
+              loginForm.value.identifier = form.email.trim();
+              loginForm.value.password = '';
+            }, 1200);
+
+          } catch (err) {
+            errorMessage.value = err.message || '网络连接异常';
+            if (turnstileEnabled.value && window.turnstile && turnstileWidgetId !== null) {
+              try {
+                window.turnstile.reset(turnstileWidgetId);
+                turnstileToken.value = '';
+              } catch (e) {}
+            }
+          } finally {
+            isSubmitting.value = false;
           }
         };
 
         onMounted(async () => {
-          if (window.location.hash === '#register') {
+          const params = new URLSearchParams(window.location.search);
+          const tabParam = params.get('tab');
+          if (tabParam === 'register' || window.location.hash === '#register') {
             tab.value = 'register';
+          } else if (tabParam === 'forgot' || window.location.hash === '#forgot') {
+            tab.value = 'forgot';
           }
           await checkExistingAuth();
           await loadPublicConfig();
-          refreshIcons();
         });
 
         return {
           tab,
           siteTitle,
-          showPassword,
+          showLoginPassword,
+          showRegisterPassword,
+          showForgotPassword,
           isSubmitting,
+          isSendingCode,
           errorMessage,
           successMessage,
+          showTermsModal,
+          showPrivacyModal,
           isFirstUser,
           turnstileEnabled,
           turnstileSiteKey,
           turnstileToken,
-          form,
+          emailVerifyEnabled,
+          registerCooldown,
+          resetCooldown,
+          loginForm,
+          registerForm,
+          forgotForm,
           switchTab,
-          handleSubmit
+          sendVerificationCode,
+          handleLogin,
+          handleRegister,
+          handleResetPassword
         };
       }
     }).mount('#app');
