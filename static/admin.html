@@ -44,6 +44,22 @@
     ::-webkit-scrollbar-thumb:hover {
       background: #475569;
     }
+    /* 全局防点击穿透与子元素吞事件优化，确保所有按钮点击 100% 灵敏响应 */
+    button, [role="button"] {
+      cursor: pointer;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
+    }
+    button > *, [role="button"] > * {
+      pointer-events: none !important;
+    }
+    button svg, button i, button span {
+      pointer-events: none !important;
+    }
+    button:disabled, button[disabled] {
+      cursor: not-allowed !important;
+      opacity: 0.6;
+    }
   </style>
 </head>
 <body class="bg-[#0b0f19] text-slate-100 min-h-screen font-sans antialiased flex flex-col md:flex-row overflow-x-hidden selection:bg-indigo-500 selection:text-white">
@@ -607,6 +623,7 @@
                           {{ u.isActive ? '停用' : '解封' }}
                         </button>
                         <button @click="openResetPassword(u)" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px]">改密</button>
+                        <button @click="deleteUserAccount(u)" class="px-2 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-800/60 text-rose-300 text-[11px] transition" title="彻底物理注销删除该用户所有数据">注销</button>
                       </td>
                     </tr>
                     <tr v-if="filteredUsers.length === 0">
@@ -739,13 +756,68 @@
                     class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
                 </div>
 
+                <!-- 计费规则与算力定价设置 (Requirement 3) -->
+                <div class="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
+                  <div class="flex items-center gap-2 pb-3 border-b border-slate-800/80">
+                    <i data-lucide="coins" class="w-4 h-4 text-amber-400"></i>
+                    <div>
+                      <div class="text-xs font-bold text-white">计费规则与算力定价设置</div>
+                      <div class="text-[11px] text-slate-400">采用纯运行秒数实时计费（排队时间严格不计费）。管理员可在此微调费率与启动门槛</div>
+                    </div>
+                  </div>
+
+                  <div class="grid grid-cols-1 sm:grid-cols-3 gap-4" v-if="systemConfig.pricing">
+                    <div>
+                      <label class="block text-xs font-medium text-slate-300 mb-1">
+                        Standard 档位费率 (币/秒)
+                      </label>
+                      <input 
+                        type="number" 
+                        step="0.01" 
+                        min="0.01" 
+                        v-model.number="systemConfig.pricing.standardRate" 
+                        placeholder="0.2"
+                        class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs font-mono text-amber-300 focus:outline-none focus:border-indigo-500">
+                      <p class="text-[10px] text-slate-500 mt-1">24GB 基础显存，推荐 0.2 币/秒</p>
+                    </div>
+
+                    <div>
+                      <label class="block text-xs font-medium text-slate-300 mb-1">
+                        Plus 档位费率 (币/秒)
+                      </label>
+                      <input 
+                        type="number" 
+                        step="0.01" 
+                        min="0.01" 
+                        v-model.number="systemConfig.pricing.plusRate" 
+                        placeholder="0.4"
+                        class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs font-mono text-indigo-300 focus:outline-none focus:border-indigo-500">
+                      <p class="text-[10px] text-slate-500 mt-1">48GB 极速显存，推荐 0.4 币/秒</p>
+                    </div>
+
+                    <div>
+                      <label class="block text-xs font-medium text-slate-300 mb-1">
+                        最低启动门槛 (点数)
+                      </label>
+                      <input 
+                        type="number" 
+                        step="0.5" 
+                        min="0" 
+                        v-model.number="systemConfig.pricing.minBalanceRequired" 
+                        placeholder="5.0"
+                        class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs font-mono text-emerald-300 focus:outline-none focus:border-indigo-500">
+                      <p class="text-[10px] text-slate-500 mt-1">普通用户账户余额下限，推荐 5.0 点</p>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="pt-2">
                   <button 
                     @click="saveSystemSettings" 
                     :disabled="savingSettings" 
                     class="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 disabled:opacity-50 transition flex items-center gap-2">
                     <span v-if="savingSettings" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block"></span>
-                    <span>保存并更新安全配置</span>
+                    <span>保存并更新系统配置与计费规则</span>
                   </button>
                 </div>
 
@@ -1825,7 +1897,7 @@
 
           <!-- 域名发信推荐引导卡片 -->
           <div class="p-2.5 rounded-xl bg-indigo-950/40 border border-indigo-500/20 text-[11px] text-indigo-300 leading-relaxed">
-            💡 <strong>域名发信推荐配置（Moyuu 同款）</strong>：<br>
+            💡 <strong>域名发信推荐配置（RunComfyui 同款）</strong>：<br>
             • <strong>阿里云 DirectMail</strong>：Host 填 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">smtpdm.aliyun.com</code>，端口 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">465</code>，账号填 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">admin@notify.你的域名.xyz</code><br>
             • <strong>腾讯企业邮箱</strong>：Host 填 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">smtp.exmail.qq.com</code>，端口 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">465</code><br>
             • <strong>个人 QQ 邮箱</strong>：Host 填 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">smtp.qq.com</code>，端口 <code class="bg-indigo-900/60 px-1 rounded text-white font-mono">465</code>
@@ -2091,7 +2163,7 @@
           <button 
             v-if="generatedCdkeys.length === 0"
             @click="submitGenerateCdkeys" 
-            :disabled="generatingCdkeys || generateCdkeyForm.points <= 0 || generateCdkeyForm.count <= 0"
+            :disabled="generatingCdkeys"
             class="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5">
             <span v-if="generatingCdkeys" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block"></span>
             <span>{{ generatingCdkeys ? '正在写入数据库...' : '确认批量发行' }}</span>
@@ -2442,7 +2514,7 @@
   <script>
     const { createApp, ref, computed, onMounted, nextTick, watch } = Vue;
 
-    createApp({
+    const app = createApp({
       setup() {
         const authChecked = ref(false);
         const currentUser = ref(null);
@@ -2583,7 +2655,7 @@
         const keys = ref([]);
 
         const systemConfig = ref({
-          siteTitle: 'RunningHub Cloud Studio',
+          siteTitle: 'RunComfyui 智能创作平台',
           allowRegistration: true,
           requireLoginToGenerate: false,
           turnstileEnabled: false,
@@ -2592,7 +2664,12 @@
           hasTurnstileSecret: false,
           turnstileSecretKeyMasked: '',
           defaultUserPoints: 100,
-          hideAuxiliaryAudioChain: true
+          hideAuxiliaryAudioChain: true,
+          pricing: {
+            standardRate: 0.2,
+            plusRate: 0.4,
+            minBalanceRequired: 5.0
+          }
         });
 
         // 弹窗状态
@@ -2753,7 +2830,13 @@
 
         const loadSystemSettings = async () => {
           const res = await authFetch('/api/admin/system');
-          if (res.ok) systemConfig.value = await res.json();
+          if (res.ok) {
+            const data = await res.json();
+            if (!data.pricing) {
+              data.pricing = { standardRate: 0.2, plusRate: 0.4, minBalanceRequired: 5.0 };
+            }
+            systemConfig.value = data;
+          }
         };
 
         const loadTasks = async () => {
@@ -3827,6 +3910,33 @@
           }
         };
 
+        const deleteUserAccount = async (u) => {
+          if (!u || !u.id) return;
+          const confirmed = await confirmAction({
+            title: `彻底注销并删除用户 [${u.username}]`,
+            message: `危险操作警告：确定要彻底注销用户【${u.username}】（ID: ${u.id}）吗？\n此操作将永久物理删除该用户账号、所有历史任务记录、生成图片/视频、点数变动流水，并解除卡密绑定。此操作不可逆！`,
+            confirmText: '确认永久注销',
+            cancelText: '取消',
+            type: 'danger'
+          });
+          if (!confirmed) return;
+
+          try {
+            const res = await authFetch(`/api/admin/users/${encodeURIComponent(u.id)}`, {
+              method: 'DELETE'
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+              showToastNotification(data.message || `用户【${u.username}】已被彻底注销删除`, 'success');
+              await loadUsers();
+            } else {
+              showToastNotification(data.detail || '注销用户失败', 'error');
+            }
+          } catch (e) {
+            showToastNotification('请求异常: ' + e.message, 'error');
+          }
+        };
+
         const openResetPassword = (u) => {
           resetPwdModal.value = { show: true, userId: u.id, username: u.username, newPassword: '' };
         };
@@ -4097,6 +4207,14 @@
         };
 
         const submitGenerateCdkeys = async () => {
+          if (!generateCdkeyForm.value.points || generateCdkeyForm.value.points <= 0) {
+            showToastNotification('请输入单张卡密点数（必须大于 0）', 'warning');
+            return;
+          }
+          if (!generateCdkeyForm.value.count || generateCdkeyForm.value.count <= 0 || generateCdkeyForm.value.count > 500) {
+            showToastNotification('单次生成数量必须在 1 ~ 500 张之间', 'warning');
+            return;
+          }
           generatingCdkeys.value = true;
           try {
             const res = await authFetch('/api/admin/cdkeys/generate', {
@@ -4315,6 +4433,7 @@
           submitEditPoints,
           toggleUserRole,
           toggleUserActive,
+          deleteUserAccount,
           openResetPassword,
           submitResetPassword,
           submitAddKey,
@@ -4356,7 +4475,13 @@
           galleryStatusFilter
         };
       }
-    }).mount('#app');
+    });
+
+    app.config.errorHandler = (err, vm, info) => {
+      console.warn('[Vue Error Captured]', err, info);
+    };
+
+    app.mount('#app');
   </script>
 </body>
 </html>

@@ -48,3 +48,21 @@ input[type="range"] {
     touch-action: manipulation;
   }
 }
+
+/* 全局按钮防点击吞没与穿透优化 */
+button, [role="button"] {
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+button > *, [role="button"] > * {
+  pointer-events: none !important;
+}
+button svg, button i, button span {
+  pointer-events: none !important;
+}
+button:disabled, button[disabled] {
+  cursor: not-allowed !important;
+  opacity: 0.6;
+}
+

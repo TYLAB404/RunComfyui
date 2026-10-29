@@ -31,7 +31,7 @@ EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 USERNAME_REGEX = re.compile(r"^[\u4e00-\u9fa5a-zA-Z0-9_\-]+$")
 RESERVED_USERNAMES = {
     "admin", "administrator", "root", "system", "sys", "official",
-    "runninghub", "moyuu", "support", "help", "bot", "vip", "null", "undefined",
+    "runninghub", "RunComfyui", "support", "help", "bot", "vip", "null", "undefined",
     "官方", "管理员", "系统", "客服", "管家", "超级管理员"
 }
 
@@ -224,7 +224,7 @@ async def register_user(req: RegisterRequest, request: Request, response: Respon
     if username.lower() in RESERVED_USERNAMES:
         raise HTTPException(status_code=400, detail="该用户名属于系统保留标识，请更换其他名称")
     
-    # 3. 密码格式与二次核对（对标 Moyuu: 8-20 个字符）
+    # 3. 密码格式与二次核对（对标 RunComfyui: 8-20 个字符）
     if len(req.password) < 8 or len(req.password) > 20:
         raise HTTPException(status_code=400, detail="密码长度必须在 8 到 20 个字符之间")
     if req.confirmPassword and req.password != req.confirmPassword:

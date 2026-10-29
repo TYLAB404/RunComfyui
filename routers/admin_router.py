@@ -95,6 +95,10 @@ class AdminSystemConfigRequest(BaseModel):
     imgbedRootFolder: Optional[str] = None
     imgbedIsolateByUser: Optional[bool] = None
     imgbedConcurrency: Optional[int] = None
+    pricing: Optional[Dict[str, Any]] = None
+    standardRate: Optional[float] = None
+    plusRate: Optional[float] = None
+    minBalanceRequired: Optional[float] = None
 
 
 class AnnouncementCreateRequest(BaseModel):
@@ -272,21 +276,27 @@ async def admin_reset_user_password(
 
 @router.delete("/api/admin/users/{user_id}")
 async def admin_delete_user(user_id: str, admin: Dict[str, Any] = Depends(get_current_admin)):
-    """管理员注销并物理删除用户"""
+    """管理员注销并物理删除用户所有账号数据"""
     if user_id == admin["id"]:
-        raise HTTPException(status_code=400, detail="无法删除当前正在登录的管理员账号")
+        raise HTTPException(status_code=400, detail="无法注销当前正在登录的管理员账号")
 
     target = get_user_by_id(user_id)
     if not target:
-        raise HTTPException(status_code=404, detail="用户不存在")
+        raise HTTPException(status_code=404, detail="目标用户不存在")
 
+    if target.get("role") == "admin":
+        admins = [u for u in load_users() if u.get("role") == "admin"]
+        if len(admins) <= 1:
+            raise HTTPException(status_code=400, detail="系统必须保留至少一位管理员，无法注销最后一位管理员")
+
+    # 实时 SSE 秒级踢人下线
     await notify_user(
         user_id=user_id,
         event_type="KICK_OFF",
-        data={"reason": "您的账号已被管理员注销，会话已终止"},
+        data={"reason": "您的账号已被管理员注销，所有数据已彻底清除，会话已终止"},
     )
     delete_user_by_id(user_id)
-    return {"status": "ok", "message": f"用户 {target.get('username')} 已被安全删除"}
+    return {"status": "ok", "message": f"用户「{target.get('username')}」账号及其所有历史数据已彻底注销删除"}
 
 
 # ==================== 3. 系统配置 ====================
@@ -348,6 +358,22 @@ def admin_update_system_config(
         raw_header = req.imgbedAuthHeader.strip()
         if not raw_header.startswith("****") and "****" not in raw_header:
             sys_cfg["imgbedAuthHeaderEncrypted"] = encrypt_key(raw_header)
+
+    # 计费规则与算力定价设置
+    pricing_cfg = sys_cfg.setdefault("pricing", {})
+    if req.pricing is not None and isinstance(req.pricing, dict):
+        if "standardRate" in req.pricing:
+            pricing_cfg["standardRate"] = max(0.01, round(float(req.pricing["standardRate"]), 3))
+        if "plusRate" in req.pricing:
+            pricing_cfg["plusRate"] = max(0.01, round(float(req.pricing["plusRate"]), 3))
+        if "minBalanceRequired" in req.pricing:
+            pricing_cfg["minBalanceRequired"] = max(0.0, round(float(req.pricing["minBalanceRequired"]), 2))
+    if req.standardRate is not None:
+        pricing_cfg["standardRate"] = max(0.01, round(float(req.standardRate), 3))
+    if req.plusRate is not None:
+        pricing_cfg["plusRate"] = max(0.01, round(float(req.plusRate), 3))
+    if req.minBalanceRequired is not None:
+        pricing_cfg["minBalanceRequired"] = max(0.0, round(float(req.minBalanceRequired), 2))
 
     save_config(cfg)
     safe_data = get_system_config_safe(cfg)

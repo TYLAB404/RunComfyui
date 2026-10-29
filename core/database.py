@@ -2,7 +2,7 @@ import os
 import sqlite3
 import json
 import time
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Union
 import secrets
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -192,6 +192,7 @@ def init_database():
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cdkeys_is_used ON cdkeys (is_used);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cdkeys_is_void ON cdkeys (is_void);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_cdkeys_created_at ON cdkeys (created_at DESC);")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_cdkeys_used_by_user_id ON cdkeys (used_by_user_id);")
 
 
         # 5. 自动无损增量同步字段 (避免 SQLite 重建表)
@@ -457,66 +458,68 @@ def db_get_user_task_counts() -> Dict[str, int]:
 
 # ----------------- 积分计费原子操作与流水账本 (P0-5 资产防超卖与防并发并发) -----------------
 
-def db_deduct_user_points(user_id: str, amount: int, task_id: str = "", reason: str = "工作流生图扣费") -> Tuple[bool, int, str]:
+def db_deduct_user_points(user_id: str, amount: Union[int, float], task_id: str = "", reason: str = "工作流生图扣费") -> Tuple[bool, float, str]:
     """
     原子扣减用户积分：
     采用 SQL 原生条件更新 UPDATE ... WHERE points >= amount，彻底杜绝并发下余额扣成负数！
+    支持浮点数秒级计时扣费，严格保留两位小数。
     返回 (成功标志, 扣后余额, 错误信息)
     """
-    if amount <= 0:
+    amt = round(float(amount), 2)
+    if amt <= 0:
         with get_db_connection() as conn:
             c = conn.cursor()
             c.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
             r = c.fetchone()
-            return True, (r[0] if r else 0), ""
+            return True, (round(float(r[0]), 2) if r else 0.0), ""
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        # 1. 原子条件扣减
+        # 1. 原子条件扣减 (round to 2 decimals)
         cursor.execute(
-            "UPDATE users SET points = points - ? WHERE id = ? AND points >= ? AND is_active = 1;",
-            (amount, str(user_id), amount)
+            "UPDATE users SET points = round(points - ?, 2) WHERE id = ? AND points >= ? AND is_active = 1;",
+            (amt, str(user_id), amt)
         )
         if cursor.rowcount == 0:
-            # 扣减失败，查询当前状态
             cursor.execute("SELECT points, is_active FROM users WHERE id = ?;", (str(user_id),))
             row = cursor.fetchone()
             if not row:
-                return False, 0, "用户不存在"
+                return False, 0.0, "用户不存在"
             if not row[1]:
-                return False, row[0], "用户账户已被封禁，禁止消费"
-            return False, row[0], f"算力点数不足（当前余额: {row[0]}, 本次需要: {amount}）"
+                return False, round(float(row[0]), 2), "用户账户已被封禁，禁止消费"
+            return False, round(float(row[0]), 2), f"算力点数不足（当前余额: {round(float(row[0]), 2)}, 本次需要: {amt}）"
 
         # 2. 查询扣减后最新余额
         cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
-        new_balance = cursor.fetchone()[0]
+        new_balance = round(float(cursor.fetchone()[0]), 2)
 
         # 3. 记录流水台账
         ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"
         cursor.execute("""
         INSERT INTO points_ledger (id, user_id, task_id, amount, balance_after, reason, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?);
-        """, (ledger_id, str(user_id), str(task_id), -amount, new_balance, reason, int(time.time())))
+        """, (ledger_id, str(user_id), str(task_id), -amt, new_balance, reason, int(time.time())))
 
         conn.commit()
         return True, new_balance, "扣费成功"
 
-def db_refund_user_points(user_id: str, amount: int, task_id: str = "", reason: str = "生图失败/取消退款") -> Tuple[bool, int]:
+def db_refund_user_points(user_id: str, amount: Union[int, float], task_id: str = "", reason: str = "生图失败/取消退款") -> Tuple[bool, float]:
     """原子退还用户积分，并写入退款对账流水"""
-    if amount <= 0:
-        return True, 0
+    amt = round(float(amount), 2)
+    if amt <= 0:
+        return True, 0.0
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET points = points + ? WHERE id = ?;", (amount, str(user_id)))
+        cursor.execute("UPDATE users SET points = round(points + ?, 2) WHERE id = ?;", (amt, str(user_id)))
         cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
         row = cursor.fetchone()
-        new_balance = row[0] if row else 0
+        new_balance = round(float(row[0]), 2) if row else 0.0
 
         ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"
         cursor.execute("""
         INSERT INTO points_ledger (id, user_id, task_id, amount, balance_after, reason, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?);
-        """, (ledger_id, str(user_id), str(task_id), amount, new_balance, reason, int(time.time())))
+        """, (ledger_id, str(user_id), str(task_id), amt, new_balance, reason, int(time.time())))
         conn.commit()
         return True, new_balance
 
@@ -536,6 +539,33 @@ def db_get_token_version(user_id: str) -> int:
         cursor.execute("SELECT token_version FROM users WHERE id = ?;", (str(user_id),))
         row = cursor.fetchone()
         return row[0] if row else 1
+
+def db_delete_user_completely(user_id: str) -> Dict[str, int]:
+    """
+    彻底注销并物理删除指定用户的所有数据：
+    1. 删除 users 表账号记录
+    2. 删除 tasks 表该用户的所有生成任务
+    3. 删除 points_ledger 表该用户的所有点数台账流水
+    4. 解除 cdkeys 表对该用户的关联标记 (避免外键关联悬空)
+    返回删除的统计指标
+    """
+    user_id_str = str(user_id).strip()
+    stats = {"tasks": 0, "ledger": 0, "user": 0}
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE user_id = ?;", (user_id_str,))
+        stats["tasks"] = cursor.rowcount
+        
+        cursor.execute("DELETE FROM points_ledger WHERE user_id = ?;", (user_id_str,))
+        stats["ledger"] = cursor.rowcount
+        
+        cursor.execute("UPDATE cdkeys SET used_by_user_id = '', used_by_username = '[注销用户]' WHERE used_by_user_id = ?;", (user_id_str,))
+        
+        cursor.execute("DELETE FROM users WHERE id = ?;", (user_id_str,))
+        stats["user"] = cursor.rowcount
+        
+        conn.commit()
+    return stats
 
 # ----------------- 公告表 (Announcements) 封装操作 -----------------
 
@@ -924,3 +954,31 @@ def db_atomic_cancel_and_refund(task_id: str, reason: str = "任务取消退款"
 
         conn.commit()
         return True, f"已成功取消并退还 {original_cost} 算力点", new_bal
+
+
+def db_get_user_cdkey_history(user_id: str) -> List[Dict[str, Any]]:
+    """查询指定用户使用兑换码（卡密）的充值历史记录"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT code, points, used_at, remark
+            FROM cdkeys
+            WHERE used_by_user_id = ? AND is_used = 1
+            ORDER BY used_at DESC;
+            """,
+            (str(user_id),)
+        )
+        rows = cursor.fetchall()
+        result = []
+        for r in rows:
+            code = str(r[0] or "")
+            masked = (code[:4] + "****" + code[-4:]) if len(code) > 8 else "****"
+            result.append({
+                "code": masked,
+                "points": r[1],
+                "usedAt": r[2],
+                "remark": r[3] or "卡密兑换充值"
+            })
+        return result
+

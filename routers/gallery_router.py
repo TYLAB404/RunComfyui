@@ -28,6 +28,8 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
     seen = set()
     for t in tasks:
         created_at = t.get("createdAt", int(time.time()))
+        task_id = t.get("taskId")
+        valid_outs = []
         for out in t.get("outputs", []):
             if out.get("userHidden") or out.get("isTakedown"):
                 continue
@@ -35,10 +37,14 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
             if not url or url.startswith("data:"):
                 continue
             fname = out.get("filename") or os.path.basename(url.split("?")[0])
-            fp = f"{t.get('taskId')}_{fname}"
+            fp = f"{task_id}_{fname}"
             if fp in seen:
                 continue
             seen.add(fp)
+            valid_outs.append((out, fname, url))
+
+        batch_total = len(valid_outs)
+        for idx, (out, fname, url) in enumerate(valid_outs):
             file_type = out.get("fileType")
             if not file_type or file_type == "image":
                 file_type = infer_media_type(fname, "image")
@@ -49,7 +55,10 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
                 "size": out.get("size", 0),
                 "createdAt": created_at,
                 "fileType": file_type,
-                "taskId": t.get("taskId"),
+                "taskId": task_id,
+                "batchIndex": idx + 1,
+                "batchTotal": batch_total,
+                "batchLabel": f"{idx + 1}/{batch_total}" if batch_total > 1 else "",
                 "username": t.get("username", ""),
                 "positivePrompt": t.get("positivePrompt", ""),
                 "workflowName": t.get("workflowName", "") or t.get("workflowId", ""),

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>RunningHub 云端工作流自适应控制台</title>
+  <title>RunComfyui - 极速云端工作流创作平台</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Vue 3 -->
@@ -68,9 +68,9 @@
         </div>
         <div>
           <h1 class="text-sm sm:text-base lg:text-lg font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent truncate max-w-[140px] sm:max-w-none">
-            {{ publicConfig.siteTitle || 'RunningHub 自适应控制台' }}
+            {{ publicConfig.siteTitle || 'RunComfyui' }}
           </h1>
-          <p class="text-[10px] sm:text-xs text-slate-400 hidden lg:block">智能解析 ComfyUI 云端拓扑 · 全节点参数自由修改 · 纯远端直链隐私安全</p>
+          <p class="text-[10px] sm:text-xs text-slate-400 hidden lg:block">AI 智能创作平台 · 丰富工作流预设 · 极速云端渲染</p>
         </div>
       </div>
 
@@ -398,9 +398,9 @@
             <div class="flex items-center justify-between">
               <label class="text-xs font-semibold text-slate-300 uppercase tracking-wider flex items-center gap-2">
                 <span>⚡ 当前工作流</span>
-                <span v-if="isLoadingSchema" class="text-indigo-400 text-[11px] animate-pulse">正在动态拉取云端节点...</span>
+                <span v-if="isLoadingSchema" class="text-indigo-400 text-[11px] animate-pulse">正在准备工作流...</span>
                 <span v-else-if="dynamicSchema" class="text-emerald-400 text-[11px] bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 rounded-full">
-                  已解析 {{ dynamicSchemaTotalNodes }} 个节点拓扑
+                  工作流参数已就绪
                 </span>
               </label>
               <button @click="activeTab = 'workflows'" class="text-xs text-indigo-400 hover:underline">+ 导入新工作流</button>
@@ -477,7 +477,6 @@
                 <label class="text-xs font-semibold text-slate-200 flex items-center gap-2">
                   <span class="w-2 h-2 rounded-full" :class="pNode.role === 'positive' ? 'bg-indigo-500' : (pNode.role === 'negative' ? 'bg-amber-500' : 'bg-purple-500')"></span>
                   <span>{{ pNode.label }}</span>
-                  <span class="text-[10px] font-mono text-indigo-400 bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-800/40">Node #{{ pNode.nodeId }}</span>
                 </label>
                 <div v-if="pNode.role === 'positive'" class="flex gap-1.5">
                   <button @click="pNode.currentValue += ', masterpiece, 8k resolution, cinematic lighting'" class="text-[11px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded">电影质感</button>
@@ -487,7 +486,7 @@
               <textarea 
                 v-model="pNode.currentValue" 
                 rows="3" 
-                :placeholder="'请输入 Node #' + pNode.nodeId + ' 对应提示词内容...'"
+                :placeholder="pNode.role === 'negative' ? '请输入反向提示词（不想出现的画面元素）...' : '请输入创意提示词（如画面主体、场景细节、艺术风格）...'"
                 class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-sm text-slate-100 placeholder-slate-600 focus:outline-none focus:border-indigo-500 transition"></textarea>
             </div>
           </div>
@@ -497,11 +496,10 @@
             <div v-for="imgNode in dynamicImages" :key="imgNode.nodeId" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
               <div class="flex items-center justify-between">
                 <label class="text-xs font-semibold text-slate-300 flex items-center gap-2">
-                  <span>🖼 参考图/输入图</span>
-                  <span class="text-[10px] font-mono text-indigo-400 bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-800/40">Node #{{ imgNode.nodeId }}</span>
+                  <span>🖼 参考图 / 输入图</span>
                 </label>
                 <span v-if="imgNode.uploadedFileName" class="text-xs text-emerald-400 flex items-center gap-1">
-                  <span>✓ 已上传云端:</span>
+                  <span>✓ 已上传:</span>
                   <span class="font-mono text-[10px] max-w-[140px] truncate" :title="imgNode.uploadedFileName">{{ imgNode.uploadedFileName }}</span>
                 </span>
               </div>
@@ -509,8 +507,8 @@
                 <label class="cursor-pointer flex-1 border border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-3 text-center transition bg-slate-950">
                   <input type="file" accept="image/*" @change="e => handleNodeImageUpload(e, imgNode)" class="hidden">
                   <div class="text-xs text-slate-400">
-                    <span v-if="!imgNode.isUploading">📁 点击选择或拖入本地图片（自动上传至 RunningHub OpenAPI）</span>
-                    <span v-else class="text-indigo-400 animate-pulse">正在极速上传至 RunningHub...</span>
+                    <span v-if="!imgNode.isUploading">📁 点击选择或拖入本地图片</span>
+                    <span v-else class="text-indigo-400 animate-pulse">正在上传图片...</span>
                   </div>
                 </label>
                 <div v-if="imgNode.previewUrl" class="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-700 bg-black flex-shrink-0">
@@ -530,13 +528,12 @@
             </div>
           </div>
 
-          <!-- 3. 动态多媒体输入: 参考视频输入 (VHS_LoadVideo) -->
+          <!-- 3. 动态多媒体输入: 参考视频输入 -->
           <div v-if="dynamicVideos.length > 0" class="space-y-3">
             <div v-for="vidNode in dynamicVideos" :key="vidNode.nodeId" class="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3">
               <div class="flex items-center justify-between">
                 <label class="text-xs font-semibold text-slate-300 flex items-center gap-2">
-                  <span>🎬 参考视频/输入视频</span>
-                  <span class="text-[10px] font-mono text-indigo-400 bg-indigo-950/80 px-1.5 py-0.5 rounded border border-indigo-800/40">Node #{{ vidNode.nodeId }} (VHS_LoadVideo)</span>
+                  <span>🎬 参考视频 / 输入视频</span>
                 </label>
                 <span v-if="vidNode.uploadedFileName" class="text-xs text-emerald-400 flex items-center gap-1">
                   <span>✓ 视频已就绪:</span>
@@ -547,8 +544,8 @@
                 <label class="cursor-pointer flex-1 border border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-3 text-center transition bg-slate-950">
                   <input type="file" accept="video/*" @change="e => handleNodeVideoUpload(e, vidNode)" class="hidden">
                   <div class="text-xs text-slate-400">
-                    <span v-if="!vidNode.isUploading">🎞️ 点击选择或拖入参考视频 (MP4/WebM，自动上传云端)</span>
-                    <span v-else class="text-indigo-400 animate-pulse">正在上传视频至 RunningHub...</span>
+                    <span v-if="!vidNode.isUploading">🎞️ 点击选择或拖入参考视频 (MP4/WebM)</span>
+                    <span v-else class="text-indigo-400 animate-pulse">正在上传视频...</span>
                   </div>
                 </label>
                 <div v-if="vidNode.previewUrl" class="relative w-16 h-14 rounded-lg overflow-hidden border border-slate-700 bg-black flex-shrink-0">
@@ -614,7 +611,6 @@
               <div class="flex justify-between items-center text-xs text-slate-300">
                 <span class="flex items-center gap-1.5">
                   <span>画质基准分辨率 (边长/像素)</span>
-                  <span class="text-[10px] font-mono text-indigo-400 bg-indigo-950 px-1 py-0.5 rounded border border-indigo-800/40">Node #{{ q.nodeId }}</span>
                 </span>
                 <span class="text-indigo-400 font-mono font-bold">{{ q.currentValue }}px</span>
               </div>
@@ -654,7 +650,6 @@
             <div class="flex items-center justify-between">
               <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-2">
                 <span>⚙️ 采样算法与推理步数</span>
-                <span class="text-[10px] font-mono text-slate-400">Node #{{ dynamicSampler.nodeId }} ({{ dynamicSampler.class_type }})</span>
               </h3>
             </div>
             
@@ -698,7 +693,7 @@
               class="p-4 flex items-center justify-between cursor-pointer hover:bg-slate-800/40 select-none transition border-b border-slate-800/50">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-bold text-white flex items-center gap-1.5">
-                  <span>🛠️</span> <span>全部节点底层参数</span>
+                  <span>🛠️</span> <span>高级参数微调</span>
                 </span>
                 <span v-if="modifiedParamsCount > 0" class="text-[11px] bg-indigo-950 text-indigo-300 border border-indigo-700/60 px-2 py-0.5 rounded-full font-mono font-semibold">
                   已调整 {{ modifiedParamsCount }} 项
@@ -717,7 +712,7 @@
               <div class="flex items-center justify-between gap-3 bg-indigo-950/30 border border-indigo-800/40 p-2.5 rounded-xl text-xs text-indigo-300">
                 <div class="flex items-center gap-2">
                   <span>💡</span>
-                  <span><strong>零注入铁律</strong>：未修改的参数严格保留云端原样运行，仅提交您在此处调整或输入的字段！</span>
+                  <span><strong>提示</strong>：未调整的参数将保持默认预设，仅提交您修改的参数。</span>
                 </div>
                 <div class="w-48 flex-shrink-0">
                   <input 
@@ -1102,12 +1097,36 @@
                 <span>⚡</span> <span>任务运行规格与算力通道</span>
               </span>
               <span class="text-[11px] font-mono text-indigo-400">
-                {{ selectedTaskType === 'Standard' ? 'Standard 标准独享 · 极速出图 (约0.2币/秒)' : 'Lite 经济共享 · 慢速排队 (约0.02币/秒)' }}
+                {{ selectedTaskType === 'Plus' ? 'Plus 极速档 · 48GB 独享显存 (0.4 币/秒，免排队)' : 'Standard 标准档 · 24GB 基础显存 (0.2 币/秒)' }}
               </span>
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <!-- Standard 档位 (推荐) -->
+              <!-- Plus 极速档位 (高档位 · 推荐) -->
+              <div 
+                @click="selectedTaskType = 'Plus'"
+                class="cursor-pointer p-3 rounded-xl border transition relative flex flex-col justify-between"
+                :class="selectedTaskType === 'Plus' ? 'bg-indigo-950/70 border-indigo-500 shadow-lg shadow-indigo-950/50 ring-1 ring-indigo-500' : 'bg-slate-950/80 border-slate-800 hover:border-slate-700 text-slate-400'">
+                <div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-bold flex items-center gap-1" :class="selectedTaskType === 'Plus' ? 'text-indigo-300' : 'text-slate-300'">
+                      <span>🚀</span> <span>Plus 极速任务</span>
+                    </span>
+                    <span class="text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-1.5 py-0.2 rounded font-semibold">
+                      推荐 · 免排队
+                    </span>
+                  </div>
+                  <p class="text-[11px] mt-1 text-slate-400 leading-snug">
+                    48GB 独享超大显存，秒级调度快速出图，纯按实际运行时间计费（排队时间不计费）。
+                  </p>
+                </div>
+                <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
+                  <span class="text-slate-500">消耗速率:</span>
+                  <span class="font-bold text-indigo-400">0.4 币 / 秒</span>
+                </div>
+              </div>
+
+              <!-- Standard 标准档位 (低档位) -->
               <div 
                 @click="selectedTaskType = 'Standard'"
                 class="cursor-pointer p-3 rounded-xl border transition relative flex flex-col justify-between"
@@ -1115,43 +1134,19 @@
                 <div>
                   <div class="flex items-center justify-between">
                     <span class="text-xs font-bold flex items-center gap-1" :class="selectedTaskType === 'Standard' ? 'text-indigo-300' : 'text-slate-300'">
-                      <span>🚀</span> <span>Standard 任务</span>
-                    </span>
-                    <span class="text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-1.5 py-0.2 rounded font-semibold">
-                      推荐 · 极速75秒
-                    </span>
-                  </div>
-                  <p class="text-[11px] mt-1 text-slate-400 leading-snug">
-                    独立 GPU 算力通道，秒级调度运行，显存充足不爆内存，解决漫长排队问题。
-                  </p>
-                </div>
-                <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
-                  <span class="text-slate-500">消耗速率:</span>
-                  <span class="font-bold text-indigo-400">0.2 RH币 / 秒</span>
-                </div>
-              </div>
-
-              <!-- Lite 档位 (经济版) -->
-              <div 
-                @click="selectedTaskType = 'Lite'"
-                class="cursor-pointer p-3 rounded-xl border transition relative flex flex-col justify-between"
-                :class="selectedTaskType === 'Lite' ? 'bg-indigo-950/70 border-indigo-500 shadow-lg shadow-indigo-950/50 ring-1 ring-indigo-500' : 'bg-slate-950/80 border-slate-800 hover:border-slate-700 text-slate-400'">
-                <div>
-                  <div class="flex items-center justify-between">
-                    <span class="text-xs font-bold flex items-center gap-1" :class="selectedTaskType === 'Lite' ? 'text-indigo-300' : 'text-slate-300'">
-                      <span>🌱</span> <span>Lite 任务</span>
+                      <span>⚖️</span> <span>Standard 标准任务</span>
                     </span>
                     <span class="text-[9px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-1.5 py-0.2 rounded font-semibold">
-                      经济实惠
+                      经济实用
                     </span>
                   </div>
                   <p class="text-[11px] mt-1 text-slate-400 leading-snug">
-                    共享低速排队队列，显存较小，消耗极少，高峰期需等待数百秒以上。
+                    24GB 基础显存，标准出图，性价比之选，纯按实际工作流运行秒数结算。
                   </p>
                 </div>
                 <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
                   <span class="text-slate-500">消耗速率:</span>
-                  <span class="font-bold text-emerald-400">0.02 RH币 / 秒</span>
+                  <span class="font-bold text-emerald-400">0.2 币 / 秒</span>
                 </div>
               </div>
             </div>
@@ -1297,7 +1292,7 @@
                     </div>
 
                     <p class="text-xs text-slate-400 leading-relaxed">
-                      {{ latestTask.status === 'QUEUED' ? '正在等待 RunningHub 云端分配 GPU 实例，算力就绪后将全速渲染' : '已接入 WebSocket 实时截流管道，中间预览或成片即时直出' }}
+                      {{ latestTask.status === 'QUEUED' ? '正在等待云端分配 GPU 算力实例（排队不计费），算力就绪后全速渲染' : '正在生成渲染中，画面正在实时回传...' }}
                     </p>
                   </div>
 
@@ -1339,7 +1334,7 @@
                   :class="activeOutputIndex === idx ? 'bg-indigo-600 text-white shadow' : 'bg-slate-950 border border-slate-800 text-slate-400 hover:text-slate-200'"
                   class="text-[11px] px-2.5 py-1 rounded-lg font-mono transition flex items-center gap-1">
                   <span>{{ isVideoOutput(out) ? '🎬' : (isAudioOutput(out) ? '🎵' : '🖼') }}</span>
-                  <span>{{ out.isRealtime ? '⚡ 截流预览' : ('Node #' + (out.nodeId || idx)) }}</span>
+                  <span>{{ out.isRealtime ? '⚡ 实时预览' : ('输出成果 ' + (idx + 1)) }}</span>
                 </button>
               </div>
             </div>
@@ -1384,7 +1379,7 @@
               选择创作工作流，开启灵感渲染
             </h2>
             <p class="text-xs sm:text-sm text-slate-400 leading-relaxed">
-              选择官方预置的优质 ComfyUI 拓扑模板，或直接上传您的本地工作流。选定后将自动进入专注调参工作台。
+              选择官方精选的创作工作流，或直接上传您的本地工作流，即刻开启创作。
             </p>
           </div>
 
@@ -1415,7 +1410,7 @@
               </div>
               <div class="flex-1 min-w-0">
                 <h4 class="text-sm font-bold text-white group-hover:text-purple-300 transition">接入云端工作流 ID</h4>
-                <p class="text-xs text-slate-400 mt-0.5 truncate">输入已发布的 RunningHub 工作流 ID 自动探测入库</p>
+                <p class="text-xs text-slate-400 mt-0.5 truncate">输入云端工作流 ID 自动快速接入</p>
               </div>
             </div>
           </div>
@@ -1682,25 +1677,10 @@
                   </td>
                   <td class="p-3 text-right whitespace-nowrap">
                     <button 
-                      v-if="currentUser && currentUser.role === 'admin'"
-                      @click="focusedTaskId = t.taskId; activeTab = 'workspace'" 
-                      class="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-[11px] font-medium transition inline-flex items-center gap-1 shadow-sm mr-1.5"
-                      title="在大屏聚焦监视此任务">
-                      <span>🖥 监视</span>
-                    </button>
-                    <button 
                       v-if="t.status === 'RUNNING' || t.status === 'QUEUED'" 
                       @click="cancelTask(t.taskId)" 
                       class="px-2.5 py-1 bg-rose-950/60 hover:bg-rose-900 text-rose-300 border border-rose-800 rounded-lg text-[11px] font-semibold transition inline-flex items-center gap-1 shadow-sm">
                       <span>🚫</span> <span>取消</span>
-                    </button>
-                    <button 
-                      v-else-if="t.status === 'SUCCESS'"
-                      @click="activeTab = 'gallery'" 
-                      class="px-2.5 py-1 bg-indigo-950/60 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/80 rounded-lg text-[11px] font-medium transition inline-flex items-center gap-1 shadow-sm"
-                      title="前往画廊查看生成成果">
-                      <i data-lucide="image" class="w-3.5 h-3.5"></i>
-                      <span>查看画廊</span>
                     </button>
                     <span v-else class="text-slate-600 text-xs">-</span>
                   </td>
@@ -1741,7 +1721,7 @@
             class="bg-slate-900/90 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 flex flex-col sm:flex-row gap-4 shadow-lg transition duration-200">
             
             <!-- 左侧媒体预览区: 统一规格尺寸 (宽高固定一致，图片/视频 cover 填充，点击查看原图原片) -->
-            <div class="relative w-full sm:w-44 h-44 rounded-xl overflow-hidden bg-black/80 flex-shrink-0 flex items-center justify-center cursor-pointer group" @click="openLightbox(item.url)">
+            <div class="relative w-full sm:w-44 h-44 rounded-xl overflow-hidden bg-black/80 flex-shrink-0 flex items-center justify-center cursor-pointer group" @click="openLightbox(item.url, item)">
               <!-- 音频成果 -->
               <div v-if="item.fileType === 'audio' || isAudioOutput(item)" class="w-full h-full flex flex-col items-center justify-center p-3 bg-slate-950 text-center gap-2">
                 <span class="text-3xl text-indigo-400">🎵</span>
@@ -1771,8 +1751,13 @@
                 loading="lazy"
                 class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
 
-              <!-- 右上角类型微标 -->
-              <div class="absolute top-2 right-2 pointer-events-none">
+              <!-- 右上角类型微标与同组成果标注 -->
+              <div class="absolute top-2 right-2 pointer-events-none flex items-center gap-1">
+                <span 
+                  v-if="item.batchTotal > 1" 
+                  class="px-2 py-0.5 rounded-md text-[10px] font-bold font-mono bg-purple-600/90 text-white backdrop-blur-md shadow-sm">
+                  同组 {{ item.batchLabel }}
+                </span>
                 <span 
                   class="px-2 py-0.5 rounded-md text-[10px] font-bold uppercase tracking-wider backdrop-blur-md shadow-sm" 
                   :class="item.fileType === 'video' ? 'bg-indigo-600/90 text-white' : item.fileType === 'audio' ? 'bg-emerald-600/90 text-white' : 'bg-black/60 text-slate-200 border border-white/10'">
@@ -1799,8 +1784,11 @@
                   {{ item.positivePrompt || item.filename }}
                 </h3>
 
-                <!-- 属性标签药丸行 (工作流名称、消耗代币、耗时) -->
+                <!-- 属性标签药丸行 (工作流名称、同组标识、消耗代币、耗时) -->
                 <div class="flex flex-wrap items-center gap-1.5 mt-2.5">
+                  <span v-if="item.batchTotal > 1" class="px-2 py-0.5 rounded-lg text-[11px] font-mono font-semibold bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                    同组成果 · {{ item.batchIndex }}/{{ item.batchTotal }}
+                  </span>
                   <span class="px-2.5 py-0.5 rounded-lg text-[11px] font-medium bg-indigo-500/15 text-indigo-300 border border-indigo-500/30 truncate max-w-[170px]" :title="item.workflowName">
                     {{ item.workflowName || 'ComfyUI 流程' }}
                   </span>
@@ -1906,7 +1894,7 @@
 
     </main>
 
-    <!-- ================= Moyuu 风格: 用户登录与注册弹窗 (支持 Cloudflare Turnstile) ================= -->
+    <!-- ================= RunComfyui 风格: 用户登录与注册弹窗 (支持 Cloudflare Turnstile) ================= -->
     <div v-if="showAuthModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
       <div class="fixed inset-0" @click="closeAuthModal"></div>
       
@@ -2124,7 +2112,11 @@
     </div>
 
     <!-- 灯箱 (Lightbox) 放大弹窗 (双轨支持视频播放与图像放大) -->
-    <div v-if="lightboxUrl" class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" @click.self="lightboxUrl = null">
+    <div v-if="lightboxUrl" class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" @click.self="lightboxUrl = null; lightboxItem = null">
+      <div v-if="lightboxItem && lightboxItem.batchTotal > 1" class="absolute top-4 left-4 bg-purple-950/80 border border-purple-500/40 text-purple-200 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold shadow-lg backdrop-blur-md flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+        <span>同组成果 · {{ lightboxItem.batchIndex }} / {{ lightboxItem.batchTotal }}</span>
+      </div>
       <video 
         v-if="isVideoUrl(lightboxUrl)" 
         :src="lightboxUrl" 
@@ -2137,7 +2129,7 @@
         v-else 
         :src="lightboxUrl" 
         class="max-w-full max-h-full object-contain rounded-lg shadow-2xl">
-      <button class="absolute top-4 right-4 text-white text-2xl font-bold p-2 hover:text-slate-300" @click="lightboxUrl = null">✕</button>
+      <button class="absolute top-4 right-4 text-white text-2xl font-bold p-2 hover:text-slate-300" @click="lightboxUrl = null; lightboxItem = null">✕</button>
     </div>
 
     <!-- 添加工作流 Modal 弹窗 -->
@@ -2145,18 +2137,18 @@
       <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-lg w-full space-y-4 shadow-2xl">
         <div class="flex items-center justify-between">
           <h3 class="text-sm font-bold text-white flex items-center gap-2">
-            <span>+</span> <span>添加并导入 RunningHub 工作流</span>
+            <span>+</span> <span>添加并接入云端工作流</span>
           </h3>
           <button @click="showAddWorkflowModal = false" class="text-slate-500 hover:text-slate-300">✕</button>
         </div>
 
         <div class="space-y-3 text-xs">
-          <!-- 核心提示：RunningHub 必须保存后才可提取 -->
+          <!-- 核心提示：工作流必须保存后才可提取 -->
           <div class="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-start gap-2.5 shadow-sm">
             <span class="text-sm shrink-0 mt-0.5">💡</span>
             <div class="leading-relaxed text-[11px]">
               <span class="font-bold text-amber-200">云端接入技巧：</span>
-              在 RunningHub 网页版中，新建或修改的工作流必须在画布左上角点击一次 <span class="font-mono bg-amber-500/20 px-1 py-0.5 rounded text-white font-bold">保存 (Alt+S)</span>，云端才会编译持久化 API 节点拓扑。若未保存，云端将提示无法识别。
+              在云端平台中，新建或修改的工作流需在画布中点击一次 <span class="font-mono bg-amber-500/20 px-1 py-0.5 rounded text-white font-bold">保存 (Alt+S)</span>，云端才会同步发布节点配置。
             </div>
           </div>
 
@@ -2207,23 +2199,41 @@
 
         <!-- 🎁 卡密与兑换码充值弹窗 (Redeem CDKey Modal) -->
     <div v-if="showRedeemModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-      <div class="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-7 max-w-md w-full shadow-2xl text-slate-100 relative overflow-hidden">
+      <div class="bg-slate-900 border border-slate-700/80 rounded-3xl p-6 sm:p-7 max-w-lg w-full shadow-2xl text-slate-100 relative overflow-hidden">
         <div class="absolute -top-24 -right-24 w-48 h-48 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none"></div>
 
-        <div class="flex justify-between items-center pb-4 border-b border-slate-800">
+        <div class="flex justify-between items-center pb-3 border-b border-slate-800">
           <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-emerald-600 to-teal-500 flex items-center justify-center text-white shadow-lg shadow-emerald-500/20 text-lg">
               🎁
             </div>
             <div>
-              <h3 class="font-bold text-base text-white tracking-wide">卡密兑换充值</h3>
-              <p class="text-[11px] text-slate-400">输入 16 位卡密兑换码，即刻充值算力</p>
+              <h3 class="font-bold text-base text-white tracking-wide">卡密中心</h3>
+              <p class="text-[11px] text-slate-400">兑换卡密充值算力 · 查看历史充值台账</p>
             </div>
           </div>
           <button @click="closeRedeemModal" class="w-7 h-7 rounded-full bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition">✕</button>
         </div>
 
-        <div class="py-5 space-y-4 text-xs">
+        <!-- 顶部 Tab 切换 -->
+        <div class="flex items-center gap-2 mt-4 p-1 bg-slate-950 rounded-xl border border-slate-800 text-xs font-semibold">
+          <button 
+            @click="redeemModalTab = 'redeem'"
+            :class="redeemModalTab === 'redeem' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'"
+            class="flex-1 py-1.5 rounded-lg transition text-center flex items-center justify-center gap-1.5">
+            <span>🎁</span> <span>卡密核销兑换</span>
+          </button>
+          <button 
+            @click="redeemModalTab = 'history'; loadCdkeyHistory()"
+            :class="redeemModalTab === 'history' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-400 hover:text-slate-200'"
+            class="flex-1 py-1.5 rounded-lg transition text-center flex items-center justify-center gap-1.5">
+            <span>📜</span> <span>充值兑换记录</span>
+            <span v-if="cdkeyHistory.length > 0" class="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-950 text-indigo-300 font-mono">{{ cdkeyHistory.length }}</span>
+          </button>
+        </div>
+
+        <!-- 1. 卡密兑换面板 -->
+        <div v-if="redeemModalTab === 'redeem'" class="py-4 space-y-4 text-xs">
           <div>
             <label class="text-slate-300 font-medium block mb-1.5 flex items-center justify-between">
               <span>兑换码 (CD-Key)</span>
@@ -2254,18 +2264,52 @@
             <p>• 卡密一经核销立即充值至当前登录账户，全天 24 小时秒级到账。</p>
             <p>• 采用 CSPRNG 密码学高熵算法，保障资金与算力资产绝对安全。</p>
           </div>
+
+          <div class="flex justify-end gap-2.5 pt-2 border-t border-slate-800">
+            <button @click="closeRedeemModal" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs transition">取消</button>
+            <button 
+              @click="submitRedeemCDKey" 
+              :disabled="redeemLoading || !redeemCode.trim()"
+              class="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 active:scale-95">
+              <span v-if="redeemLoading" class="animate-spin text-xs">⏳</span>
+              <span>{{ redeemLoading ? '正在核销中...' : '立即核销兑换' }}</span>
+            </button>
+          </div>
         </div>
 
-        <div class="flex justify-end gap-2.5 pt-3 border-t border-slate-800">
-          <button @click="closeRedeemModal" class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs transition">关闭</button>
-          <button 
-            @click="submitRedeemCDKey" 
-            :disabled="redeemLoading || !redeemCode.trim()"
-            class="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-lg shadow-emerald-600/30 transition flex items-center gap-1.5 active:scale-95">
-            <span v-if="redeemLoading" class="animate-spin text-xs">⏳</span>
-            <span>{{ redeemLoading ? '正在核销中...' : '立即核销兑换' }}</span>
-          </button>
+        <!-- 2. 充值兑换历史记录面板 (Requirement 4) -->
+        <div v-else class="py-4 space-y-3">
+          <div v-if="cdkeyHistoryLoading" class="py-12 text-center text-slate-400 text-xs">
+            <span class="inline-block animate-spin mr-1">⏳</span> 正在加载兑换记录...
+          </div>
+          <div v-else-if="cdkeyHistory.length === 0" class="py-12 text-center text-slate-500 text-xs">
+            暂无兑换记录，输入卡密兑换后将在此展示充值明细
+          </div>
+          <div v-else class="max-h-64 overflow-y-auto space-y-2 pr-1 divide-y divide-slate-800/50">
+            <div 
+              v-for="(rec, idx) in cdkeyHistory" 
+              :key="idx" 
+              class="pt-2 first:pt-0 flex items-center justify-between text-xs">
+              <div>
+                <div class="font-mono text-slate-200 font-semibold">{{ rec.code }}</div>
+                <div class="text-[10px] text-slate-500 flex items-center gap-2 mt-0.5">
+                  <span>{{ formatTime(rec.usedAt) }}</span>
+                  <span>·</span>
+                  <span>{{ rec.remark || '卡密兑换充值' }}</span>
+                </div>
+              </div>
+              <div class="text-right">
+                <span class="font-mono font-bold text-emerald-400 text-sm">+{{ rec.points }} 点</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="flex justify-between items-center pt-3 border-t border-slate-800 text-xs text-slate-400">
+            <span>共 {{ cdkeyHistory.length }} 笔兑换充值明细</span>
+            <button @click="closeRedeemModal" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl transition">关闭</button>
+          </div>
         </div>
+
       </div>
     </div>
 
