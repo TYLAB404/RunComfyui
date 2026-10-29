@@ -410,9 +410,24 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                     # 优先采用 RunningHub 官方结算的纯运行计费时长 (taskCostTime)，否则采用剔除排队后的纯运行计时
                     final_duration = official_cost_time if (official_cost_time and official_cost_time > 0) else int(time.time() - (run_start_time or start_time))
 
+                    # 纯运行秒数计时计费原子结算
+                    from services.billing_service import settle_task_billing
+                    task_user_id = cur_t.get("userId") if cur_t else ""
+                    task_inst_type = (cur_t.get("instanceType") or "plus") if cur_t else "plus"
+                    wf_name = (cur_t.get("workflowName") or "工作流渲染") if cur_t else "工作流渲染"
+                    billing_res = await settle_task_billing(
+                        user_id=task_user_id,
+                        task_id=str(task_id),
+                        duration_seconds=final_duration,
+                        instance_type=task_inst_type,
+                        workflow_name=wf_name
+                    )
+                    actual_cost = billing_res.get("cost", 0.0)
+
                     db_update_task(str(task_id), {
                         "status": "SUCCESS",
                         "duration": final_duration,
+                        "cost": actual_cost,
                         "consumeCoins": total_coins,
                         "outputs": final_outputs,
                         "statusText": "生成任务已圆满完成",
@@ -487,9 +502,24 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
 
                     if has_captured_real_media:
                         print(f"[Interceptor] Task {task_id} successfully intercepted media despite cloud tail node error ({failed_node_name}). Marking SUCCESS.", flush=True)
+                        from services.billing_service import settle_task_billing
+                        int_dur = max(1, int(time.time() - (run_start_time or start_time)))
+                        task_user_id = cur_t.get("userId") if cur_t else ""
+                        task_inst_type = (cur_t.get("instanceType") or "plus") if cur_t else "plus"
+                        wf_name = (cur_t.get("workflowName") or "工作流渲染") if cur_t else "工作流渲染"
+                        billing_res = await settle_task_billing(
+                            user_id=task_user_id,
+                            task_id=str(task_id),
+                            duration_seconds=int_dur,
+                            instance_type=task_inst_type,
+                            workflow_name=wf_name
+                        )
+                        int_cost = billing_res.get("cost", 0.0)
+
                         db_update_task(str(task_id), {
                             "status": "SUCCESS",
-                            "duration": int(time.time() - (run_start_time or start_time)),
+                            "duration": int_dur,
+                            "cost": int_cost,
                             "statusText": "生成完成 (已安全截流有效成果)",
                             "updatedAt": int(time.time())
                         })
@@ -614,12 +644,11 @@ async def dispatch_queued_task(
                 break
 
             else:
-                instance_type = getattr(req, "instanceType", None)
-                if not instance_type:
-                    req_tt = getattr(req, "taskType", "Standard")
-                    instance_type = "default" if req_tt and req_tt.strip().lower() == "lite" else "plus"
-                else:
-                    instance_type = "default" if str(instance_type).strip().lower() == "default" else "plus"
+                from services.billing_service import resolve_instance_tier
+                instance_type, _, _ = resolve_instance_tier(
+                    getattr(req, "instanceType", None),
+                    getattr(req, "taskType", None)
+                )
 
                 payload = {
                     "apiKey": api_key,

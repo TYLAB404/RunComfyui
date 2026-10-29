@@ -10,7 +10,7 @@ import aiohttp
 from typing import Optional, List, Dict, Any, Tuple
 from fastapi import Request, HTTPException, Depends
 from core.security import SECRET_KEY_FILE
-from core.database import get_db_connection, db_bump_token_version
+from core.database import get_db_connection, db_bump_token_version, db_delete_user_completely
 from core.http_client import HTTP_SESSION
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -309,11 +309,8 @@ def set_user_password(user_id: str, new_password: str) -> bool:
     return ok
 
 def delete_user_by_id(user_id: str) -> bool:
-    with get_db_connection() as conn:
-        cursor = conn.cursor()
-        cursor.execute("DELETE FROM users WHERE id = ?;", (str(user_id),))
-        conn.commit()
-        return cursor.rowcount > 0
+    stats = db_delete_user_completely(str(user_id))
+    return stats.get("user", 0) > 0
 
 # ----------------- 实时 SSE 事件下发通道 -----------------
 

@@ -45,7 +45,7 @@
 </head>
 <body class="bg-[#090d16] text-slate-100 min-h-screen flex flex-col justify-between selection:bg-indigo-500 selection:text-white relative overflow-x-hidden font-sans antialiased">
 
-  <!-- 背景流光与环境氛围底纹 (Moyuu 现代极客暗黑风) -->
+  <!-- 背景流光与环境氛围底纹 (RunComfyui 现代极客暗黑风) -->
   <div class="fixed inset-0 pointer-events-none overflow-hidden z-0">
     <div class="ambient-glow-1 absolute -top-40 -left-40 w-96 h-96 bg-indigo-600/20 rounded-full blur-[120px]"></div>
     <div class="ambient-glow-2 absolute top-1/3 -right-40 w-[28rem] h-[28rem] bg-purple-600/15 rounded-full blur-[140px]"></div>
@@ -140,7 +140,7 @@
           <span class="flex-1">{{ successMessage }}</span>
         </div>
 
-        <!-- ================= 表单模式 1: 登录 (对标 Moyuu) ================= -->
+        <!-- ================= 表单模式 1: 登录 (对标 RunComfyui) ================= -->
         <form v-if="tab === 'login'" @submit.prevent="handleLogin" class="space-y-4">
           <!-- 用户名或邮箱 -->
           <div>
@@ -223,7 +223,7 @@
           </button>
         </form>
 
-        <!-- ================= 表单模式 2: 创建账户 / 注册 (对标 Moyuu) ================= -->
+        <!-- ================= 表单模式 2: 创建账户 / 注册 (对标 RunComfyui) ================= -->
         <form v-if="tab === 'register'" @submit.prevent="handleRegister" class="space-y-3.5">
           <!-- 用户名 -->
           <div>
@@ -366,7 +366,7 @@
           </button>
         </form>
 
-        <!-- ================= 表单模式 3: 找回密码 (对标 Moyuu) ================= -->
+        <!-- ================= 表单模式 3: 找回密码 (对标 RunComfyui) ================= -->
         <form v-if="tab === 'forgot'" @submit.prevent="handleResetPassword" class="space-y-3.5">
           <!-- 注册邮箱 -->
           <div>

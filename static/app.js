@@ -50,16 +50,36 @@ createApp({
     
     // ================= 卡密兑换与充值状态 =================
     const showRedeemModal = ref(false);
+    const redeemModalTab = ref('redeem'); // 'redeem' | 'history'
     const redeemCode = ref('');
     const redeemLoading = ref(false);
     const redeemError = ref('');
     const redeemSuccess = ref('');
+    const cdkeyHistory = ref([]);
+    const cdkeyHistoryLoading = ref(false);
 
-    const openRedeemModal = () => {
+    const loadCdkeyHistory = async () => {
+      cdkeyHistoryLoading.value = true;
+      try {
+        const res = await authFetch('/api/user/cdkey-history');
+        if (res.ok) {
+          const data = await res.json();
+          cdkeyHistory.value = data.history || [];
+        }
+      } catch (err) {
+        console.warn('Failed to load cdkey history:', err);
+      } finally {
+        cdkeyHistoryLoading.value = false;
+      }
+    };
+
+    const openRedeemModal = (tab = 'redeem') => {
       showRedeemModal.value = true;
+      redeemModalTab.value = tab;
       redeemCode.value = '';
       redeemError.value = '';
       redeemSuccess.value = '';
+      loadCdkeyHistory();
     };
 
     const closeRedeemModal = () => {
@@ -92,10 +112,13 @@ createApp({
           }
           showToastNotification(data.message || '卡密兑换成功！', 'success');
           redeemCode.value = '';
-          // 2 秒后自动关闭弹窗
+          await loadCdkeyHistory();
+          // 2 秒后自动切换或关闭
           setTimeout(() => {
-            if (showRedeemModal.value) closeRedeemModal();
-          }, 2000);
+            if (showRedeemModal.value) {
+              redeemModalTab.value = 'history';
+            }
+          }, 1500);
         }
       } catch (err) {
         redeemError.value = '网络请求失败，请稍后重试';
@@ -144,7 +167,7 @@ createApp({
     const testingKeyId = ref(null);
     const keyTestResult = ref({});
     const newKeyForm = ref({ name: '', apiKey: '', note: '', setActive: true });
-    const selectedTaskType = ref('Standard'); // 'Standard' (极速推荐) 或 'Lite' (经济排队)
+    const selectedTaskType = ref('Plus'); // 'Plus' (高档位/极速推荐/0.4币每秒) 或 'Standard' (低档位/0.2币每秒)
 
     const workflows = ref([]);
     const selectedWorkflowId = ref('');
@@ -184,6 +207,7 @@ createApp({
     const isDetecting = ref(false);
     const isLoadingSchema = ref(false);
     const lightboxUrl = ref(null);
+    const lightboxItem = ref(null);
     const showAddWorkflowModal = ref(false);
     const activeOutputIndex = ref(0);
 
@@ -1247,8 +1271,8 @@ createApp({
         positivePrompt: mainPrompt,
         negativePrompt: dynamicPrompts.value.length > 1 ? dynamicPrompts.value[1].currentValue : '',
         nodeInfoList: nodeInfoList,
-        taskType: selectedTaskType.value || 'Standard',
-        instanceType: selectedTaskType.value === 'Lite' ? 'default' : 'plus',
+        taskType: selectedTaskType.value || 'Plus',
+        instanceType: selectedTaskType.value === 'Standard' ? 'default' : 'plus',
         customPrompt: isCustom ? customWorkflow.value.prompt : null
       };
 
@@ -1577,8 +1601,9 @@ createApp({
       }
     };
 
-    const openLightbox = (url) => {
+    const openLightbox = (url, item = null) => {
       lightboxUrl.value = url;
+      lightboxItem.value = item;
     };
 
     // 浏览器端纯前端直链下载 (零经过服务器，由浏览器直接请求 RunningHub CDN)
@@ -2232,6 +2257,7 @@ createApp({
       isDetecting,
       isLoadingSchema,
       lightboxUrl,
+      lightboxItem,
       showAddWorkflowModal,
       dynamicSchema,
       dynamicSchemaTotalNodes,
@@ -2334,11 +2360,15 @@ createApp({
       authSuccessMsg,
       showUserDropdown,
       turnstileWidgetId,
-            showRedeemModal,
+      showRedeemModal,
+      redeemModalTab,
       redeemCode,
       redeemLoading,
       redeemError,
       redeemSuccess,
+      cdkeyHistory,
+      cdkeyHistoryLoading,
+      loadCdkeyHistory,
       openRedeemModal,
       closeRedeemModal,
       submitRedeemCDKey,

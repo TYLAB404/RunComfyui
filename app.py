@@ -130,9 +130,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="RunningHub Web Controller",
+    title="RunComfyui Gateway",
     version="2.0.0",
-    description="High-Performance Enterprise RunningHub ComfyUI Cloud Gateway",
+    description="High-Performance Enterprise RunComfyui Cloud Gateway",
     lifespan=lifespan,
 )
 

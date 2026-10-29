@@ -99,7 +99,7 @@ def _sanitize_and_migrate_config(cfg: Dict[str, Any]) -> Tuple[Dict[str, Any], b
 
     sys_cfg = cfg["system"]
     defaults = {
-        "siteTitle": "RunningHub 智能创作平台",
+        "siteTitle": "RunComfyui 智能创作平台",
         "turnstileEnabled": False,
         "turnstileSiteKey": "",
         "turnstileSecretKeyEncrypted": "",
@@ -119,6 +119,11 @@ def _sanitize_and_migrate_config(cfg: Dict[str, Any]) -> Tuple[Dict[str, Any], b
             "fromEmail": "",
             "passwordEncrypted": "",
             "adminEmail": ""
+        },
+        "pricing": {
+            "standardRate": 0.2,
+            "plusRate": 0.4,
+            "minBalanceRequired": 5.0
         }
     }
     for k, v in defaults.items():

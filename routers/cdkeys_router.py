@@ -5,7 +5,8 @@ from pydantic import BaseModel
 
 from core.database import (
     db_redeem_cdkey, db_generate_cdkeys, db_list_cdkeys,
-    db_void_cdkey, db_delete_cdkey, db_get_unused_cdkeys_export
+    db_void_cdkey, db_delete_cdkey, db_get_unused_cdkeys_export,
+    db_get_user_cdkey_history
 )
 from core.auth import get_current_user, get_current_admin, notify_user
 
@@ -58,6 +59,17 @@ async def user_redeem_cdkey(
         "message": msg,
         "newPoints": new_balance,
         "code": clean_code
+    }
+
+@router.get("/api/user/cdkey-history")
+async def get_my_cdkey_history(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """用户查看自己的卡密核销充值明细流水"""
+    history = db_get_user_cdkey_history(current_user["id"])
+    return {
+        "status": "ok",
+        "history": history
     }
 
 @router.post("/api/admin/cdkeys/generate")

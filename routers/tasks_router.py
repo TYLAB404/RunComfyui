@@ -20,6 +20,7 @@ from core.auth import (
     get_current_user_optional, get_user_by_id, update_user_fields
 )
 from services.key_pool import KEY_POOL_MANAGER
+from services.billing_service import resolve_instance_tier, check_user_can_start_task
 from services.runninghub import (
     ACTIVE_POLL_TASKS, CANCELLED_TASKS, ACTIVE_TASK_PREVIEWS,
     submit_proxy_prompt_async, poll_task_status, listen_websocket_stream,
@@ -83,38 +84,21 @@ async def generate_task(
         if not is_custom_proxy and not req.workflowId:
             raise HTTPException(status_code=400, detail="缺少必填参数：workflowId")
 
-        # 2. 算力计费与工作流合法性校验（堵死 0 元白嫖漏洞）
-        task_cost = 0
+        # 2. 算力计费与工作流合法性校验
         if not is_custom_proxy:
-            wf_found = False
-            for wf in cfg.get("workflows", []):
-                if str(wf.get("id")) == str(req.workflowId):
-                    task_cost = int(wf.get("pointsCost", 0) or wf.get("cost", 0) or 5)
-                    if not wf.get("isOfficial"):
-                        task_cost = max(5, task_cost)
-                    elif task_cost < 0:
-                        task_cost = 5
-                    wf_found = True
-                    break
+            wf_found = any(str(wf.get("id")) == str(req.workflowId) for wf in cfg.get("workflows", []))
             if not wf_found:
-                raise HTTPException(status_code=400, detail="未配置或不存在的官方工作流，禁止非法提交")
-        else:
-            # customPrompt 模式：普通用户如果提交自定义 ComfyUI 流程，至少收取标准算力（10点）
-            is_admin = bool(current_user and current_user.get("role") == "admin")
-            task_cost = 0 if is_admin else 10
+                raise HTTPException(status_code=400, detail="未配置或不存在的工作流，禁止非法提交")
 
-        points_deducted = False
-        if current_user:
-            ok, remaining, msg = db_deduct_user_points(
-                user_id=current_user["id"],
-                amount=task_cost,
-                reason=f"生成任务算力扣减 ({req.workflowName or req.workflowId})"
-            )
-            if not ok:
-                raise HTTPException(status_code=402, detail=f"算力点数不足：本次生成需 {task_cost} 点，您当前账户仅剩 {remaining} 点，请兑换卡密或充值")
-            points_deducted = True
+        # 余额门槛核验（普通用户需满足最低余额要求；按实际工作流运行秒数结算，排队不计费）
+        can_start, cur_points, err_msg = check_user_can_start_task(current_user)
+        if not can_start:
+            raise HTTPException(status_code=402, detail=err_msg)
 
-        task_type = "Lite" if req.taskType and req.taskType.strip().lower() == "lite" else "Standard"
+        # 算力档位与实例类型统一解析：
+        # Plus (高档位): plus, 48GB 显存，0.4 币/秒
+        # Standard (低档位): default, 24GB 显存，0.2 币/秒
+        instance_type, tier_name, rate = resolve_instance_tier(req.instanceType, req.taskType)
 
         temp_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         user_id = current_user["id"] if current_user else ""
@@ -126,18 +110,7 @@ async def generate_task(
         assigned_key_id = None
         assigned_api_key = None
 
-        cfg = load_config()
         preferred_key_id = cfg.get("activeKeyId")
-
-        # 严格依据用户生图时所选档位决定云端算力调度通道：
-        # Standard 标准极速 -> plus (48GB 极速独享显存，秒级免排队)
-        # Lite 经济队列 -> default (24GB 基础共享算力)
-        if req.instanceType:
-            instance_type = "default" if req.instanceType.lower() == "default" else "plus"
-        elif str(task_type).upper() == "LITE":
-            instance_type = "default"
-        else:
-            instance_type = "plus"
 
         while True:
             key_info = await KEY_POOL_MANAGER.acquire_free_key(temp_id, exclude_key_ids=excluded_key_ids, preferred_key_id=preferred_key_id)
@@ -152,21 +125,21 @@ async def generate_task(
 
             if not key_info:
                 if not remaining_healthy:
-                    if points_deducted and current_user:
-                        db_refund_user_points(current_user["id"], task_cost, task_id=temp_id, reason="所有算力通道异常自动退还")
-                    raise HTTPException(status_code=503, detail="所有可用算力通道暂时繁忙或异常，请稍后重试（算力已原路退还）")
+                    raise HTTPException(status_code=503, detail="所有可用算力通道暂时繁忙或异常，请稍后重试")
 
                 # 优雅排队机制
                 queue_task_record = {
                     "taskId": temp_id,
                     "workflowId": str(req.workflowId),
                     "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
-                    "taskType": "Proxy-Native" if is_custom_proxy else task_type,
+                    "taskType": "Proxy-Native" if is_custom_proxy else tier_name,
+                    "instanceType": instance_type,
+                    "rate": rate,
                     "userId": user_id,
                     "username": user_name,
                     "positivePrompt": req.positivePrompt or "",
                     "negativePrompt": req.negativePrompt or "",
-                    "cost": task_cost if points_deducted else 0,
+                    "cost": 0,
                     "status": "QUEUED",
                     "createdAt": int(time.time()),
                     "updatedAt": int(time.time()),
@@ -183,7 +156,7 @@ async def generate_task(
             
                 background_tasks.add_task(
                     dispatch_queued_task,
-                    temp_id, req, current_user, task_cost, is_custom_proxy, task_type
+                    temp_id, req, current_user, 0, is_custom_proxy, tier_name
                 )
                 return {
                     "status": "ok",
@@ -223,8 +196,6 @@ async def generate_task(
                         continue
                     else:
                         await KEY_POOL_MANAGER.release_key(key_id, temp_id)
-                        if points_deducted and current_user:
-                            db_refund_user_points(current_user["id"], task_cost, reason=f"原生代理提交失败退还: {last_err}")
                         raise HTTPException(status_code=400, detail=f"提交至云端引擎失败: {last_err}")
 
                 real_task_id = str(sub_task_id)
@@ -251,8 +222,6 @@ async def generate_task(
                     data = res.json()
                 except Exception as e:
                     await KEY_POOL_MANAGER.release_key(key_id, temp_id)
-                    if points_deducted and current_user:
-                        db_refund_user_points(current_user["id"], task_cost, reason=f"网络请求云端引擎异常: {str(e)}")
                     raise HTTPException(status_code=502, detail=f"连接云端算力调度集群异常: {str(e)}")
 
                 code = data.get("code")
@@ -271,8 +240,6 @@ async def generate_task(
                         continue
                     else:
                         await KEY_POOL_MANAGER.release_key(key_id, temp_id)
-                        if points_deducted and current_user:
-                            db_refund_user_points(current_user["id"], task_cost, reason=f"云端拒绝任务: {msg}")
                         raise HTTPException(status_code=400, detail=f"云端任务提交失败: {msg}")
 
                 real_task_id = str(data.get("data", {}).get("taskId"))
@@ -290,12 +257,14 @@ async def generate_task(
             "taskId": str(real_task_id),
             "workflowId": str(req.workflowId),
             "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
-            "taskType": "Proxy-Native" if is_custom_proxy else ("Plus" if instance_type == "plus" else instance_type.capitalize()),
+            "taskType": "Proxy-Native" if is_custom_proxy else tier_name,
+            "instanceType": instance_type,
+            "rate": rate,
             "userId": user_id,
             "username": user_name,
             "positivePrompt": req.positivePrompt or "",
             "negativePrompt": req.negativePrompt or "",
-            "cost": task_cost if points_deducted else 0,
+            "cost": 0,
             "status": "QUEUED",
             "createdAt": int(time.time()),
             "updatedAt": int(time.time()),
