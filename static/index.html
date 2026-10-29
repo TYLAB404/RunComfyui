@@ -1097,7 +1097,7 @@
                 <span>⚡</span> <span>任务运行规格与算力通道</span>
               </span>
               <span class="text-[11px] font-mono text-indigo-400">
-                {{ selectedTaskType === 'Plus' ? 'Plus 极速档 · 48GB 独享显存 (0.4 币/秒，免排队)' : 'Standard 标准档 · 24GB 基础显存 (0.2 币/秒)' }}
+                {{ selectedTaskType === 'Plus' ? ('Plus 极速档 · 48GB 独享显存 (' + (publicConfig?.system?.pricing?.plusRate ?? 0.4) + ' 币/秒，免排队)') : ('Standard 标准档 · 24GB 基础显存 (' + (publicConfig?.system?.pricing?.standardRate ?? 0.2) + ' 币/秒)') }}
               </span>
             </div>
 
@@ -1122,7 +1122,7 @@
                 </div>
                 <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
                   <span class="text-slate-500">消耗速率:</span>
-                  <span class="font-bold text-indigo-400">0.4 币 / 秒</span>
+                  <span class="font-bold text-indigo-400">{{ publicConfig?.system?.pricing?.plusRate ?? 0.4 }} 币 / 秒</span>
                 </div>
               </div>
 
@@ -1146,7 +1146,7 @@
                 </div>
                 <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
                   <span class="text-slate-500">消耗速率:</span>
-                  <span class="font-bold text-emerald-400">0.2 币 / 秒</span>
+                  <span class="font-bold text-emerald-400">{{ publicConfig?.system?.pricing?.standardRate ?? 0.2 }} 币 / 秒</span>
                 </div>
               </div>
             </div>
