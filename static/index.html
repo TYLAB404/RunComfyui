@@ -374,7 +374,7 @@
                 <span class="text-[11px] text-slate-400 hidden sm:inline">当前工作流：</span>
                 <span class="text-xs font-bold text-white truncate max-w-[200px] sm:max-w-none">{{ customWorkflow ? customWorkflow.name : (currentWorkflow ? currentWorkflow.name : '工作流') }}</span>
                 <span v-if="customWorkflow" class="text-[10px] bg-purple-950 text-purple-300 border border-purple-800/50 px-2 py-0.5 rounded-full font-mono">本地免ID</span>
-                <span v-else-if="selectedWorkflowId" class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800/50 px-2 py-0.5 rounded-full font-mono">ID: {{ selectedWorkflowId }}</span>
+                <span v-else-if="selectedWorkflowId && currentUser?.role === 'admin'" class="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800/50 px-2 py-0.5 rounded-full font-mono">ID: {{ selectedWorkflowId }}</span>
                 <span v-if="dynamicSchemaTotalNodes" class="text-[10px] text-emerald-400 bg-emerald-950/60 border border-emerald-800/40 px-2 py-0.5 rounded-full hidden sm:inline">
                   {{ dynamicSchemaTotalNodes }} 节点
                 </span>
@@ -412,7 +412,7 @@
                   📁 [本地] {{ customWorkflow.name }} ({{ customWorkflow.totalNodes }} 节点)
                 </option>
                 <option v-for="wf in workflows" :key="wf.id" :value="wf.id">
-                  {{ wf.name }} (ID: {{ wf.id }})
+                  {{ wf.name }}<template v-if="currentUser?.role === 'admin'"> (ID: {{ wf.id }})</template>
                 </option>
               </select>
               <button @click="triggerUploadWorkflowFile" title="直接导入本地 ComfyUI API JSON 文件，免 workflowId 直接执行" class="px-3 bg-indigo-900/40 hover:bg-indigo-800/60 text-indigo-300 rounded-xl border border-indigo-700/60 text-xs font-semibold whitespace-nowrap flex items-center gap-1 transition">
@@ -720,16 +720,110 @@
             </div>
 
             <!-- 空 Latent 尺寸调节 -->
-            <div v-if="dynamicLatent" class="space-y-1.5 pt-2">
-              <div class="flex justify-between text-xs text-slate-300">
-                <span>画面分辨率 (宽 x 高)</span>
-                <span class="text-indigo-400 font-mono">{{ dynamicLatent.fields.width }} x {{ dynamicLatent.fields.height }}</span>
+            <div v-if="dynamicLatent" class="space-y-3 pt-2">
+              <div class="flex items-center justify-between text-xs">
+                <div class="flex items-center gap-2">
+                  <span class="text-slate-300 font-medium">画面分辨率 (宽 x 高)</span>
+                  <span class="text-indigo-400 font-mono font-bold">{{ dynamicLatent.fields.width }} x {{ dynamicLatent.fields.height }}</span>
+                  <span v-if="isLatentModified" class="text-[10px] text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded font-bold">已自定义</span>
+                </div>
+                <button 
+                  v-if="isLatentModified"
+                  type="button"
+                  @click="resetLatentResolution" 
+                  title="恢复为当前工作流原始默认分辨率"
+                  class="text-xs text-slate-400 hover:text-white transition flex items-center gap-1">
+                  <span>↺</span>
+                  <span>恢复默认分辨率</span>
+                </button>
               </div>
-              <div class="flex flex-wrap gap-2">
-                <button @click="dynamicLatent.fields.width = 512; dynamicLatent.fields.height = 512" :class="dynamicLatent.fields.width === 512 && dynamicLatent.fields.height === 512 ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300' : 'border-slate-800 bg-slate-950 text-slate-400'" class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono">512x512</button>
-                <button @click="dynamicLatent.fields.width = 768; dynamicLatent.fields.height = 1024" :class="dynamicLatent.fields.width === 768 && dynamicLatent.fields.height === 1024 ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300' : 'border-slate-800 bg-slate-950 text-slate-400'" class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono">768x1024</button>
-                <button @click="dynamicLatent.fields.width = 1088; dynamicLatent.fields.height = 1920" :class="dynamicLatent.fields.width === 1088 && dynamicLatent.fields.height === 1920 ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300' : 'border-slate-800 bg-slate-950 text-slate-400'" class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono">1088x1920</button>
-                <button @click="dynamicLatent.fields.width = 1024; dynamicLatent.fields.height = 1024" :class="dynamicLatent.fields.width === 1024 && dynamicLatent.fields.height === 1024 ? 'border-indigo-500 bg-indigo-950/40 text-indigo-300' : 'border-slate-800 bg-slate-950 text-slate-400'" class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono">1024x1024</button>
+
+              <!-- 提示：建议使用默认设置 -->
+              <div class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300/90 flex items-start gap-2">
+                <span class="text-amber-400 mt-0.5 select-none">💡</span>
+                <div class="space-y-0.5 flex-1">
+                  <div class="flex items-center justify-between">
+                    <span class="font-medium text-amber-300">建议使用默认设置</span>
+                    <span class="text-[11px] font-mono text-amber-400/80">工作流预设: {{ dynamicLatent.defaultWidth }} x {{ dynamicLatent.defaultHeight }}</span>
+                  </div>
+                  <p class="text-[11px] text-amber-200/70">
+                    该工作流针对原版分辨率进行了深度参数调优。如需自定义，建议输入 8 或 16 的倍数，过高分辨率可能消耗更多显存或导致画面结构失真。
+                  </p>
+                </div>
+              </div>
+
+              <!-- 自定义宽高数字输入框 (支持任意数值自定义) -->
+              <div class="grid grid-cols-2 gap-3 p-3 bg-slate-950 border border-slate-800 rounded-xl">
+                <div>
+                  <label class="text-[11px] text-slate-400 block mb-1">自定义宽度 (Width)</label>
+                  <div class="flex items-center gap-1.5">
+                    <input 
+                      type="number" 
+                      step="8" 
+                      min="64" 
+                      max="4096"
+                      v-model.number="dynamicLatent.fields.width" 
+                      placeholder="宽度"
+                      class="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-xs text-indigo-100 font-mono focus:outline-none transition">
+                    <span class="text-xs text-slate-500 font-mono">px</span>
+                  </div>
+                </div>
+                <div>
+                  <label class="text-[11px] text-slate-400 block mb-1">自定义高度 (Height)</label>
+                  <div class="flex items-center gap-1.5">
+                    <input 
+                      type="number" 
+                      step="8" 
+                      min="64" 
+                      max="4096"
+                      v-model.number="dynamicLatent.fields.height" 
+                      placeholder="高度"
+                      class="w-full bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-1.5 text-xs text-indigo-100 font-mono focus:outline-none transition">
+                    <span class="text-xs text-slate-500 font-mono">px</span>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 快捷预设比例/常用尺寸切换按钮 -->
+              <div class="space-y-1">
+                <span class="text-[10px] text-slate-500 block">常用比例快捷设置：</span>
+                <div class="flex flex-wrap gap-2">
+                  <button 
+                    type="button"
+                    @click="resetLatentResolution" 
+                    :class="!isLatentModified ? 'border-indigo-500 bg-indigo-950/60 text-indigo-300 font-bold' : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'" 
+                    class="flex-1 min-w-[90px] py-1.5 rounded-lg border text-xs font-mono transition">
+                    ⭐ 默认 ({{ dynamicLatent.defaultWidth }}x{{ dynamicLatent.defaultHeight }})
+                  </button>
+                  <button 
+                    type="button"
+                    @click="dynamicLatent.fields.width = 1024; dynamicLatent.fields.height = 1024" 
+                    :class="dynamicLatent.fields.width === 1024 && dynamicLatent.fields.height === 1024 && isLatentModified ? 'border-indigo-500 bg-indigo-950/60 text-indigo-300 font-bold' : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'" 
+                    class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono transition">
+                    1:1 方图 (1024)
+                  </button>
+                  <button 
+                    type="button"
+                    @click="dynamicLatent.fields.width = 768; dynamicLatent.fields.height = 1024" 
+                    :class="dynamicLatent.fields.width === 768 && dynamicLatent.fields.height === 1024 && isLatentModified ? 'border-indigo-500 bg-indigo-950/60 text-indigo-300 font-bold' : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'" 
+                    class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono transition">
+                    3:4 人像 (768x1024)
+                  </button>
+                  <button 
+                    type="button"
+                    @click="dynamicLatent.fields.width = 1088; dynamicLatent.fields.height = 1920" 
+                    :class="dynamicLatent.fields.width === 1088 && dynamicLatent.fields.height === 1920 && isLatentModified ? 'border-indigo-500 bg-indigo-950/60 text-indigo-300 font-bold' : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'" 
+                    class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono transition">
+                    9:16 竖屏 (1088x1920)
+                  </button>
+                  <button 
+                    type="button"
+                    @click="dynamicLatent.fields.width = 1920; dynamicLatent.fields.height = 1088" 
+                    :class="dynamicLatent.fields.width === 1920 && dynamicLatent.fields.height === 1088 && isLatentModified ? 'border-indigo-500 bg-indigo-950/60 text-indigo-300 font-bold' : 'border-slate-800 bg-slate-950 text-slate-400 hover:text-slate-200'" 
+                    class="flex-1 min-w-[70px] py-1.5 rounded-lg border text-xs font-mono transition">
+                    16:9 横屏 (1920x1088)
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -943,8 +1037,8 @@
                 </button>
               </div>
 
-              <!-- 辅助节点屏蔽控制 (满足用户核心需求) -->
-              <div class="flex items-center gap-2">
+              <!-- 辅助节点屏蔽控制 (仅管理员可见可控) -->
+              <div v-if="currentUser && currentUser.role === 'admin'" class="flex items-center gap-2">
                 <button 
                   type="button"
                   @click="canvasHideAuxiliary = !canvasHideAuxiliary"
@@ -1614,7 +1708,8 @@
                   </p>
                   
                   <div class="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500">
-                    <span class="font-mono">ID: {{ wf.id }}</span>
+                    <span v-if="currentUser?.role === 'admin'" class="font-mono">ID: {{ wf.id }}</span>
+                    <span v-else class="text-slate-500">内置工作流</span>
                     <span class="text-indigo-400 flex items-center gap-1 font-semibold">
                       <span class="w-1.5 h-1.5 rounded-full bg-indigo-400"></span> 官方预设
                     </span>
@@ -1690,7 +1785,8 @@
                   </p>
                   
                   <div class="mt-4 pt-3 border-t border-slate-800/60 flex items-center justify-between text-[11px] text-slate-500">
-                    <span class="font-mono">ID: {{ wf.id }}</span>
+                    <span v-if="currentUser?.role === 'admin'" class="font-mono">ID: {{ wf.id }}</span>
+                    <span v-else class="text-slate-500">社区工作流</span>
                     <span class="text-amber-400/90 flex items-center gap-1.5 font-medium truncate max-w-[210px]" :title="'来自 用户 ' + (wf.ownerName || '匿名') + ' 上传'">
                       <span class="w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"></span>
                       <span class="truncate">来自 用户 {{ wf.ownerName || '匿名' }} 上传</span>

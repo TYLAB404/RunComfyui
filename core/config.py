@@ -34,6 +34,27 @@ def sort_workflows(workflows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         reverse=True
     )
 
+import hashlib
+
+def get_virtual_workflow_id(real_id: str) -> str:
+    """对普通用户隐藏真实云端工作流 ID，生成安全不可逆的单向虚拟代号"""
+    real_str = str(real_id).strip()
+    if not real_str or real_str.startswith("wf_v_") or real_str.startswith("custom_"):
+        return real_str
+    h = hashlib.sha256(f"rh_wf_secure_salt_{real_str}".encode()).hexdigest()[:10]
+    return f"wf_v_{h}"
+
+def resolve_real_workflow_id(wf_id: str, cfg: Dict[str, Any]) -> str:
+    """安全反向解析：无论传入虚拟 ID 还是真实 ID，均可安全还原真实云端工作流 ID"""
+    wf_str = str(wf_id).strip()
+    for w in cfg.get("workflows", []):
+        real_id = str(w.get("id"))
+        if real_id == wf_str:
+            return real_id
+        if get_virtual_workflow_id(real_id) == wf_str:
+            return real_id
+    return wf_str
+
 def filter_workflows_for_user(workflows: List[Dict[str, Any]], current_user: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     sorted_all = sort_workflows(workflows)
     if current_user and current_user.get("role") == "admin":
@@ -46,10 +67,16 @@ def filter_workflows_for_user(workflows: List[Dict[str, Any]], current_user: Opt
         is_active = bool(w.get("isActive", True))
         owner_id = str(w.get("ownerId", ""))
         
+        target_w = None
         if is_official and is_active:
-            res.append(w)
+            target_w = dict(w)
+            target_w["id"] = get_virtual_workflow_id(str(w.get("id")))
         elif user_id_str and owner_id == user_id_str and is_active:
-            res.append(w)
+            target_w = dict(w)
+            target_w["id"] = get_virtual_workflow_id(str(w.get("id")))
+            
+        if target_w:
+            res.append(target_w)
             
     return res
 
