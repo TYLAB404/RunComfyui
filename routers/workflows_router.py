@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from core.config import (
     load_config, save_config, get_active_api_key,
-    filter_workflows_for_user, sort_workflows, RUNNINGHUB_API_URL
+    filter_workflows_for_user, sort_workflows, resolve_real_workflow_id, RUNNINGHUB_API_URL
 )
 from core.auth import get_current_user_optional, get_current_admin
 from core.http_client import HTTP_SESSION
@@ -213,13 +213,14 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
         raise HTTPException(status_code=400, detail="Missing workflowId")
     
     cfg = load_config()
+    real_workflow_id = resolve_real_workflow_id(workflow_id, cfg)
     api_key = payload.get("apiKey") or get_active_api_key(cfg)
     if not api_key:
         raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中添加启用密钥")
     
     url = f"{RUNNINGHUB_API_URL}/api/openapi/getJsonApiFormat"
     try:
-        res = HTTP_SESSION.post(url, json={"apiKey": api_key, "workflowId": str(workflow_id)}, timeout=15)
+        res = HTTP_SESSION.post(url, json={"apiKey": api_key, "workflowId": str(real_workflow_id)}, timeout=15)
         raw_data = res.json()
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Request to RunningHub failed: {str(e)}")

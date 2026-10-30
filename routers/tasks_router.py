@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from pydantic import BaseModel
 import requests
 
-from core.config import load_config, get_active_api_key, RUNNINGHUB_API_URL
+from core.config import load_config, get_active_api_key, resolve_real_workflow_id, RUNNINGHUB_API_URL
 from core.security import is_key_fatal_error, decrypt_key
 from core.http_client import HTTP_SESSION
 from core.database import (
@@ -84,11 +84,16 @@ async def generate_task(
         if not is_custom_proxy and not req.workflowId:
             raise HTTPException(status_code=400, detail="缺少必填参数：workflowId")
 
-        # 2. 算力计费与工作流合法性校验
+        # 2. 算力计费与工作流合法性校验（支持虚拟 ID 安全反向解析）
+        client_wf_id = str(req.workflowId)
+        real_wf_id = resolve_real_workflow_id(req.workflowId, cfg) if not is_custom_proxy else None
+        wf_obj = None
         if not is_custom_proxy:
-            wf_found = any(str(wf.get("id")) == str(req.workflowId) for wf in cfg.get("workflows", []))
-            if not wf_found:
+            wf_obj = next((wf for wf in cfg.get("workflows", []) if str(wf.get("id")) == str(real_wf_id)), None)
+            if not wf_obj:
                 raise HTTPException(status_code=400, detail="未配置或不存在的工作流，禁止非法提交")
+            # 内部将请求的工作流 ID 转换为真实云端 ID，用于后续向 RunningHub 发送
+            req.workflowId = real_wf_id
 
         # 余额门槛核验（普通用户需满足最低余额要求；按实际工作流运行秒数结算，排队不计费）
         can_start, cur_points, err_msg = check_user_can_start_task(current_user)
@@ -130,8 +135,8 @@ async def generate_task(
                 # 优雅排队机制
                 queue_task_record = {
                     "taskId": temp_id,
-                    "workflowId": str(req.workflowId),
-                    "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
+                    "workflowId": client_wf_id,
+                    "workflowName": req.workflowName or (wf_obj.get("name") if wf_obj else ("本地导入工作流" if is_custom_proxy else f"工作流 {client_wf_id}")),
                     "taskType": "Proxy-Native" if is_custom_proxy else tier_name,
                     "instanceType": instance_type,
                     "rate": rate,
@@ -255,8 +260,8 @@ async def generate_task(
         # 核心：将 assigned_key_id 固化存入数据库，确保后续取消和轮询始终使用同一个 Key
         task_record = {
             "taskId": str(real_task_id),
-            "workflowId": str(req.workflowId),
-            "workflowName": req.workflowName or ("本地导入工作流" if is_custom_proxy else f"工作流 {req.workflowId}"),
+            "workflowId": client_wf_id,
+            "workflowName": req.workflowName or (wf_obj.get("name") if wf_obj else ("本地导入工作流" if is_custom_proxy else f"工作流 {client_wf_id}")),
             "taskType": "Proxy-Native" if is_custom_proxy else tier_name,
             "instanceType": instance_type,
             "rate": rate,

@@ -734,6 +734,25 @@ createApp({
       nodeOverrides.value[mId][m.fieldName] = m.currentValue;
     };
 
+    // 分辨率自定义与恢复预设
+    const resetLatentResolution = () => {
+      if (dynamicLatent.value) {
+        dynamicLatent.value.fields.width = dynamicLatent.value.defaultWidth;
+        dynamicLatent.value.fields.height = dynamicLatent.value.defaultHeight;
+        const lnId = String(dynamicLatent.value.nodeId);
+        if (nodeOverrides.value[lnId]) {
+          nodeOverrides.value[lnId]['width'] = dynamicLatent.value.defaultWidth;
+          nodeOverrides.value[lnId]['height'] = dynamicLatent.value.defaultHeight;
+        }
+      }
+    };
+
+    const isLatentModified = computed(() => {
+      if (!dynamicLatent.value) return false;
+      return Number(dynamicLatent.value.fields.width) !== Number(dynamicLatent.value.defaultWidth) ||
+             Number(dynamicLatent.value.fields.height) !== Number(dynamicLatent.value.defaultHeight);
+    });
+
     // 智能诊断当前工作流是否存在云端缺陷（如音频崩端或未开启保存视频）
     const workflowIssues = computed(() => {
       const issues = [];
@@ -868,12 +887,16 @@ createApp({
       // 3. 动态尺寸绑定 (EmptyLatentImage)
       if (data.dynamicSchema.latentNode) {
         const ln = data.dynamicSchema.latentNode;
+        const origW = Number(ln.fields.width) || 512;
+        const origH = Number(ln.fields.height) || 512;
         dynamicLatent.value = {
           nodeId: ln.nodeId,
           class_type: ln.class_type,
+          defaultWidth: origW,
+          defaultHeight: origH,
           fields: {
-            width: ln.fields.width || 512,
-            height: ln.fields.height || 512,
+            width: origW,
+            height: origH,
             batch_size: ln.fields.batch_size || 1
           }
         };
@@ -2323,6 +2346,8 @@ createApp({
       dynamicPrompts,
       dynamicSampler,
       dynamicLatent,
+      resetLatentResolution,
+      isLatentModified,
       dynamicImages,
       dynamicVideos,
       dynamicAudios,
