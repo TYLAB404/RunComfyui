@@ -1976,12 +1976,9 @@
             <!-- 右侧规范信息区 (规整排版，去除冗余标注) -->
             <div class="flex-1 flex flex-col justify-between min-w-0 py-0.5">
               <div>
-                <!-- 顶部元信息行：创建时间与文件大小规范标注 -->
+                <!-- 顶部元信息行：创建时间 -->
                 <div class="flex items-center justify-between text-xs font-mono text-slate-400">
                   <span>{{ formatTime(item.createdAt) }}</span>
-                  <span v-if="item.size > 0" class="text-[11px] font-mono text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded-md border border-slate-700/50">
-                    {{ formatFileSize(item.size) }}
-                  </span>
                 </div>
 
                 <!-- 提示词大字展示 (核心主干信息) -->
