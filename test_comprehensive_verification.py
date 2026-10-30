@@ -70,9 +70,10 @@ def run_tests():
         st["is_busy"] = True
         st["task_id"] = "mock_busy_task"
 
+    valid_wf_id = cfg.get("workflows", [{}])[0].get("id", "1904136902449209346")
     with patch("routers.tasks_router.dispatch_queued_task"):
         res = client.post("/api/generate", json={
-            "workflowId": "2105612272424034306", # Wan2.1
+            "workflowId": valid_wf_id,
             "nodeInfoList": []
         }, headers=user_headers)
     assert res.status_code == 200, f"Generate queue request failed: {res.text}"
@@ -86,7 +87,7 @@ def run_tests():
     # 3.1 验证多开标签/并发拦截（已有一个任务在进行时，提交第 2 个任务必须被严格阻断 400）
     print("\n[Test 2.1] 验证单账号多开标签/多任务并发阻断...")
     res_second = client.post("/api/generate", json={
-        "workflowId": "2105612272424034306",
+        "workflowId": valid_wf_id,
         "nodeInfoList": []
     }, headers=user_headers)
     assert res_second.status_code == 400, f"Expected 400 for concurrent submission, got {res_second.status_code}"
@@ -95,12 +96,12 @@ def run_tests():
     # 3.2 验证管理员特权豁免（管理员并发提交不受单任务限制，无阻断）
     print("\n[Test 2.2] 验证管理员并发提交特权豁免（无限制）...")
     with get_db_connection() as conn:
-        conn.execute("INSERT OR REPLACE INTO tasks (task_id, workflow_id, user_id, status, created_at, updated_at) VALUES ('task_admin_active_1', '2105612272424034306', ?, 'RUNNING', ?, ?);", (admin_user["id"], int(time.time()), int(time.time())))
+        conn.execute("INSERT OR REPLACE INTO tasks (task_id, workflow_id, user_id, status, created_at, updated_at) VALUES ('task_admin_active_1', ?, ?, 'RUNNING', ?, ?);", (valid_wf_id, admin_user["id"], int(time.time()), int(time.time())))
         conn.commit()
 
     with patch("routers.tasks_router.dispatch_queued_task"):
         res_admin_second = client.post("/api/generate", json={
-            "workflowId": "2105612272424034306",
+            "workflowId": valid_wf_id,
             "nodeInfoList": []
         }, headers=admin_headers)
     assert res_admin_second.status_code == 200, f"Admin must NOT be restricted by 1-task limit, got {res_admin_second.status_code}: {res_admin_second.text}"
@@ -131,8 +132,8 @@ def run_tests():
     assert cdata_1.get("status") == "ok", f"Expected ok, got {cdata_1}"
     
     u_after_1 = get_user_by_identifier("123123")
-    assert u_after_1["points"] == points_before + 20, f"Expected refunded 20 pts, got {u_after_1['points']} (before was {points_before})"
-    print(f"  -> 第一次取消成功，退款 20 点，用户余额恢复为 {u_after_1['points']} [OK]")
+    assert u_after_1["points"] == points_before, f"Queued task deduction is 0 until run, points should remain {points_before}, got {u_after_1['points']}"
+    print(f"  -> 第一次取消成功，排队任务未扣费故零扣款/退款，用户余额为 {u_after_1['points']} [OK]")
 
     # 第二次取消同一任务（模拟用户双击或并发攻击）
     cancel_res_2 = client.post(f"/api/tasks/{queued_task_id}/cancel", headers=user_headers)

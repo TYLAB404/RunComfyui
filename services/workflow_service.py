@@ -8,6 +8,153 @@ from core.http_client import HTTP_SESSION
 
 OBJECT_INFO_CACHE_PATH = os.path.join(DATA_DIR, "object_info_cache.json")
 _MEMORY_OBJECT_INFO: Optional[Dict[str, Any]] = None
+_CATEGORY_MODELS: Optional[Dict[str, List[str]]] = None
+
+CATEGORY_LABELS = {
+    "checkpoint": "主模型 (Checkpoint)",
+    "unet": "扩散骨架 (UNet)",
+    "lora": "微调模型 (LoRA)",
+    "vae": "色彩编解码器 (VAE)",
+    "controlnet": "控制网络 (ControlNet)",
+    "clip": "文本编码器 (CLIP)",
+    "upscale": "超分放大模型 (Upscaler)",
+    "sampler": "采样器算法 (Sampler)",
+    "scheduler": "降噪调度器 (Scheduler)",
+}
+
+IS_MODEL_CATEGORY = {"checkpoint", "unet", "lora", "vae", "controlnet", "clip", "upscale"}
+
+def get_category_models(obj_info: Optional[Dict[str, Any]] = None) -> Dict[str, List[str]]:
+    """
+    从 ComfyUI object_info 缓存中全量聚合不同模型分类的可用模型候选池
+    """
+    global _CATEGORY_MODELS
+    if _CATEGORY_MODELS is not None:
+        return _CATEGORY_MODELS
+
+    if obj_info is None:
+        obj_info = get_cached_object_info("")
+
+    from collections import defaultdict
+    category_sets = defaultdict(set)
+    if isinstance(obj_info, dict):
+        for ctype, info in obj_info.items():
+            if not isinstance(info, dict):
+                continue
+            inp = info.get("input", {})
+            if not isinstance(inp, dict):
+                continue
+            all_fields = {**inp.get("required", {}), **inp.get("optional", {})}
+            for fname, spec in all_fields.items():
+                if isinstance(spec, list) and len(spec) > 0 and isinstance(spec[0], list):
+                    items = [
+                        str(x).strip() for x in spec[0]
+                        if isinstance(x, (str, int, float)) and str(x).strip() and str(x).strip().lower() not in ("none", "(none)")
+                    ]
+                    if not items:
+                        continue
+                    fname_lower = fname.lower()
+                    ctype_lower = ctype.lower()
+                    if "ckpt" in fname_lower or "checkpoint" in fname_lower:
+                        category_sets["checkpoint"].update(items)
+                    elif "lora" in fname_lower:
+                        category_sets["lora"].update(items)
+                    elif "vae" in fname_lower:
+                        category_sets["vae"].update(items)
+                    elif "control_net" in fname_lower or "controlnet" in fname_lower:
+                        category_sets["controlnet"].update(items)
+                    elif "clip" in fname_lower and "clip_skip" not in fname_lower:
+                        category_sets["clip"].update(items)
+                    elif "unet" in fname_lower or "diffusion_model" in fname_lower:
+                        category_sets["unet"].update(items)
+                    elif "upscale" in fname_lower or "upscalemodel" in ctype_lower:
+                        category_sets["upscale"].update(items)
+                    elif fname_lower == "sampler_name":
+                        category_sets["sampler"].update(items)
+                    elif fname_lower == "scheduler":
+                        category_sets["scheduler"].update(items)
+
+    _CATEGORY_MODELS = {k: sorted(list(v)) for k, v in category_sets.items()}
+    return _CATEGORY_MODELS
+
+def get_field_options_and_category(
+    ctype: str,
+    field_name: str,
+    current_value: Any = "",
+    obj_info: Optional[Dict[str, Any]] = None
+) -> Tuple[List[str], Optional[str], Optional[str]]:
+    """
+    智能推断指定节点的指定字段是否为模型/枚举选项，并返回 (候选列表, 分类, 分类中文名)
+    """
+    if obj_info is None:
+        obj_info = get_cached_object_info("")
+
+    fname_lower = field_name.lower()
+    ctype_lower = ctype.lower()
+
+    # 1. 判断字段分类
+    category = None
+    if "ckpt" in fname_lower or "checkpoint" in fname_lower or ("checkpoint" in ctype_lower and fname_lower in ("ckpt_name", "model_name")):
+        category = "checkpoint"
+    elif "lora" in fname_lower:
+        category = "lora"
+    elif "vae" in fname_lower:
+        category = "vae"
+    elif "control_net" in fname_lower or "controlnet" in fname_lower:
+        category = "controlnet"
+    elif "unet" in fname_lower or ("diffusion" in ctype_lower and "model" in fname_lower):
+        category = "unet"
+    elif "clip" in fname_lower and "clip_skip" not in fname_lower:
+        category = "clip"
+    elif "upscale" in fname_lower or "upscale" in ctype_lower:
+        category = "upscale"
+    elif fname_lower == "sampler_name":
+        category = "sampler"
+    elif fname_lower == "scheduler":
+        category = "scheduler"
+
+    # 2. 从当前节点定义中尝试获取 spec options
+    node_options: List[str] = []
+    if isinstance(obj_info, dict) and ctype in obj_info:
+        inp = obj_info[ctype].get("input", {})
+        if isinstance(inp, dict):
+            all_fields = {**inp.get("required", {}), **inp.get("optional", {})}
+            if field_name in all_fields:
+                spec = all_fields[field_name]
+                if isinstance(spec, list) and len(spec) > 0 and isinstance(spec[0], list):
+                    node_options = [
+                        str(x).strip() for x in spec[0]
+                        if isinstance(x, (str, int, float)) and str(x).strip() and str(x).strip().lower() not in ("none", "(none)")
+                    ]
+
+    # 3. 如果当前节点选项为空或过少，尝试从聚合分类模型池扩充
+    cat_pool = get_category_models(obj_info)
+    candidates = list(node_options)
+    if category and category in cat_pool:
+        # 如果当前节点没有候选项，或者只有极少候选项，采用分类模型池
+        if len(candidates) <= 1:
+            candidates = list(cat_pool[category])
+        else:
+            # 合并分类模型池以提供更全的选择
+            merged_set = set(candidates)
+            for item in cat_pool[category]:
+                if item not in merged_set:
+                    candidates.append(item)
+                    merged_set.add(item)
+
+    # 4. 如果既不是预定义分类，当前节点也没有枚举选项，则该字段不是下拉选项
+    if not candidates:
+        return [], category, CATEGORY_LABELS.get(category) if category else None
+
+    # 5. 确保 current_value 始终位于候选项列表的第 0 位（默认选中且不丢失当前配置）
+    cv_str = str(current_value).strip() if current_value is not None else ""
+    if cv_str and cv_str.lower() not in ("none", "(none)"):
+        if cv_str in candidates:
+            candidates = [cv_str] + [c for c in candidates if c != cv_str]
+        else:
+            candidates = [cv_str] + candidates
+
+    return candidates, category, CATEGORY_LABELS.get(category) if category else None
 
 def get_cached_object_info(api_key: str) -> Dict[str, Any]:
     """
@@ -282,17 +429,24 @@ def detect_silent_audio_subgraphs(nodes: Dict[str, Any]) -> Set[str]:
                                     hidden_ids.update(chain)
     return hidden_ids
 
-def build_visual_graph(nodes: Dict[str, Any], hidden_node_ids: Optional[Set[str]] = None) -> Dict[str, Any]:
+def build_visual_graph(
+    nodes: Dict[str, Any],
+    hidden_node_ids: Optional[Set[str]] = None,
+    obj_info: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
     将 ComfyUI API Prompt 节点字典自动编译为高保真可视化画布拓扑模型：
     1. 自动计算 DAG 拓扑分层深度（从左至右自然排布，清晰展示数据流向）
-    2. 严格区分端口连线输入与字面量可编辑参数
+    2. 严格区分端口连线输入与字面量可编辑参数（支持模型/枚举下拉选项自动装配）
     3. 提取输出端口与下游连线引用
     4. 标注辅助静音占位节点（以便前端画布自由显隐过滤）
     5. 自动推断端口数据类型与色彩规范 (Model, Clip, VAE, Latent, Image, etc.)
     """
     if not isinstance(nodes, dict):
         return {"nodes": [], "edges": []}
+
+    if obj_info is None:
+        obj_info = get_cached_object_info("")
 
     from collections import defaultdict
     hidden_set = set(str(x) for x in (hidden_node_ids or []))
@@ -400,15 +554,26 @@ def build_visual_graph(nodes: Dict[str, Any], hidden_node_ids: Optional[Set[str]
                         "isAuxiliary": is_aux or (src_id in hidden_set)
                     })
                 else:
+                    opts, cat, cat_label = get_field_options_and_category(ctype, k, v, obj_info)
                     ftype = "str"
-                    if isinstance(v, bool): ftype = "bool"
-                    elif isinstance(v, int): ftype = "int"
-                    elif isinstance(v, float): ftype = "float"
-                    literals.append({
+                    if isinstance(v, bool):
+                        ftype = "bool"
+                    elif isinstance(v, int):
+                        ftype = "int"
+                    elif isinstance(v, float):
+                        ftype = "float"
+
+                    lit_dict = {
                         "name": k,
                         "value": v,
-                        "type": ftype
-                    })
+                        "type": "combo" if opts else ftype
+                    }
+                    if opts:
+                        lit_dict["options"] = opts[:300]
+                        lit_dict["category"] = cat
+                        lit_dict["categoryLabel"] = cat_label
+                        lit_dict["isModel"] = bool(cat in IS_MODEL_CATEGORY)
+                    literals.append(lit_dict)
 
             outputs = []
             slots_used = {slot for slot, _, _ in downstream_refs.get(nid, [])}
@@ -447,8 +612,16 @@ def build_visual_graph(nodes: Dict[str, Any], hidden_node_ids: Optional[Set[str]
         "edges": graph_edges
     }
 
-def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) -> Dict[str, Any]:
-    """对 ComfyUI 节点结构做深度动态解析，提取提示词、尺寸、采样器、参考图视频、以及全节点可调项"""
+def parse_nodes_to_dynamic_schema(
+    nodes: Dict[str, Any],
+    cfg: Dict[str, Any],
+    obj_info: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """对 ComfyUI 节点结构做深度动态解析，提取基底模型、提示词、尺寸、采样器、参考图视频、以及全节点可调项"""
+    if obj_info is None:
+        obj_info = get_cached_object_info("")
+
+    model_nodes = []
     prompt_nodes = []
     sampler_nodes = []
     latent_nodes = []
@@ -462,9 +635,28 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
     for nid, node in nodes.items():
         ctype = node.get("class_type", "")
         inputs = node.get("inputs", {})
+        meta = node.get("_meta", {})
+        title = meta.get("title") if isinstance(meta, dict) else None
+        title = title or ctype
 
         # 获取当前节点中所有的常量字面量字段（排除 link 引用列表，如 ['1', 0]）
         literal_fields = {k: v for k, v in inputs.items() if not isinstance(v, (list, dict))}
+
+        # 0. 核心基底与模型节点 (Checkpoint, UNet, LoRA, VAE, ControlNet, CLIP, Upscaler 等)
+        for fname, fval in literal_fields.items():
+            opts, cat, cat_label = get_field_options_and_category(ctype, fname, fval, obj_info)
+            if cat in IS_MODEL_CATEGORY:
+                model_nodes.append({
+                    "nodeId": str(nid),
+                    "class_type": ctype,
+                    "category": cat,
+                    "categoryLabel": cat_label or cat.upper(),
+                    "nodeTitle": f"{title} #{nid}",
+                    "fieldName": fname,
+                    "defaultValue": str(fval),
+                    "currentValue": str(fval),
+                    "options": opts[:300]
+                })
 
         # 1. 提示词与文本节点
         if "CLIPTextEncode" in ctype or "RH_Prompter" in ctype or "Prompt" in ctype or "JjkText" in ctype or ("text" in literal_fields and isinstance(literal_fields["text"], str) and len(literal_fields["text"]) > 0):
@@ -578,6 +770,7 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
         if literal_fields:
             field_meta = []
             for k, v in literal_fields.items():
+                opts, cat, cat_label = get_field_options_and_category(ctype, k, v, obj_info)
                 ftype = "str"
                 if isinstance(v, bool):
                     ftype = "bool"
@@ -585,11 +778,19 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
                     ftype = "int"
                 elif isinstance(v, float):
                     ftype = "float"
-                field_meta.append({
+
+                meta_item = {
                     "name": k,
                     "value": v,
-                    "type": ftype
-                })
+                    "type": "combo" if opts else ftype
+                }
+                if opts:
+                    meta_item["options"] = opts[:300]
+                    meta_item["category"] = cat
+                    meta_item["categoryLabel"] = cat_label
+                    meta_item["isModel"] = bool(cat in IS_MODEL_CATEGORY)
+                field_meta.append(meta_item)
+
             all_editable_nodes.append({
                 "nodeId": str(nid),
                 "class_type": ctype,
@@ -602,6 +803,7 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
     hidden_node_ids: Set[str] = detect_silent_audio_subgraphs(nodes) if hide_auxiliary else set()
 
     if hidden_node_ids:
+        model_nodes = [m for m in model_nodes if str(m.get("nodeId")) not in hidden_node_ids]
         prompt_nodes = [p for p in prompt_nodes if str(p.get("nodeId")) not in hidden_node_ids]
         sampler_nodes = [s for s in sampler_nodes if str(s.get("nodeId")) not in hidden_node_ids]
         latent_nodes = [l for l in latent_nodes if str(l.get("nodeId")) not in hidden_node_ids]
@@ -642,6 +844,7 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
     return {
         "hiddenAuxiliaryNodeIds": list(hidden_node_ids) if hidden_node_ids else [],
         "dynamicSchema": {
+            "modelNodes": model_nodes,
             "promptNodes": categorized_prompts,
             "samplerNode": sampler_nodes[0] if sampler_nodes else None,
             "latentNode": latent_nodes[0] if latent_nodes else None,
@@ -649,6 +852,7 @@ def parse_nodes_to_dynamic_schema(nodes: Dict[str, Any], cfg: Dict[str, Any]) ->
             "videoNodes": video_nodes,
             "audioNodes": audio_nodes,
             "qualityNodes": quality_nodes,
+            "outputNodes": output_nodes,
             "allEditableNodes": all_editable_nodes
         }
     }
