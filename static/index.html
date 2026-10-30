@@ -156,7 +156,7 @@
               <div class="text-[10px] text-slate-400 truncate mt-0.5">{{ currentUser.email || '未绑定邮箱' }}</div>
               <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
                 <span class="text-slate-400">算力余额:</span>
-                <span class="font-mono font-bold text-indigo-400">🪙 {{ currentUser.points || 0 }} 币</span>
+                <span class="font-mono font-bold text-indigo-400">🪙 {{ Math.floor(currentUser.points || 0) }} RC币</span>
               </div>
             </div>
 
@@ -1302,7 +1302,7 @@
                 <span>⚡</span> <span>任务运行规格与算力通道</span>
               </span>
               <span class="text-[11px] font-mono text-indigo-400">
-                {{ selectedTaskType === 'Plus' ? ('Plus 极速档 · 48GB 独享显存 (' + (publicConfig?.system?.pricing?.plusRate ?? 0.4) + ' 币/秒，免排队)') : ('Standard 标准档 · 24GB 基础显存 (' + (publicConfig?.system?.pricing?.standardRate ?? 0.2) + ' 币/秒)') }}
+                {{ selectedTaskType === 'Plus' ? ('Plus 极速档 · 48GB 独享显存 (' + (publicConfig?.system?.pricing?.plusRate ?? 0.4) + ' RC币/秒，免排队)') : ('Standard 标准档 · 24GB 基础显存 (' + (publicConfig?.system?.pricing?.standardRate ?? 0.2) + ' RC币/秒)') }}
               </span>
             </div>
 
@@ -1327,7 +1327,7 @@
                 </div>
                 <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
                   <span class="text-slate-500">消耗速率:</span>
-                  <span class="font-bold text-indigo-400">{{ publicConfig?.system?.pricing?.plusRate ?? 0.4 }} 币 / 秒</span>
+                  <span class="font-bold text-indigo-400">{{ publicConfig?.system?.pricing?.plusRate ?? 0.4 }} RC币 / 秒</span>
                 </div>
               </div>
 
@@ -1351,7 +1351,7 @@
                 </div>
                 <div class="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between text-[10px] font-mono">
                   <span class="text-slate-500">消耗速率:</span>
-                  <span class="font-bold text-emerald-400">{{ publicConfig?.system?.pricing?.standardRate ?? 0.2 }} 币 / 秒</span>
+                  <span class="font-bold text-emerald-400">{{ publicConfig?.system?.pricing?.standardRate ?? 0.2 }} RC币 / 秒</span>
                 </div>
               </div>
             </div>
@@ -1562,7 +1562,7 @@
               </div>
               <div class="flex justify-between">
                 <span>消耗费用:</span>
-                <span class="text-emerald-400 font-semibold">{{ latestTask.consumeCoins || 0 }} RH币</span>
+                <span class="text-emerald-400 font-semibold">{{ Math.floor(latestTask.cost || 0) }} RC币</span>
               </div>
             </div>
           </div>
@@ -1834,7 +1834,7 @@
         <div class="flex items-center justify-between">
           <div>
             <h2 class="text-lg font-bold">任务执行记录</h2>
-            <p class="text-xs text-slate-400">记录每一次运行的 TaskId、RH币消耗、状态及本地下载的视频与图像</p>
+            <p class="text-xs text-slate-400">记录每一次运行的 TaskId、RC币消耗、状态及本地下载的视频与图像</p>
           </div>
           <button @click="refreshTasks" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg border border-slate-700">刷新列表</button>
         </div>
@@ -1849,7 +1849,7 @@
                   <th class="p-3">主提示词</th>
                   <th class="p-3">状态</th>
                   <th class="p-3">耗时</th>
-                  <th class="p-3">RH币消耗</th>
+                  <th class="p-3">RC币消耗</th>
                   <th class="p-3">开始时间</th>
                   <th class="p-3 text-right">操作</th>
                 </tr>
@@ -1877,7 +1877,7 @@
                     </div>
                   </td>
                   <td class="p-3 font-mono">{{ t.duration || 0 }}s</td>
-                  <td class="p-3 font-semibold text-emerald-400 font-mono">{{ t.consumeCoins || 0 }} 币</td>
+                  <td class="p-3 font-semibold text-emerald-400 font-mono">{{ Math.floor(t.cost || 0) }} RC币</td>
                   <!-- 开始时间列（替换原产出媒体列） -->
                   <td class="p-3 font-mono text-slate-400 whitespace-nowrap text-[11px]">
                     {{ formatTime(t.createdAt) }}
@@ -2000,7 +2000,7 @@
                     {{ item.workflowName || 'ComfyUI 流程' }}
                   </span>
                   <span v-if="item.cost || item.consumeCoins" class="px-2 py-0.5 rounded-lg text-[11px] font-mono bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    {{ item.cost || item.consumeCoins }} 币
+                    {{ Math.floor(item.cost || item.consumeCoins || 0) }} RC币
                   </span>
                   <span v-if="item.duration" class="px-2 py-0.5 rounded-lg text-[11px] font-mono text-slate-400 bg-slate-800 border border-slate-700/60">
                     耗时: {{ item.duration }}s
@@ -2296,7 +2296,7 @@
             </select>
           </div>
           <div class="space-y-1">
-            <label class="text-xs text-slate-300">算力币余额 (Points)</label>
+            <label class="text-xs text-slate-300">RC币余额 (Points)</label>
             <input type="number" v-model.number="editUserForm.points" required class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
           </div>
           <div class="space-y-1">

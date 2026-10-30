@@ -4,6 +4,7 @@ import json
 import time
 from typing import Optional, List, Dict, Any, Tuple, Union
 import secrets
+import math
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -210,6 +211,7 @@ def init_database():
         _add_col_if_missing("tasks", "current_node_id", "TEXT DEFAULT ''")
         _add_col_if_missing("tasks", "error_message", "TEXT DEFAULT ''")
         _add_col_if_missing("tasks", "cost", "INTEGER DEFAULT 0")
+        _add_col_if_missing("tasks", "instance_type", "TEXT DEFAULT 'default'")
 
         conn.commit()
 
@@ -265,17 +267,21 @@ def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
     except Exception:
         node_info = []
 
+    task_type = d.get("task_type", "Standard")
+    inst_type = d.get("instance_type") or ("default" if str(task_type).upper() in ("STANDARD", "LITE") else "plus")
+
     return {
         "taskId": d.get("task_id"),
         "userId": d.get("user_id") or "",
         "username": d.get("username") or "匿名访客",
         "workflowId": d.get("workflow_id"),
         "workflowName": d.get("workflow_name"),
-        "taskType": d.get("task_type", "Standard"),
+        "taskType": task_type,
+        "instanceType": inst_type,
         "positivePrompt": d.get("positive_prompt") or "",
         "negativePrompt": d.get("negative_prompt") or "",
         "status": d.get("status"),
-        "duration": d.get("duration", 0),
+        "duration": int(d.get("duration", 0) or 0),
         "consumeCoins": d.get("consume_coins", "0"),
         "queueRemaining": d.get("queue_remaining", 0),
         "statusText": d.get("status_text", ""),
@@ -283,7 +289,7 @@ def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
         "currentStep": d.get("current_step", 0),
         "currentNodeId": d.get("current_node_id", ""),
         "error": d.get("error_message", ""),
-        "cost": d.get("cost", 0),
+        "cost": int(d.get("cost", 0) or 0),
         "outputs": outputs,
         "nodeInfoList": node_info,
         "createdAt": d.get("created_at"),
@@ -341,20 +347,23 @@ def db_get_task(task_id: str) -> Optional[Dict[str, Any]]:
         return db_row_to_task(row) if row else None
 
 def db_save_task(task: Dict[str, Any]):
+    task_type_val = str(task.get("taskType", "Standard"))
+    inst_type_val = str(task.get("instanceType") or task.get("instance_type") or ("default" if task_type_val.upper() in ("STANDARD", "LITE") else "plus"))
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
         INSERT INTO tasks (
             task_id, user_id, username, workflow_id, workflow_name, task_type,
             positive_prompt, negative_prompt, status, duration, consume_coins,
-            outputs_json, node_info_json, cost, created_at, updated_at, key_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            outputs_json, node_info_json, cost, created_at, updated_at, key_id, instance_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
             status = excluded.status,
             duration = excluded.duration,
             consume_coins = excluded.consume_coins,
             outputs_json = excluded.outputs_json,
             cost = excluded.cost,
+            instance_type = COALESCE(NULLIF(excluded.instance_type, ''), tasks.instance_type),
             updated_at = excluded.updated_at,
             key_id = COALESCE(NULLIF(excluded.key_id, ''), tasks.key_id);
         """, (
@@ -363,7 +372,7 @@ def db_save_task(task: Dict[str, Any]):
             str(task.get("username", "匿名访客")),
             str(task.get("workflowId", "")),
             str(task.get("workflowName", "")),
-            str(task.get("taskType", "Standard")),
+            task_type_val,
             str(task.get("positivePrompt", "")),
             str(task.get("negativePrompt", "")),
             str(task.get("status", "QUEUED")),
@@ -374,7 +383,8 @@ def db_save_task(task: Dict[str, Any]):
             int(task.get("cost", 0) or 0),
             int(task.get("createdAt", time.time())),
             int(task.get("updatedAt", time.time())),
-            str(task.get("keyId") or task.get("key_id") or "")
+            str(task.get("keyId") or task.get("key_id") or ""),
+            inst_type_val
         ))
         conn.commit()
 
@@ -390,6 +400,8 @@ def db_update_task(task_id: str, updates: Dict[str, Any]):
             "consumeCoins": "consume_coins",
             "updatedAt": "updated_at",
             "taskType": "task_type",
+            "instanceType": "instance_type",
+            "instance_type": "instance_type",
             "cost": "cost",
             "queueRemaining": "queue_remaining",
             "statusText": "status_text",
@@ -404,7 +416,10 @@ def db_update_task(task_id: str, updates: Dict[str, Any]):
         for k, v in updates.items():
             if k in mapping:
                 col_updates.append(f"{mapping[k]} = ?")
-                vals.append(v)
+                if k == "cost":
+                    vals.append(int(v or 0))
+                else:
+                    vals.append(v)
             elif k == "outputs":
                 col_updates.append("outputs_json = ?")
                 vals.append(json.dumps(v, ensure_ascii=False))
@@ -458,40 +473,40 @@ def db_get_user_task_counts() -> Dict[str, int]:
 
 # ----------------- 积分计费原子操作与流水账本 (P0-5 资产防超卖与防并发并发) -----------------
 
-def db_deduct_user_points(user_id: str, amount: Union[int, float], task_id: str = "", reason: str = "工作流生图扣费") -> Tuple[bool, float, str]:
+def db_deduct_user_points(user_id: str, amount: Union[int, float], task_id: str = "", reason: str = "工作流生图扣费") -> Tuple[bool, int, str]:
     """
     原子扣减用户积分：
     采用 SQL 原生条件更新 UPDATE ... WHERE points >= amount，彻底杜绝并发下余额扣成负数！
-    支持浮点数秒级计时扣费，严格保留两位小数。
+    抹去所有浮点小数，严格按整数 RC币 计费与扣除。
     返回 (成功标志, 扣后余额, 错误信息)
     """
-    amt = round(float(amount), 2)
+    amt = int(math.floor(float(amount)))
     if amt <= 0:
         with get_db_connection() as conn:
             c = conn.cursor()
             c.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
             r = c.fetchone()
-            return True, (round(float(r[0]), 2) if r else 0.0), ""
+            return True, (int(r[0]) if r else 0), ""
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        # 1. 原子条件扣减 (round to 2 decimals)
+        # 1. 原子条件扣减 (整数计费)
         cursor.execute(
-            "UPDATE users SET points = round(points - ?, 2) WHERE id = ? AND points >= ? AND is_active = 1;",
+            "UPDATE users SET points = CAST(points - ? AS INTEGER) WHERE id = ? AND points >= ? AND is_active = 1;",
             (amt, str(user_id), amt)
         )
         if cursor.rowcount == 0:
             cursor.execute("SELECT points, is_active FROM users WHERE id = ?;", (str(user_id),))
             row = cursor.fetchone()
             if not row:
-                return False, 0.0, "用户不存在"
+                return False, 0, "用户不存在"
             if not row[1]:
-                return False, round(float(row[0]), 2), "用户账户已被封禁，禁止消费"
-            return False, round(float(row[0]), 2), f"算力点数不足（当前余额: {round(float(row[0]), 2)}, 本次需要: {amt}）"
+                return False, int(row[0]), "用户账户已被封禁，禁止消费"
+            return False, int(row[0]), f"算力点数不足（当前余额: {int(row[0])} RC币, 本次需要: {amt} RC币）"
 
         # 2. 查询扣减后最新余额
         cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
-        new_balance = round(float(cursor.fetchone()[0]), 2)
+        new_balance = int(cursor.fetchone()[0])
 
         # 3. 记录流水台账
         ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"
@@ -503,17 +518,17 @@ def db_deduct_user_points(user_id: str, amount: Union[int, float], task_id: str 
         conn.commit()
         return True, new_balance, "扣费成功"
 
-def db_refund_user_points(user_id: str, amount: Union[int, float], task_id: str = "", reason: str = "生图失败/取消退款") -> Tuple[bool, float]:
-    """原子退还用户积分，并写入退款对账流水"""
-    amt = round(float(amount), 2)
+def db_refund_user_points(user_id: str, amount: Union[int, float], task_id: str = "", reason: str = "生图失败/取消退款") -> Tuple[bool, int]:
+    """原子退还用户积分，并写入退款对账流水（整数 RC币）"""
+    amt = int(math.floor(float(amount)))
     if amt <= 0:
-        return True, 0.0
+        return True, 0
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET points = round(points + ?, 2) WHERE id = ?;", (amt, str(user_id)))
+        cursor.execute("UPDATE users SET points = CAST(points + ? AS INTEGER) WHERE id = ?;", (amt, str(user_id)))
         cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
         row = cursor.fetchone()
-        new_balance = round(float(row[0]), 2) if row else 0.0
+        new_balance = int(row[0]) if row else 0
 
         ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"
         cursor.execute("""
