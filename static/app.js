@@ -214,6 +214,7 @@ createApp({
     // 动态解析得到的 Schema 与绑定的响应式参数
     const dynamicSchema = ref(null);
     const dynamicSchemaTotalNodes = ref(0);
+    const dynamicModels = ref([]);
     const dynamicPrompts = ref([]);
     const dynamicSampler = ref(null);
     const dynamicLatent = ref(null);
@@ -421,6 +422,12 @@ createApp({
 
     // 双向参数同步：表单 -> nodeOverrides
     const syncFromFormToOverrides = () => {
+      dynamicModels.value.forEach(m => {
+        const mId = String(m.nodeId);
+        if (nodeOverrides.value[mId] && originalDefaults.value[mId]?.[m.fieldName] !== undefined) {
+          nodeOverrides.value[mId][m.fieldName] = m.currentValue;
+        }
+      });
       dynamicPrompts.value.forEach(p => {
         const pId = String(p.nodeId);
         if (nodeOverrides.value[pId] && originalDefaults.value[pId]?.[p.fieldName] !== undefined) {
@@ -473,6 +480,12 @@ createApp({
 
     // 双向参数同步：nodeOverrides -> 表单
     const syncFromOverridesToForm = () => {
+      dynamicModels.value.forEach(m => {
+        const mId = String(m.nodeId);
+        if (nodeOverrides.value[mId]?.[m.fieldName] !== undefined) {
+          m.currentValue = String(nodeOverrides.value[mId][m.fieldName]);
+        }
+      });
       dynamicPrompts.value.forEach(p => {
         const pId = String(p.nodeId);
         if (nodeOverrides.value[pId]?.[p.fieldName] !== undefined) {
@@ -702,6 +715,25 @@ createApp({
       }
     };
 
+    // 核心模型选择辅助操作
+    const resetModel = (m) => {
+      m.currentValue = m.defaultValue;
+      const mId = String(m.nodeId);
+      if (originalDefaults.value[mId] && originalDefaults.value[mId][m.fieldName] !== undefined) {
+        nodeOverrides.value[mId][m.fieldName] = originalDefaults.value[mId][m.fieldName];
+      }
+    };
+
+    const resetAllModels = () => {
+      dynamicModels.value.forEach(m => resetModel(m));
+    };
+
+    const onModelChange = (m) => {
+      const mId = String(m.nodeId);
+      if (!nodeOverrides.value[mId]) nodeOverrides.value[mId] = {};
+      nodeOverrides.value[mId][m.fieldName] = m.currentValue;
+    };
+
     // 智能诊断当前工作流是否存在云端缺陷（如音频崩端或未开启保存视频）
     const workflowIssues = computed(() => {
       const issues = [];
@@ -797,6 +829,20 @@ createApp({
       nodeOverrides.value = overrides;
       originalDefaults.value = defaults;
       allEditableNodes.value = data.dynamicSchema.allEditableNodes || [];
+
+      // 0. 动态基底与模型版本 (Model Selection)
+      dynamicModels.value = (data.dynamicSchema.modelNodes || []).map(m => ({
+        nodeId: m.nodeId,
+        class_type: m.class_type,
+        category: m.category,
+        categoryLabel: m.categoryLabel || m.category,
+        nodeTitle: m.nodeTitle,
+        fieldName: m.fieldName,
+        defaultValue: m.defaultValue,
+        currentValue: m.defaultValue,
+        options: m.options || [],
+        manualInput: false
+      }));
 
       // 1. 动态生成提示词绑定表单
       dynamicPrompts.value = (data.dynamicSchema.promptNodes || []).map(p => ({
@@ -1155,6 +1201,15 @@ createApp({
       isGenerating.value = true;
 
       // 1. 同步上层快捷组件中的修改到 nodeOverrides
+      // 核心基底与模型选择
+      dynamicModels.value.forEach(m => {
+        const mId = String(m.nodeId);
+        if (!nodeOverrides.value[mId]) nodeOverrides.value[mId] = {};
+        if (m.currentValue !== undefined && m.currentValue !== null) {
+          nodeOverrides.value[mId][m.fieldName] = m.currentValue;
+        }
+      });
+
       // 提示词
       dynamicPrompts.value.forEach(p => {
         if (!nodeOverrides.value[p.nodeId]) nodeOverrides.value[p.nodeId] = {};
@@ -2261,6 +2316,10 @@ createApp({
       showAddWorkflowModal,
       dynamicSchema,
       dynamicSchemaTotalNodes,
+      dynamicModels,
+      resetModel,
+      resetAllModels,
+      onModelChange,
       dynamicPrompts,
       dynamicSampler,
       dynamicLatent,
