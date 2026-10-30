@@ -64,7 +64,7 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
                 "workflowName": t.get("workflowName", "") or t.get("workflowId", ""),
                 "workflowId": t.get("workflowId", ""),
                 "duration": t.get("duration", 0),
-                "cost": t.get("cost", 0),
+                "cost": int(t.get("cost", 0) or 0),
                 "consumeCoins": t.get("consumeCoins", "0")
             })
     items.sort(key=lambda x: x["createdAt"], reverse=True)

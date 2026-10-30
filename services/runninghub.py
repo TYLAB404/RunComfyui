@@ -413,16 +413,18 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                     # 纯运行秒数计时计费原子结算
                     from services.billing_service import settle_task_billing
                     task_user_id = cur_t.get("userId") if cur_t else ""
-                    task_inst_type = (cur_t.get("instanceType") or "plus") if cur_t else "plus"
+                    task_inst_type = cur_t.get("instanceType") if cur_t else None
+                    task_tier = cur_t.get("taskType") if cur_t else None
                     wf_name = (cur_t.get("workflowName") or "工作流渲染") if cur_t else "工作流渲染"
                     billing_res = await settle_task_billing(
                         user_id=task_user_id,
                         task_id=str(task_id),
                         duration_seconds=final_duration,
                         instance_type=task_inst_type,
+                        task_type=task_tier,
                         workflow_name=wf_name
                     )
-                    actual_cost = billing_res.get("cost", 0.0)
+                    actual_cost = int(billing_res.get("cost", 0))
 
                     db_update_task(str(task_id), {
                         "status": "SUCCESS",
@@ -505,16 +507,18 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                         from services.billing_service import settle_task_billing
                         int_dur = max(1, int(time.time() - (run_start_time or start_time)))
                         task_user_id = cur_t.get("userId") if cur_t else ""
-                        task_inst_type = (cur_t.get("instanceType") or "plus") if cur_t else "plus"
+                        task_inst_type = cur_t.get("instanceType") if cur_t else None
+                        task_tier = cur_t.get("taskType") if cur_t else None
                         wf_name = (cur_t.get("workflowName") or "工作流渲染") if cur_t else "工作流渲染"
                         billing_res = await settle_task_billing(
                             user_id=task_user_id,
                             task_id=str(task_id),
                             duration_seconds=int_dur,
                             instance_type=task_inst_type,
+                            task_type=task_tier,
                             workflow_name=wf_name
                         )
-                        int_cost = billing_res.get("cost", 0.0)
+                        int_cost = int(billing_res.get("cost", 0))
 
                         db_update_task(str(task_id), {
                             "status": "SUCCESS",

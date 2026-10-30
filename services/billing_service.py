@@ -4,6 +4,7 @@ Handles pricing configuration, instance tier resolution,
 minimum balance pre-checks, and duration-based settlement.
 """
 import logging
+import math
 from typing import Dict, Any, Optional, Tuple
 
 from core.config import load_config
@@ -13,9 +14,9 @@ from core.auth import notify_user
 logger = logging.getLogger("BillingService")
 
 DEFAULT_PRICING = {
-    "standardRate": 0.2,       # Standard 基础档：0.2 币/秒 (24GB 基础算力)
-    "plusRate": 0.4,           # Plus 极速档：0.4 币/秒 (48GB 独享显存)
-    "minBalanceRequired": 5.0  # 启动最低余额门槛 (5.0 币)
+    "standardRate": 0.2,       # Standard 基础档：0.2 RC币/秒 (24GB 基础算力)
+    "plusRate": 0.4,           # Plus 极速档：0.4 RC币/秒 (48GB 独享显存)
+    "minBalanceRequired": 5.0  # 启动最低余额门槛 (5 RC币)
 }
 
 
@@ -38,16 +39,19 @@ def resolve_instance_tier(
     """
     统一解析运行算力档位与对应费率：
     返回 (instance_type, tier_name, rate_per_second)
-    - Plus (高档位): instanceType="plus", 48GB 显存，0.4 币/秒
-    - Standard (低档位): instanceType="default", 24GB 显存，0.2 币/秒
+    - Plus (高档位): instanceType="plus", 48GB 显存，0.4 RC币/秒
+    - Standard (低档位): instanceType="default", 24GB 显存，0.2 RC币/秒
     """
     pricing = get_billing_pricing()
     
     is_standard = False
-    if req_instance_type:
-        is_standard = str(req_instance_type).strip().lower() in ("default", "standard")
-    elif task_type:
-        is_standard = str(task_type).strip().upper() in ("STANDARD", "LITE")
+    inst_str = str(req_instance_type or "").strip().lower()
+    task_str = str(task_type or "").strip().upper()
+
+    if inst_str in ("default", "standard"):
+        is_standard = True
+    elif task_str in ("STANDARD", "LITE"):
+        is_standard = True
 
     if is_standard:
         return "default", "Standard", pricing["standardRate"]
@@ -81,52 +85,53 @@ def check_user_can_start_task(user: Optional[Dict[str, Any]]) -> Tuple[bool, flo
         if not row[1]:
             return False, 0.0, "您的账户已被停用，无法提交新任务"
 
-        cur_points = round(float(row[0] or 0), 2)
+        cur_points = int(row[0] or 0)
         if cur_points < min_required:
             return (
                 False,
                 cur_points,
-                f"账户算力余额不足：启动任务需至少保留 {min_required} 点算力（当前账户仅剩 {cur_points} 点），请先前往兑换卡密充值"
+                f"账户算力余额不足：启动任务需至少保留 {int(min_required)} 点算力（当前账户仅剩 {cur_points} RC币），请先前往兑换卡密充值"
             )
 
         return True, cur_points, ""
 
 
 async def settle_task_billing(
-    user_id: str,
+    user_id: Optional[str],
     task_id: str,
     duration_seconds: int,
-    instance_type: str = "plus",
+    instance_type: Optional[str] = None,
+    task_type: Optional[str] = None,
     workflow_name: str = "工作流渲染"
 ) -> Dict[str, Any]:
     """
     任务执行成功时的纯运行秒数计费原子结算：
     排队耗时不计入计费，仅按实际工作流运行秒数结算。
     - 管理员免费
-    - 普通用户按 时长(秒) * 费率(币/秒) 计算并原子扣除
+    - 普通用户按 时长(秒) * 费率(RC币/秒) 计算，舍弃小数抹零，按整数 RC币 结算
     """
     if not user_id:
-        return {"cost": 0.0, "rate": 0.0, "duration": duration_seconds, "deducted": False}
+        return {"cost": 0, "rate": 0.0, "duration": duration_seconds, "deducted": False}
 
     with get_db_connection() as conn:
         c = conn.cursor()
         c.execute("SELECT role, points FROM users WHERE id = ?;", (str(user_id),))
         u_row = c.fetchone()
         if not u_row:
-            return {"cost": 0.0, "rate": 0.0, "duration": duration_seconds, "deducted": False}
+            return {"cost": 0, "rate": 0.0, "duration": duration_seconds, "deducted": False}
 
         role = u_row[0]
         if role == "admin":
-            return {"cost": 0.0, "rate": 0.0, "duration": duration_seconds, "deducted": False, "reason": "管理员免扣费"}
+            return {"cost": 0, "rate": 0.0, "duration": duration_seconds, "deducted": False, "reason": "管理员免扣费"}
 
-    pricing = get_billing_pricing()
-    rate = pricing["standardRate"] if instance_type.lower() == "default" else pricing["plusRate"]
+    inst_type, tier_name, rate = resolve_instance_tier(req_instance_type=instance_type, task_type=task_type)
 
     billed_duration = max(1, int(duration_seconds))
-    actual_cost = round(billed_duration * rate, 2)
+    # 抹去所有小数位，按纯整数计费 (例如 64.8 -> 64, 32.4 -> 32)
+    actual_cost = int(math.floor(billed_duration * rate))
 
-    tier_label = "Standard 基础档" if instance_type.lower() == "default" else "Plus 极速档"
-    reason = f"任务渲染计费 [{tier_label}] ({billed_duration}秒 × {rate}币/秒)"
+    tier_label = "Standard 基础档" if inst_type == "default" else "Plus 极速档"
+    reason = f"任务渲染计费 [{tier_label}] ({billed_duration}秒 × {rate}RC币/秒，取整计费)"
 
     ok, new_bal, msg = db_deduct_user_points(
         user_id=user_id,
@@ -141,8 +146,8 @@ async def settle_task_billing(
                 user_id=user_id,
                 event_type="POINTS_UPDATED",
                 data={
-                    "points": new_bal,
-                    "cost": actual_cost,
+                    "points": int(new_bal),
+                    "cost": int(actual_cost),
                     "duration": billed_duration,
                     "rate": rate,
                     "taskId": task_id,
@@ -153,10 +158,10 @@ async def settle_task_billing(
             logger.warning(f"Failed to send SSE notification to user {user_id}: {e}")
 
     return {
-        "cost": actual_cost,
+        "cost": int(actual_cost),
         "rate": rate,
         "duration": billed_duration,
         "deducted": ok,
-        "remainingBalance": new_bal,
+        "remainingBalance": int(new_bal),
         "message": msg
     }
