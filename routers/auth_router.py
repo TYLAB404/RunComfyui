@@ -120,6 +120,10 @@ def get_public_auth_config():
     cfg = load_config()
     sys_cfg = cfg.get("system", {})
     smtp_enabled = bool(sys_cfg.get("smtp", {}).get("enabled", False))
+    cdkey_url = sys_cfg.get("cdkeyPurchaseUrl", "").strip()
+    if cdkey_url and not (cdkey_url.startswith("http://") or cdkey_url.startswith("https://")):
+        cdkey_url = f"https://{cdkey_url}"
+
     return {
         "siteTitle": sys_cfg.get("siteTitle", "RunComfyui 智能创作平台"),
         "turnstileEnabled": bool(sys_cfg.get("turnstileEnabled", False)),
@@ -130,7 +134,7 @@ def get_public_auth_config():
         "broadcast": sys_cfg.get("broadcast", {"enabled": False, "message": "", "level": "info"}),
         "maintenance": sys_cfg.get("maintenance", {"enabled": False, "message": "系统维护中"}),
         "isFirstUser": get_user_count() == 0,
-        "cdkeyPurchaseUrl": sys_cfg.get("cdkeyPurchaseUrl", ""),
+        "cdkeyPurchaseUrl": cdkey_url,
         "cdkeyPurchaseText": sys_cfg.get("cdkeyPurchaseText", "前往爱发电购买卡密")
     }
 

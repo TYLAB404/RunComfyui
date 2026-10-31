@@ -378,7 +378,10 @@ def admin_update_system_config(
         pricing_cfg["minBalanceRequired"] = max(0.0, round(float(req.minBalanceRequired), 2))
 
     if req.cdkeyPurchaseUrl is not None:
-        sys_cfg["cdkeyPurchaseUrl"] = req.cdkeyPurchaseUrl.strip()
+        url = req.cdkeyPurchaseUrl.strip()
+        if url and not (url.startswith("http://") or url.startswith("https://")):
+            url = f"https://{url}"
+        sys_cfg["cdkeyPurchaseUrl"] = url
     if req.cdkeyPurchaseText is not None:
         sys_cfg["cdkeyPurchaseText"] = req.cdkeyPurchaseText.strip()
 

@@ -88,6 +88,16 @@ createApp({
       showRedeemModal.value = false;
     };
 
+    const formatExternalUrl = (url) => {
+      if (!url) return '';
+      const trimmed = String(url).trim();
+      if (!trimmed) return '';
+      if (/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(trimmed)) {
+        return trimmed;
+      }
+      return 'https://' + trimmed;
+    };
+
     const submitRedeemCDKey = async () => {
       const code = (redeemCode.value || '').trim();
       if (!code) {
@@ -2611,6 +2621,7 @@ createApp({
       loadCdkeyHistory,
       openRedeemModal,
       closeRedeemModal,
+      formatExternalUrl,
       submitRedeemCDKey,
       showChangePwdModal,
       pwdForm,
