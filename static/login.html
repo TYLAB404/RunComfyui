@@ -898,8 +898,8 @@
             setTimeout(() => {
               const params = new URLSearchParams(window.location.search);
               let redirect = params.get('redirect') || '/';
-              if (data.user && data.user.role === 'admin' && redirect === '/admin') {
-                window.location.href = '/admin';
+              if (data.user && data.user.role === 'admin' && redirect.includes('admin')) {
+                window.location.href = '/admin.html?token=' + encodeURIComponent(data.token);
               } else {
                 window.location.href = redirect;
               }

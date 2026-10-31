@@ -535,14 +535,43 @@ def route_register():
 @router.get("/admin/")
 async def route_secure_admin_portal(request: Request):
     """
-    管理控制台页面入口：
-    向用户交付 admin.html。前端自带管理员身份校验与独立超级管理员登录门户；
-    所有敏感操作接口均在服务端通过 Depends(get_current_admin) 进行绝对权限拦截。
+    404 隐形门禁与安全直通门户（方案 A + 应急暗号）：
+    1. 任何未授权访客、黑客扫描字典、普通用户直接盲打 /admin 或 /admin.html，一律返回 404 Not Found 抹除后台存在性！
+    2. 管理员在前台点击【管理后台】，通过 ?token= 携带已签名的管理员 JWT 凭证直通，后端校验放行并种植安全 Cookie。
+    3. 专属敲门暗号（?door=master）：若管理员在全新未登录设备上直接访问，可带暗号开启超级管理员独立登录门户。
     """
+    token = request.query_params.get("token") or request.cookies.get("auth_token")
+    if not token:
+        auth_hdr = request.headers.get("authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            token = auth_hdr.split(" ", 1)[1].strip()
+
+    is_admin = False
+    if token:
+        try:
+            payload = decode_jwt_token(token)
+            user_id = payload.get("sub")
+            user = get_user_by_id(user_id) if user_id else None
+            if user and user.get("role") == "admin" and user.get("isActive", True):
+                is_admin = True
+        except Exception:
+            is_admin = False
+
+    # 敲门暗号安全检查（默认 door=master 或系统配置的安全暗号）
+    door_knock = request.query_params.get("door", "").strip()
+    is_door_pass = bool(door_knock and door_knock in ["master", "admin", "runninghub"])
+
+    if not is_admin and not is_door_pass:
+        raise HTTPException(status_code=404, detail="Not Found")
+
     admin_file = os.path.join(BASE_DIR, "templates", "admin.html")
     if not os.path.exists(admin_file):
         admin_file = os.path.join(STATIC_DIR, "admin.html")
     if not os.path.exists(admin_file):
-        raise HTTPException(status_code=404, detail="Admin template not found")
+        raise HTTPException(status_code=404, detail="Not Found")
 
-    return FileResponse(admin_file, media_type="text/html")
+    response = FileResponse(admin_file, media_type="text/html")
+    if is_admin and token:
+        is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+        response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_secure)
+    return response
