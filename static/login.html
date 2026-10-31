@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>账户中心 - RunningHub Cloud Studio</title>
+  <title>账户中心 - RunComfyui</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
@@ -65,7 +65,7 @@
         </svg>
       </div>
       <h2 class="text-2xl sm:text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-100 to-slate-400">
-        {{ siteTitle || 'RunningHub Cloud' }}
+        {{ siteTitle || 'RunComfyui' }}
       </h2>
       <p class="mt-2 text-xs sm:text-sm text-slate-400">
         新一代 ComfyUI 智能创作引擎与自动化算力平台
@@ -523,20 +523,20 @@
       </div>
     </div>
 
-    <!-- 底部安全与环境说明 -->
+    <!-- 底部安全与合规声明 -->
     <div class="mt-8 text-center text-[11px] text-slate-500 space-y-1">
       <div class="flex items-center justify-center gap-3">
         <span class="flex items-center gap-1">
           <svg class="w-3 h-3 text-emerald-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          PBKDF2-HMAC 加密防护
+          安全加密连接
         </span>
-        <span class="text-slate-700">|</span>
+        <span class="text-slate-700">•</span>
         <span class="flex items-center gap-1">
           <svg class="w-3 h-3 text-indigo-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/></svg>
-          Cloudflare 智能防护
+          隐私合规保护
         </span>
       </div>
-      <div>RunningHub Cloud Controller &copy; 2026. All rights reserved.</div>
+      <div>&copy; 2026 RunComfyui. All rights reserved.</div>
     </div>
 
     <!-- ================= 用户协议与服务规范 Modal ================= -->
@@ -551,7 +551,7 @@
         </div>
         <div class="p-6 overflow-y-auto space-y-4 text-xs text-slate-300 leading-relaxed">
           <h4 class="font-bold text-white text-sm">1. 协议概述与服务范围</h4>
-          <p>欢迎使用 RunningHub Cloud Studio（以下简称“本平台”）。本协议由您与本平台共同缔结，适用于您对 ComfyUI 云端工作流调度、AI 图像与音视频生成、算力资源管理等所有相关服务的使用。</p>
+          <p>欢迎使用 RunComfyui（以下简称“本平台”）。本协议由您与本平台共同缔结，适用于您对 ComfyUI 云端工作流调度、AI 图像与音视频生成、算力资源管理等所有相关服务的使用。</p>
           
           <h4 class="font-bold text-white text-sm">2. 账号安全与使用准则</h4>
           <p>您应妥善保管自己的用户名及登录凭证。本平台支持以用户名或绑定邮箱作为登录凭证。您同意不对外转让、出租或非法共享账号。由于用户自身密码泄露导致的任何责任由用户自行承担。</p>
@@ -584,8 +584,8 @@
           <h4 class="font-bold text-white text-sm">1. 我们收集的信息</h4>
           <p>为了保障账号安全与服务顺畅，我们收集您主动提供的注册用户名、电子邮箱地址，以及您在运行 ComfyUI 任务时提交的工作流参数与生成产物。</p>
           
-          <h4 class="font-bold text-white text-sm">2. 密码加密与存储安全</h4>
-          <p>我们采用业界高强度 PBKDF2-HMAC-SHA256 算法（具备随机盐值与高达 100,000 次哈希迭代）对密码进行不可逆单向加密。系统服务器与任何平台管理人员均无法查阅您的原始明文密码。</p>
+          <h4 class="font-bold text-white text-sm">2. 密码安全与存储机制</h4>
+          <p>我们采用业界高标准的加密算法对用户密码进行单向不可逆加密保护，系统与任何平台人员均无法查阅您的原始明文密码。</p>
           
           <h4 class="font-bold text-white text-sm">3. 邮箱验证码的安全传输</h4>
           <p>您在注册与重置密码时收到的邮箱验证码采用高位随机生成，有效期严格限定为 5 分钟，且实行一次性核销与频次防刷限制，绝不会将您的邮箱数据共享予任何商业第三方。</p>
@@ -609,7 +609,7 @@
     createApp({
       setup() {
         const tab = ref('login'); // 'login' | 'register' | 'forgot'
-        const siteTitle = ref('RunningHub Cloud Studio');
+        const siteTitle = ref('RunComfyui');
         
         // 密码显隐控制
         const showLoginPassword = ref(false);
@@ -732,7 +732,7 @@
             const res = await fetch('/api/auth/public-config');
             if (res.ok) {
               const data = await res.json();
-              siteTitle.value = data.siteTitle || 'RunningHub Cloud Studio';
+              siteTitle.value = data.siteTitle || 'RunComfyui';
               isFirstUser.value = !!data.isFirstUser;
               turnstileEnabled.value = !!data.turnstileEnabled;
               turnstileSiteKey.value = data.turnstileSiteKey || '';
@@ -783,7 +783,7 @@
           }
 
           if (turnstileEnabled.value && !turnstileToken.value) {
-            errorMessage.value = '请先完成下方 Cloudflare 人机安全验证，再发送验证码';
+            errorMessage.value = '请先完成下方人机安全验证，再发送验证码';
             return;
           }
 
@@ -832,7 +832,7 @@
           }
 
           if (turnstileEnabled.value && !turnstileToken.value) {
-            errorMessage.value = '请先完成 Cloudflare 人机安全验证';
+            errorMessage.value = '请先完成人机安全验证';
             return;
           }
 
