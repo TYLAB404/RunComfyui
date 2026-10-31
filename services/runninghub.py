@@ -233,7 +233,8 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
                                         if auth_query:
                                             view_url = f"https://www.runninghub.ai/c_instance/view?filename={fname}&subfolder={subfolder}&type={m_type}&format={m_format}&{auth_query}"
                                         elif api_key:
-                                            view_url = f"{RUNNINGHUB_API_URL}/proxy/{api_key}/view?filename={fname}&subfolder={subfolder}&type={m_type}"
+                                            # 安全脱敏：不再对外暴露明文 api_key，改用内部代理脱敏路由
+                                            view_url = f"/api/proxy/view?filename={fname}&subfolder={subfolder}&type={m_type}"
                                         elif target_url:
                                             view_url = f"{target_url}/view?filename={fname}&subfolder={subfolder}&type={m_type}&clientId={client_id}"
 
@@ -350,6 +351,22 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                     cur_text = cur_t.get("statusText", "") if cur_t else ""
                     if "采样" not in cur_text and "节点" not in cur_text and "排队等待" not in cur_text:
                         cur_text = f"云端 GPU 正在计算 ({run_duration}s)"
+
+                    # 算力预算智能安全守护：基于当前余额换算的最大运行时长
+                    max_billable = int(cur_t.get("maxBillableSeconds") or 0) if cur_t else 0
+                    if max_billable > 0:
+                        remain_s = max(0, max_billable - run_duration)
+                        if run_duration >= max_billable:
+                            print(f"[Budget Guard] Task {task_id} reached max billable seconds ({run_duration}s >= {max_billable}s). Cancelling via RunningHub.", flush=True)
+                            await execute_task_cancellation(cur_t, is_admin=True, reason="算力余额时限已达上限自动安全取消")
+                            return
+                        elif run_duration >= int(max_billable * 0.7):
+                            if "算力偏紧" not in cur_text:
+                                cur_text += f" · ⚠️ 算力偏紧 (余约{remain_s}s)"
+                        elif run_duration >= int(max_billable * 0.5):
+                            if "余额支持" not in cur_text and "算力偏紧" not in cur_text:
+                                cur_text += f" · 提示: 余额支持余约{remain_s}s"
+
                     db_update_task(str(task_id), {
                         "status": "RUNNING",
                         "duration": run_duration,

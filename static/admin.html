@@ -1072,7 +1072,13 @@
                         {{ wf.category || '通用' }}
                       </td>
                       <td class="py-3 px-3 font-mono text-amber-400">
-                        {{ wf.pointsCost || 5 }} 点
+                        <div>{{ wf.pointsCost || 5 }} 点</div>
+                        <div v-if="wf.minPointsEnabled" class="text-[10px] text-amber-300 font-sans mt-0.5 flex items-center gap-1 font-bold">
+                          <span>🛡️ 门槛: {{ wf.minPoints || 0 }} RC币</span>
+                        </div>
+                        <div v-else class="text-[10px] text-slate-500 font-sans mt-0.5">
+                          无门槛
+                        </div>
                       </td>
                       <td class="py-3 px-3">
                         <button 
@@ -2337,6 +2343,37 @@
                 class="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-white font-mono focus:outline-none focus:border-indigo-500">
             </div>
 
+            <!-- 准入门槛配置模块 -->
+            <div class="md:col-span-2 p-3.5 bg-slate-950/80 border border-slate-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div class="space-y-0.5">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-bold text-slate-200">🛡️ 账户准入门槛设置</span>
+                  <span :class="workflowModal.form.minPointsEnabled ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-slate-800 text-slate-400 border-slate-700'" class="text-[10px] px-2 py-0.5 rounded-full border font-mono">
+                    {{ workflowModal.form.minPointsEnabled ? '已开启门槛拦截' : '已关闭 (无门槛)' }}
+                  </span>
+                </div>
+                <p class="text-[11px] text-slate-400 leading-relaxed">
+                  开启后，前台用户账户余额若低于设定值将无法点击运行（管理员不受限制），可有效防止大工作流中途因余额不足被终止。
+                </p>
+              </div>
+              <div class="flex items-center gap-3 shrink-0">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" v-model="workflowModal.form.minPointsEnabled" class="w-4 h-4 rounded bg-slate-900 border-slate-700 text-amber-500 focus:ring-0">
+                  <span class="text-xs font-medium text-slate-300">开启门槛</span>
+                </label>
+                <div v-if="workflowModal.form.minPointsEnabled" class="flex items-center gap-1.5">
+                  <input 
+                    type="number" 
+                    min="0" 
+                    step="1"
+                    v-model.number="workflowModal.form.minPoints" 
+                    placeholder="50" 
+                    class="w-24 bg-slate-900 border border-amber-500/50 rounded-lg px-2.5 py-1 text-white font-mono text-xs focus:outline-none focus:border-amber-400">
+                  <span class="text-xs font-bold text-amber-400">RC币</span>
+                </div>
+              </div>
+            </div>
+
 
 
             <div class="md:col-span-2">
@@ -3053,6 +3090,8 @@
             name: '',
             category: '官方预设',
             pointsCost: 5,
+            minPointsEnabled: false,
+            minPoints: 50,
             coverImage: '',
             description: '',
             isOfficial: true,
@@ -3081,6 +3120,8 @@
               name: '',
               category: '官方预设',
               pointsCost: 5,
+              minPointsEnabled: false,
+              minPoints: 50,
               coverImage: '',
               description: '',
               isOfficial: true,
@@ -3109,6 +3150,8 @@
               name: wf.name || '',
               category: wf.category || '官方预设',
               pointsCost: wf.pointsCost !== undefined ? wf.pointsCost : 5,
+              minPointsEnabled: Boolean(wf.minPointsEnabled),
+              minPoints: wf.minPoints !== undefined ? Number(wf.minPoints) : 50,
               coverImage: wf.coverImage || '',
               description: wf.description || '',
               isOfficial: wf.isOfficial !== undefined ? wf.isOfficial : true,
@@ -3254,6 +3297,8 @@
               name: name,
               category: form.category ? String(form.category).trim() : '官方预设',
               pointsCost: Math.max(0, parseInt(form.pointsCost) || 0),
+              minPointsEnabled: Boolean(form.minPointsEnabled),
+              minPoints: Math.max(0, parseInt(form.minPoints) || 0),
               coverImage: form.coverImage || '',
               description: form.description ? String(form.description).trim() : '',
               isOfficial: Boolean(form.isOfficial),
