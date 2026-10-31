@@ -609,6 +609,15 @@ createApp({
       return workflows.value.find(w => w.id === selectedWorkflowId.value);
     });
 
+    // 工作流准入门槛判断：当前工作流是否开启门槛且当前非管理员用户余额不足
+    const isBelowThreshold = computed(() => {
+      if (!currentWorkflow.value || !currentWorkflow.value.minPointsEnabled) return false;
+      if (currentUser.value && currentUser.value.role === 'admin') return false;
+      const userPts = currentUser.value ? Number(currentUser.value.points || 0) : 0;
+      const reqPts = Number(currentWorkflow.value.minPoints || 0);
+      return userPts < reqPts;
+    });
+
     // 正在运行中的任务数量
     const runningTasksCount = computed(() => {
       return tasks.value.filter(t => t.status === 'RUNNING' || t.status === 'QUEUED').length;
@@ -1219,6 +1228,13 @@ createApp({
           showToastNotification('您当前已有正在进行中的任务，单账号同一时间仅支持运行 1 个任务，请等待其完成后再提交！', 'warning');
           return;
         }
+      }
+
+      if (isBelowThreshold.value) {
+        const reqPts = currentWorkflow.value?.minPoints || 0;
+        const curPts = Math.floor(currentUser.value?.points || 0);
+        showToastNotification(`该工作流设置了准入门槛：需持有 ≥ ${reqPts} RC币方可运行（您当前仅有 ${curPts} RC币），请先前往充值`, 'warning');
+        return;
       }
 
       isGenerating.value = true;
@@ -2322,6 +2338,7 @@ createApp({
       userWorkflows,
       selectedWorkflowId,
       currentWorkflow,
+      isBelowThreshold,
       tasks,
       gallery,
       latestTask,

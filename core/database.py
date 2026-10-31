@@ -212,6 +212,7 @@ def init_database():
         _add_col_if_missing("tasks", "error_message", "TEXT DEFAULT ''")
         _add_col_if_missing("tasks", "cost", "INTEGER DEFAULT 0")
         _add_col_if_missing("tasks", "instance_type", "TEXT DEFAULT 'default'")
+        _add_col_if_missing("tasks", "max_billable_seconds", "INTEGER DEFAULT 0")
 
         conn.commit()
 
@@ -294,7 +295,8 @@ def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
         "nodeInfoList": node_info,
         "createdAt": d.get("created_at"),
         "updatedAt": d.get("updated_at"),
-        "keyId": d.get("key_id") or ""
+        "keyId": d.get("key_id") or "",
+        "maxBillableSeconds": int(d.get("max_billable_seconds", 0) or 0)
     }
 
 def db_load_tasks(
@@ -349,14 +351,15 @@ def db_get_task(task_id: str) -> Optional[Dict[str, Any]]:
 def db_save_task(task: Dict[str, Any]):
     task_type_val = str(task.get("taskType", "Standard"))
     inst_type_val = str(task.get("instanceType") or task.get("instance_type") or ("default" if task_type_val.upper() in ("STANDARD", "LITE") else "plus"))
+    max_billable = int(task.get("maxBillableSeconds") or task.get("max_billable_seconds") or 0)
     with get_db_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
         INSERT INTO tasks (
             task_id, user_id, username, workflow_id, workflow_name, task_type,
             positive_prompt, negative_prompt, status, duration, consume_coins,
-            outputs_json, node_info_json, cost, created_at, updated_at, key_id, instance_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            outputs_json, node_info_json, cost, created_at, updated_at, key_id, instance_type, max_billable_seconds
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(task_id) DO UPDATE SET
             status = excluded.status,
             duration = excluded.duration,
@@ -364,6 +367,7 @@ def db_save_task(task: Dict[str, Any]):
             outputs_json = excluded.outputs_json,
             cost = excluded.cost,
             instance_type = COALESCE(NULLIF(excluded.instance_type, ''), tasks.instance_type),
+            max_billable_seconds = CASE WHEN excluded.max_billable_seconds > 0 THEN excluded.max_billable_seconds ELSE tasks.max_billable_seconds END,
             updated_at = excluded.updated_at,
             key_id = COALESCE(NULLIF(excluded.key_id, ''), tasks.key_id);
         """, (
@@ -384,7 +388,8 @@ def db_save_task(task: Dict[str, Any]):
             int(task.get("createdAt", time.time())),
             int(task.get("updatedAt", time.time())),
             str(task.get("keyId") or task.get("key_id") or ""),
-            inst_type_val
+            inst_type_val,
+            max_billable
         ))
         conn.commit()
 
@@ -411,12 +416,16 @@ def db_update_task(task_id: str, updates: Dict[str, Any]):
             "error": "error_message",
             "errorMessage": "error_message",
             "keyId": "key_id",
-            "key_id": "key_id"
+            "key_id": "key_id",
+            "maxBillableSeconds": "max_billable_seconds",
+            "max_billable_seconds": "max_billable_seconds"
         }
         for k, v in updates.items():
             if k in mapping:
                 col_updates.append(f"{mapping[k]} = ?")
                 if k == "cost":
+                    vals.append(int(v or 0))
+                elif k in ("maxBillableSeconds", "max_billable_seconds"):
                     vals.append(int(v or 0))
                 else:
                     vals.append(v)
@@ -476,9 +485,10 @@ def db_get_user_task_counts() -> Dict[str, int]:
 def db_deduct_user_points(user_id: str, amount: Union[int, float], task_id: str = "", reason: str = "工作流生图扣费") -> Tuple[bool, int, str]:
     """
     原子扣减用户积分：
-    采用 SQL 原生条件更新 UPDATE ... WHERE points >= amount，彻底杜绝并发下余额扣成负数！
-    抹去所有浮点小数，严格按整数 RC币 计费与扣除。
-    返回 (成功标志, 扣后余额, 错误信息)
+    采用原子更新确保安全，抹去所有浮点小数，严格按整数 RC币 计费与扣除。
+    - 若余额充足 (points >= amt)：足额扣除 amt；
+    - 若余额不足 (points < amt 且 points > 0)：全额扣除至 0，绝不产生负数欠费，且彻底杜绝“消耗比持有大导致0扣费白嫖”的悬崖漏洞！
+    返回 (成功标志, 扣后余额, 扣除/结果信息)
     """
     amt = int(math.floor(float(amount)))
     if amt <= 0:
@@ -490,30 +500,37 @@ def db_deduct_user_points(user_id: str, amount: Union[int, float], task_id: str 
 
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        # 1. 原子条件扣减 (整数计费)
+        cursor.execute("SELECT points, is_active FROM users WHERE id = ?;", (str(user_id),))
+        row = cursor.fetchone()
+        if not row:
+            return False, 0, "用户不存在"
+        if not row[1]:
+            return False, int(row[0]), "用户账户已被封禁，禁止消费"
+
+        cur_points = max(0, int(row[0] or 0))
+        # 兜底：若用户余额为 0 则直接返回无法扣费
+        if cur_points == 0:
+            return False, 0, f"算力点数不足（当前余额: 0 RC币, 本次需要: {amt} RC币）"
+
+        # 实际抵扣额度：足额扣款或全额抵扣至 0，绝不扣成负数
+        deduct_amt = min(amt, cur_points)
+        new_balance = cur_points - deduct_amt
+
         cursor.execute(
-            "UPDATE users SET points = CAST(points - ? AS INTEGER) WHERE id = ? AND points >= ? AND is_active = 1;",
-            (amt, str(user_id), amt)
+            "UPDATE users SET points = ? WHERE id = ? AND is_active = 1;",
+            (new_balance, str(user_id))
         )
-        if cursor.rowcount == 0:
-            cursor.execute("SELECT points, is_active FROM users WHERE id = ?;", (str(user_id),))
-            row = cursor.fetchone()
-            if not row:
-                return False, 0, "用户不存在"
-            if not row[1]:
-                return False, int(row[0]), "用户账户已被封禁，禁止消费"
-            return False, int(row[0]), f"算力点数不足（当前余额: {int(row[0])} RC币, 本次需要: {amt} RC币）"
 
-        # 2. 查询扣减后最新余额
-        cursor.execute("SELECT points FROM users WHERE id = ?;", (str(user_id),))
-        new_balance = int(cursor.fetchone()[0])
+        ledger_reason = reason
+        if amt > cur_points:
+            ledger_reason += f" (应收 {amt} RC币，实际抵扣余额 {deduct_amt} RC币)"
 
-        # 3. 记录流水台账
+        # 记录流水台账
         ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"
         cursor.execute("""
         INSERT INTO points_ledger (id, user_id, task_id, amount, balance_after, reason, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?);
-        """, (ledger_id, str(user_id), str(task_id), -amt, new_balance, reason, int(time.time())))
+        """, (ledger_id, str(user_id), str(task_id), -deduct_amt, new_balance, ledger_reason, int(time.time())))
 
         conn.commit()
         return True, new_balance, "扣费成功"

@@ -131,12 +131,12 @@ def test_full_security_matrix():
     assert u_after["points"] == points_before + 20, f"Points should have been refunded (+20), was {points_before} now {u_after['points']}"
     print(f" [PASS] User A cancelled task, points refunded: {points_before} -> {u_after['points']}")
 
-    # Insufficient points check: user_b only has 10 points, deduct 20 -> fails atomically
+    # Overdraw protection check: user_b only has 10 points, deduct 20 -> deducts remaining 10 down to 0, no negative balance, no free ride
     success, rem, msg = db_deduct_user_points(user_b["id"], 20, reason="Test overdraw")
-    assert not success, "Deducting 20 points from user with 10 points must fail"
+    assert success, "Deducting 20 points from user with 10 points should deduct available balance down to 0"
     u_b = get_user_by_id(user_b["id"])
-    assert u_b["points"] == 10, f"Balance must remain 10, got {u_b['points']}"
-    print(" [PASS] Atomic deduction rejects insufficient points, no negative balances")
+    assert u_b["points"] == 0, f"Balance must be deducted to 0 without going negative, got {u_b['points']}"
+    print(" [PASS] Overdraw deduction caps at 0, no negative balance, no free ride")
 
     print("\n--- 6. Testing P0-7: Instant Kick (Token Versioning & Revocation) ---")
     # Verify User A works with original token

@@ -49,6 +49,9 @@ async def generate_task(
     background_tasks: BackgroundTasks,
     current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
 ):
+    if not current_user:
+        raise HTTPException(status_code=401, detail="请先登录后再提交任务")
+
     cfg = load_config()
     
     sys_settings = cfg.get("system", {})
@@ -95,15 +98,26 @@ async def generate_task(
             # 内部将请求的工作流 ID 转换为真实云端 ID，用于后续向 RunningHub 发送
             req.workflowId = real_wf_id
 
+        # 2.1 工作流专属准入门槛核验 (管理员可针对工作流开启 minPointsEnabled 与 minPoints)
+        if wf_obj and wf_obj.get("minPointsEnabled"):
+            req_min = int(wf_obj.get("minPoints") or 0)
+            user_points = int(current_user.get("points") or 0)
+            if not is_admin and user_points < req_min:
+                raise HTTPException(
+                    status_code=402,
+                    detail=f"该工作流已设置准入门槛：账户余额至少需持有 {req_min} RC币方可运行（您当前仅有 {user_points} RC币），请先前往充值卡密"
+                )
+
         # 余额门槛核验（普通用户需满足最低余额要求；按实际工作流运行秒数结算，排队不计费）
         can_start, cur_points, err_msg = check_user_can_start_task(current_user)
         if not can_start:
             raise HTTPException(status_code=402, detail=err_msg)
 
         # 算力档位与实例类型统一解析：
-        # Plus (高档位): plus, 48GB 显存，0.4 币/秒
-        # Standard (低档位): default, 24GB 显存，0.2 币/秒
+        # Plus (高档位): plus, 48GB 显存，0.4 RC币/秒
+        # Standard (低档位): default, 24GB 显存，0.2 RC币/秒
         instance_type, tier_name, rate = resolve_instance_tier(req.instanceType, req.taskType)
+        max_billable_seconds = int(cur_points / rate) if (rate > 0 and not is_admin) else 7200
 
         temp_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         user_id = current_user["id"] if current_user else ""
@@ -152,7 +166,8 @@ async def generate_task(
                     "consumeCoins": "0",
                     "outputs": [],
                     "nodeInfoList": req.nodeInfoList,
-                    "keyId": ""
+                    "keyId": "",
+                    "maxBillableSeconds": max_billable_seconds
                 }
                 db_save_task(queue_task_record)
             
@@ -277,7 +292,8 @@ async def generate_task(
             "consumeCoins": "0",
             "outputs": [],
             "nodeInfoList": req.nodeInfoList,
-            "keyId": assigned_key_id
+            "keyId": assigned_key_id,
+            "maxBillableSeconds": max_billable_seconds
         }
 
         db_save_task(task_record)
@@ -330,6 +346,9 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
 
         # 断线自愈恢复：精准绑定创建该任务的具体 Key 发起云端监听
         if t.get("status") in ["RUNNING", "QUEUED"] and tid not in ACTIVE_POLL_TASKS and tid not in CANCELLED_TASKS:
+            # 关键防卫：本地队列任务 (以 task_ 开头且尚未分配云端 Key/taskId) 绝不能向 RunningHub 发起状态查询，防止被误判自毁！
+            if tid.startswith("task_") or not t.get("keyId"):
+                continue
             task_key_id = t.get("keyId")
             poll_api_key = None
             if task_key_id:

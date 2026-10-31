@@ -34,6 +34,8 @@ class WorkflowModel(BaseModel):
     coverImage: Optional[str] = ""
     instanceType: Optional[str] = "plus"
     customPrompt: Optional[Dict[str, Any]] = None
+    minPointsEnabled: Optional[bool] = False
+    minPoints: Optional[int] = Field(50, ge=0)
 
 @router.get("/api/workflows")
 def get_workflows(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
@@ -68,6 +70,8 @@ def add_or_update_workflow(wf: WorkflowModel, current_user: Optional[Dict[str, A
     wf_data.pop("originalId", None)
     wf_data["id"] = target_id
     wf_data["updatedAt"] = int(time.time())
+    wf_data["minPointsEnabled"] = bool(wf.minPointsEnabled)
+    wf_data["minPoints"] = max(0, int(wf.minPoints or 0))
     
     if not is_admin:
         if not current_user:
@@ -258,6 +262,8 @@ async def parse_workflow_json_endpoint(
     cfg = load_config()
     filename = file.filename or "custom_workflow.json"
     content_bytes = await file.read()
+    if len(content_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="工作流 JSON 文件体积过大，最大限制为 10MB")
     try:
         content_text = content_bytes.decode("utf-8")
         raw_json = json.loads(content_text)

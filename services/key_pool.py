@@ -100,7 +100,9 @@ class KeyPoolManager:
         async with self._lock:
             if key_id in self._states:
                 st = self._states[key_id]
-                # 无论 task_id 传入的是临时 ID 还是真实云端 taskId，均安全重置为空闲
+                # 若指定了 task_id 且与当前锁定的任务不匹配，说明该 Key 已被新任务占用，防止旧任务 finally 误释放
+                if task_id and st.get("task_id") and str(st.get("task_id")) != str(task_id):
+                    return
                 st["is_busy"] = False
                 st["task_id"] = None
                 st["busy_since"] = None
