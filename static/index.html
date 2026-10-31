@@ -114,7 +114,7 @@
                 <!-- 🎁 顶部卡密兑换快捷入口 -->
         <button 
           v-if="currentUser"
-          @click="openRedeemModal"
+          @click="openRedeemModal('redeem')"
           title="卡密充值兑换点数"
           class="hidden sm:flex items-center gap-1.5 text-xs bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white px-3 py-1.5 rounded-full font-semibold shadow-md shadow-emerald-600/25 transition active:scale-95">
           <span>🎁</span>
@@ -163,7 +163,7 @@
             <div class="py-1">
               
                             <button 
-                @click="openRedeemModal(); showUserDropdown = false" 
+                @click="openRedeemModal('redeem'); showUserDropdown = false" 
                 class="w-full text-left px-3.5 py-2 hover:bg-slate-800 text-xs text-emerald-400 flex items-center gap-2 transition font-medium">
                 <span>🎁</span> <span>卡密兑换充值</span>
               </button>
@@ -2763,6 +2763,25 @@
 
         <!-- 1. 卡密兑换面板 -->
         <div v-if="redeemModalTab === 'redeem'" class="py-4 space-y-4 text-xs">
+          <!-- ⚡ 爱发电 / 发卡外链跳转引导 (若管理员配置了则展示) -->
+          <div v-if="publicConfig.cdkeyPurchaseUrl" class="p-3 rounded-xl bg-gradient-to-r from-pink-500/10 via-purple-500/10 to-indigo-500/10 border border-pink-500/30 flex items-center justify-between gap-3 shadow-inner">
+            <div class="flex items-center gap-2.5">
+              <span class="text-base flex-shrink-0">⚡</span>
+              <div>
+                <div class="text-xs font-bold text-pink-300">没有卡密？立即在线获取</div>
+                <div class="text-[11px] text-slate-400">支持爱发电 / 发卡网自助赞助获取充值卡密</div>
+              </div>
+            </div>
+            <a 
+              :href="publicConfig.cdkeyPurchaseUrl" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              class="px-3.5 py-1.5 rounded-lg bg-gradient-to-r from-pink-600 via-rose-500 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white font-semibold text-xs shadow-md shadow-pink-600/30 transition flex items-center gap-1 active:scale-95 flex-shrink-0">
+              <span>{{ publicConfig.cdkeyPurchaseText || '前往爱发电购买卡密' }}</span>
+              <span class="text-[10px]">↗</span>
+            </a>
+          </div>
+
           <div>
             <label class="text-slate-300 font-medium block mb-1.5 flex items-center justify-between">
               <span>兑换码 (CD-Key)</span>
@@ -2807,7 +2826,7 @@
         </div>
 
         <!-- 2. 充值兑换历史记录面板 (Requirement 4) -->
-        <div v-else class="py-4 space-y-3">
+        <div v-else-if="redeemModalTab === 'history'" class="py-4 space-y-3">
           <div v-if="cdkeyHistoryLoading" class="py-12 text-center text-slate-400 text-xs">
             <span class="inline-block animate-spin mr-1">⏳</span> 正在加载兑换记录...
           </div>

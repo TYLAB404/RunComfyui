@@ -24,12 +24,14 @@ createApp({
     };
 
     const publicConfig = ref({
-      siteTitle: 'RunningHub 智能创作平台',
+      siteTitle: 'RunComfyui 智能创作平台',
       turnstileEnabled: false,
       turnstileSiteKey: '',
       allowRegistration: true,
       requireLoginToGenerate: false,
-      isFirstUser: false
+      isFirstUser: false,
+      cdkeyPurchaseUrl: '',
+      cdkeyPurchaseText: '前往爱发电购买卡密'
     });
     const showAuthModal = ref(false);
     const authTab = ref('signin'); // 'signin' | 'signup'
@@ -75,7 +77,7 @@ createApp({
 
     const openRedeemModal = (tab = 'redeem') => {
       showRedeemModal.value = true;
-      redeemModalTab.value = tab;
+      redeemModalTab.value = (typeof tab === 'string' && (tab === 'history' || tab === 'redeem')) ? tab : 'redeem';
       redeemCode.value = '';
       redeemError.value = '';
       redeemSuccess.value = '';
