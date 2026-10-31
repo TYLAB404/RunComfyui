@@ -4251,6 +4251,13 @@
         const saveSystemSettings = async (silent = false) => {
           savingSettings.value = true;
           try {
+            if (systemConfig.value && systemConfig.value.cdkeyPurchaseUrl) {
+              let u = String(systemConfig.value.cdkeyPurchaseUrl).trim();
+              if (u && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(u)) {
+                u = 'https://' + u;
+              }
+              systemConfig.value.cdkeyPurchaseUrl = u;
+            }
             const res = await authFetch('/api/admin/system', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
