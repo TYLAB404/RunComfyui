@@ -4442,7 +4442,7 @@
           checkAdminAuth();
           loadPublicConfig();
           keyPoolLiveTimer = setInterval(() => {
-            if (activeSection.value === 'keys' || activeSection.value === 'overview') {
+            if (currentUser.value && currentUser.value.role === 'admin' && (activeSection.value === 'keys' || activeSection.value === 'overview')) {
               loadKeyPoolStatus();
             }
           }, 2500);
