@@ -86,11 +86,11 @@ def check_user_can_start_task(user: Optional[Dict[str, Any]]) -> Tuple[bool, flo
             return False, 0.0, "您的账户已被停用，无法提交新任务"
 
         cur_points = int(row[0] or 0)
-        if cur_points < min_required:
+        if cur_points <= 0:
             return (
                 False,
                 cur_points,
-                f"账户算力余额不足：启动任务需至少保留 {int(min_required)} 点算力（当前账户仅剩 {cur_points} RC币），请先前往兑换卡密充值"
+                "账户算力余额不足：当前账户余额为 0 RC币，请先前往兑换卡密充值"
             )
 
         return True, cur_points, ""

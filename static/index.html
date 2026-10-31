@@ -1723,13 +1723,7 @@
                     <div class="flex items-center gap-1.5 flex-wrap">
                       <span v-if="wf.isPinned" class="text-amber-400 text-xs" title="置顶工作流">📌</span>
                       <span 
-                        :class="{
-                          'bg-purple-950/80 text-purple-300 border-purple-800/40': (wf.category || '视频生成') === '视频生成',
-                          'bg-indigo-950/80 text-indigo-300 border-indigo-800/40': wf.category === '图像精绘',
-                          'bg-emerald-950/80 text-emerald-300 border-emerald-800/40': wf.category === '声音音频',
-                          'bg-amber-950/80 text-amber-300 border-amber-800/40': wf.category === '画质增强',
-                          'bg-indigo-500/15 text-indigo-300 border-indigo-500/30': wf.category === '官方预设'
-                        }"
+                        :class="getCategoryBadgeClass(wf.category)"
                         class="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border">
                         {{ wf.category || '官方预设' }}
                       </span>
@@ -1829,7 +1823,7 @@
                   <div class="flex items-start justify-between gap-2">
                     <div class="flex items-center gap-1.5 flex-wrap">
                       <span v-if="wf.isPinned" class="text-amber-400 text-xs" title="置顶工作流">📌</span>
-                      <span class="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border bg-amber-500/10 text-amber-300 border-amber-500/20">
+                      <span :class="getCategoryBadgeClass(wf.category)" class="text-[10px] font-semibold px-2.5 py-0.5 rounded-full border">
                         {{ wf.category || '自建流程' }}
                       </span>
                       <span class="text-[9px] font-medium px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 truncate max-w-[150px]">
@@ -2568,13 +2562,9 @@
             <input type="text" v-model="newWf.name" placeholder="例如: Wan2.1 视频生成" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-indigo-500">
           </div>
           <div>
-            <label class="text-slate-300 block mb-1 font-medium">分类</label>
+            <label class="text-slate-300 block mb-1 font-medium">所属分类</label>
             <select v-model="newWf.category" class="w-full bg-slate-950 border border-slate-800 rounded-xl p-2.5 text-slate-100 focus:outline-none focus:border-indigo-500">
-              <option value="视频生成">视频生成</option>
-              <option value="文生图">文生图</option>
-              <option value="图生图">图生图</option>
-              <option value="高清放大">高清放大</option>
-              <option value="人物换脸">人物换脸</option>
+              <option v-for="cat in rawCategories" :key="cat" :value="cat">{{ cat }}</option>
               <option value="其他">其他</option>
             </select>
           </div>
