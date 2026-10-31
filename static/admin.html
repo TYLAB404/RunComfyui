@@ -1653,13 +1653,15 @@
                     </a>
                   </div>
 
-                  <!-- 图片展示：支持通过自建图床或 RunningHub 直链动态渲染 -->
+                  <!-- 图片展示：支持点击查看高清大图，支持通过自建图床或官方直链动态渲染 -->
                   <img 
                     v-else-if="item.fileType === 'image'" 
                     :src="getAdminGalleryDisplayUrl(item)" 
                     :alt="item.filename" 
                     loading="lazy"
-                    class="w-full h-full object-cover transition duration-300 group-hover:scale-105"
+                    class="w-full h-full object-cover transition duration-300 group-hover:scale-105 cursor-pointer"
+                    @click="openAdminLightbox(item)"
+                    title="点击放大查看清晰大图"
                     @error="onMediaLoadError(item)">
                   
                   <!-- 视频展示 -->
@@ -1714,6 +1716,12 @@
 
                   <!-- 快捷操作浮层 (悬停显示) -->
                   <div class="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition duration-200">
+                    <button 
+                      @click="openAdminLightbox(item)" 
+                      title="点击查看高清大图 / 播放全屏"
+                      class="w-7 h-7 rounded-lg bg-indigo-600/90 hover:bg-indigo-600 text-white flex items-center justify-center text-xs backdrop-blur-md shadow-md transition">
+                      <i data-lucide="maximize-2" class="w-3.5 h-3.5"></i>
+                    </button>
                     <a 
                       :href="getAdminGalleryDisplayUrl(item)" 
                       target="_blank" 
@@ -1860,6 +1868,99 @@
         </div>
 
       </main>
+
+      <!-- 全站画廊大图灯箱预览 Modal (高清原图 / 视频播放大图弹窗) -->
+      <div 
+        v-if="adminLightboxUrl" 
+        class="fixed inset-0 z-50 bg-black/92 backdrop-blur-md flex flex-col items-center justify-between p-4 sm:p-6 transition-all"
+        @click.self="closeAdminLightbox">
+        
+        <!-- 顶部信息与操作栏 -->
+        <div class="w-full max-w-5xl flex items-center justify-between text-xs text-white z-10 select-none pb-2">
+          <div class="flex items-center gap-2.5 truncate max-w-[70%]">
+            <span class="px-2.5 py-1 rounded-lg bg-indigo-600/30 text-indigo-300 font-mono font-semibold border border-indigo-500/30 flex items-center gap-1.5 flex-shrink-0">
+              <i data-lucide="user" class="w-3.5 h-3.5"></i>
+              <span>{{ adminLightboxItem?.username || '未知用户' }}</span>
+            </span>
+            <span 
+              v-if="adminLightboxDisplaySource === 'imgbed'" 
+              class="px-2.5 py-1 rounded-lg bg-emerald-600/30 text-emerald-300 font-mono font-semibold border border-emerald-500/30 flex items-center gap-1 flex-shrink-0">
+              <i data-lucide="cloud" class="w-3.5 h-3.5"></i>
+              <span>自建图床高清直链</span>
+            </span>
+            <span 
+              v-else 
+              class="px-2.5 py-1 rounded-lg bg-purple-600/30 text-purple-300 font-mono font-semibold border border-purple-500/30 flex items-center gap-1 flex-shrink-0">
+              <i data-lucide="zap" class="w-3.5 h-3.5"></i>
+              <span>官方原始直链</span>
+            </span>
+            <span class="text-slate-300 font-medium truncate font-mono text-[11px]" :title="adminLightboxItem?.filename">
+              {{ adminLightboxItem?.filename }}
+            </span>
+          </div>
+
+          <!-- 右侧操作按钮组 -->
+          <div class="flex items-center gap-2">
+            <a 
+              :href="adminLightboxUrl" 
+              target="_blank" 
+              class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex items-center gap-1.5 text-xs border border-slate-700 cursor-pointer"
+              title="在新标签页打开高清原图">
+              <i data-lucide="external-link" class="w-3.5 h-3.5"></i>
+              <span class="hidden sm:inline">新窗口原图</span>
+            </a>
+            <button 
+              @click="copyToClipboard(adminLightboxUrl, '高清直链已复制到剪贴板')" 
+              class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 transition flex items-center gap-1.5 text-xs border border-slate-700 cursor-pointer"
+              title="复制当前高清大图直链">
+              <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+              <span class="hidden sm:inline">复制直链</span>
+            </button>
+            <button 
+              @click="closeAdminLightbox" 
+              class="w-8 h-8 rounded-xl bg-slate-800 hover:bg-rose-600 text-slate-400 hover:text-white transition flex items-center justify-center text-sm font-bold border border-slate-700 cursor-pointer"
+              title="关闭 (Esc)">
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <!-- 中部高清媒体显示区 (自适应视口尺寸) -->
+        <div class="w-full flex-1 flex items-center justify-center p-2 min-h-0 overflow-hidden cursor-zoom-out" @click.self="closeAdminLightbox">
+          <!-- 视频 -->
+          <video 
+            v-if="adminLightboxItem?.fileType === 'video'" 
+            :src="adminLightboxUrl" 
+            controls 
+            autoplay 
+            loop 
+            class="max-w-full max-h-full rounded-2xl shadow-2xl bg-black border border-slate-800"></video>
+          <!-- 音频 -->
+          <div v-else-if="adminLightboxItem?.fileType === 'audio'" class="p-8 rounded-3xl bg-slate-900 border border-slate-800 flex flex-col items-center gap-4 shadow-2xl">
+            <i data-lucide="music" class="w-16 h-16 text-indigo-400"></i>
+            <audio :src="adminLightboxUrl" controls autoplay class="w-72"></audio>
+            <span class="text-xs text-slate-400 font-mono">{{ adminLightboxItem?.filename }}</span>
+          </div>
+          <!-- 图片 (高清大图) -->
+          <img 
+            v-else 
+            :src="adminLightboxUrl" 
+            :alt="adminLightboxItem?.filename" 
+            class="max-w-full max-h-full object-contain rounded-2xl shadow-2xl border border-slate-800/80 cursor-default">
+        </div>
+
+        <!-- 底部 Prompt 与元信息条 (若有提示词) -->
+        <div v-if="adminLightboxItem?.positivePrompt || adminLightboxItem?.workflowName" class="w-full max-w-4xl p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800/90 text-xs text-slate-300 backdrop-blur-md shadow-xl flex flex-col gap-1.5 z-10 mt-2">
+          <div v-if="adminLightboxItem?.workflowName" class="flex items-center gap-2 text-[11px] text-slate-400">
+            <span class="text-indigo-400 font-semibold">工作流：</span>
+            <span>{{ adminLightboxItem?.workflowName }}</span>
+            <span v-if="adminLightboxItem?.createdAt" class="text-slate-500 ml-auto font-mono">{{ formatTimestamp(adminLightboxItem.createdAt) }}</span>
+          </div>
+          <p v-if="adminLightboxItem?.positivePrompt" class="text-[11px] text-slate-300 font-mono leading-relaxed max-h-24 overflow-y-auto selection:bg-indigo-500">
+            <span class="text-amber-400 font-semibold select-none">Prompt: </span>"{{ adminLightboxItem.positivePrompt }}"
+          </p>
+        </div>
+      </div>
 
       <!-- 弹窗 1: 发布/编辑公告 Modal -->
       <div v-if="annoModal.show" class="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
@@ -2756,6 +2857,24 @@
         const adminGallery = ref([]);
         const adminGalleryLoading = ref(false);
         const adminGalleryDisplaySource = ref('imgbed'); // 'imgbed' (自建图床，默认) 或 'remote' (官方直链)
+        const adminLightboxUrl = ref(null);
+        const adminLightboxItem = ref(null);
+        const adminLightboxDisplaySource = ref('imgbed');
+
+        const openAdminLightbox = (item) => {
+          if (!item) return;
+          adminLightboxItem.value = item;
+          adminLightboxDisplaySource.value = adminGalleryDisplaySource.value;
+          adminLightboxUrl.value = getAdminGalleryDisplayUrl(item);
+          nextTick(() => {
+            refreshIcons();
+          });
+        };
+
+        const closeAdminLightbox = () => {
+          adminLightboxUrl.value = null;
+          adminLightboxItem.value = null;
+        };
         const adminGalleryPage = ref(1);
         const adminGalleryPageSize = ref(24);
         const adminGalleryTotal = ref(0);
@@ -4553,6 +4672,11 @@
         onMounted(() => {
           checkAdminAuth();
           loadPublicConfig();
+          window.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && adminLightboxUrl.value) {
+              closeAdminLightbox();
+            }
+          });
           keyPoolLiveTimer = setInterval(() => {
             if (currentUser.value && currentUser.value.role === 'admin' && (activeSection.value === 'keys' || activeSection.value === 'overview')) {
               loadKeyPoolStatus();
@@ -4688,6 +4812,11 @@
           adminGalleryLoading,
           adminGalleryDisplaySource,
           getAdminGalleryDisplayUrl,
+          adminLightboxUrl,
+          adminLightboxItem,
+          adminLightboxDisplaySource,
+          openAdminLightbox,
+          closeAdminLightbox,
           adminGalleryPage,
           adminGalleryPageSize,
           adminGalleryTotal,
