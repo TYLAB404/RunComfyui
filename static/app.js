@@ -241,6 +241,15 @@ createApp({
       return filteredWorkflows.value.filter(w => !Boolean(w.isOfficial));
     });
     const tasks = ref([]);
+    const taskPage = ref(1);
+    const taskPageSize = ref(10);
+    const taskTotalPages = computed(() => {
+      return Math.max(1, Math.ceil((tasks.value.length || 0) / taskPageSize.value));
+    });
+    const paginatedTasks = computed(() => {
+      const start = (taskPage.value - 1) * taskPageSize.value;
+      return tasks.value.slice(start, start + taskPageSize.value);
+    });
     const gallery = ref([]);
     const galleryPage = ref(1);
     const galleryPageSize = ref(10); // 用户端每页显示 10 件成果
@@ -2731,6 +2740,10 @@ createApp({
       openEditThresholdModal,
       saveWorkflowThreshold,
       tasks,
+      taskPage,
+      taskPageSize,
+      taskTotalPages,
+      paginatedTasks,
       gallery,
       galleryPage,
       galleryPageSize,
