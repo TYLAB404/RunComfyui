@@ -152,7 +152,7 @@ createApp({
     const adminUsers = ref([]);
     const adminTasks = ref([]);
     const adminSystem = ref({
-      siteTitle: 'RunningHub 智能调度中心',
+      siteTitle: 'RunComfyui 智能创作中心',
       turnstileEnabled: false,
       turnstileSiteKey: '',
       turnstileSecretKey: '',
@@ -231,6 +231,8 @@ createApp({
     const isGenerating = ref(false);
     const isDetecting = ref(false);
     const isLoadingSchema = ref(false);
+    const isLoadingWorkflows = ref(true);
+    const galleryLoading = ref(false);
     const lightboxUrl = ref(null);
     const lightboxItem = ref(null);
     const showAddWorkflowModal = ref(false);
@@ -949,6 +951,7 @@ createApp({
     // 获取配置与工作流列表
     const fetchConfig = async () => {
       try {
+        isLoadingWorkflows.value = true;
         const res = await authFetch('/api/config');
         const data = await res.json();
         config.value = data;
@@ -967,6 +970,8 @@ createApp({
         }
       } catch (err) {
         console.error('Failed to load config:', err);
+      } finally {
+        isLoadingWorkflows.value = false;
       }
     };
 
@@ -1294,9 +1299,12 @@ createApp({
       }
     };
 
-    // 获取本地画廊 (带指纹比对，仅在有新产出或增删时触发重绘)
+    // 获取本地画廊 (带指纹比对与优雅加载动效)
     let lastGalleryHash = '';
-    const refreshGallery = async () => {
+    const refreshGallery = async (showLoading = false) => {
+      if (showLoading || gallery.value.length === 0) {
+        galleryLoading.value = true;
+      }
       try {
         const res = await authFetch('/api/gallery');
         const data = await res.json();
@@ -1312,6 +1320,8 @@ createApp({
         }
       } catch (err) {
         console.error('Failed to fetch gallery:', err);
+      } finally {
+        galleryLoading.value = false;
       }
     };
 
@@ -1655,7 +1665,7 @@ createApp({
 
     const addNewKey = async () => {
       if (!newKeyForm.value.apiKey || !newKeyForm.value.apiKey.trim()) {
-        showToastNotification('请填入有效的 RunningHub API Key', 'warning');
+        showToastNotification('请填入有效的 API Key', 'warning');
         return;
       }
       isAddingKey.value = true;
@@ -1892,17 +1902,18 @@ createApp({
     };
 
     const inspectWorkflow = async (wfId) => {
-      await loadWorkflowSchema(wfId);
       selectedWorkflowId.value = wfId;
       activeTab.value = 'studio';
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      await loadWorkflowSchema(wfId);
     };
 
     const selectAndGoToStudio = async (id) => {
       customWorkflow.value = null;
       selectedWorkflowId.value = id;
-      await loadWorkflowSchema(id);
       activeTab.value = 'studio';
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      await loadWorkflowSchema(id);
     };
 
     // 用户从个人画廊移除成果（软删除，仅对自己隐藏，管理员后台可见）
@@ -2233,7 +2244,7 @@ createApp({
           return;
         }
         if (publicConfig.value.turnstileEnabled && publicConfig.value.turnstileSiteKey && !authForm.value.turnstileToken) {
-          authError.value = '请先勾选并完成 Cloudflare 人机安全验证';
+          authError.value = '请先勾选并完成人机安全验证';
           return;
         }
 
@@ -2282,7 +2293,7 @@ createApp({
           return;
         }
         if (publicConfig.value.turnstileEnabled && publicConfig.value.turnstileSiteKey && !authForm.value.turnstileToken) {
-          authError.value = '请先完成 Cloudflare 人机安全验证';
+          authError.value = '请先完成人机安全验证';
           return;
         }
 
@@ -2386,10 +2397,16 @@ createApp({
       }
     };
 
-    // ================= 开发者管理后台操作 =================
+    // ================= 导航切换 =================
     const switchTab = (tab) => {
       activeTab.value = tab;
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      if (tab === 'gallery') {
+        refreshGallery(true);
+      }
+      if (tab === 'workflows' && workflows.value.length === 0) {
+        fetchConfig();
+      }
       if (tab === 'admin') {
         fetchAdminOverview();
         fetchAdminUsers();
@@ -2672,6 +2689,8 @@ createApp({
       isGenerating,
       isDetecting,
       isLoadingSchema,
+      isLoadingWorkflows,
+      galleryLoading,
       lightboxUrl,
       lightboxItem,
       showAddWorkflowModal,
