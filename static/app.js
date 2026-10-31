@@ -41,7 +41,8 @@ createApp({
       email: '',
       password: '',
       confirmPassword: '',
-      turnstileToken: ''
+      turnstileToken: '',
+      agreeTerms: false
     });
     const authLoading = ref(false);
     const authError = ref('');
@@ -2262,6 +2263,10 @@ createApp({
       authError.value = '';
       authSuccessMsg.value = '';
 
+      if (!authForm.value.agreeTerms) {
+        authError.value = '请先阅读并勾选同意《用户协议》和《隐私政策》';
+        return;
+      }
       if (authTab.value === 'signup') {
         if (!authForm.value.username || authForm.value.username.trim().length < 3) {
           authError.value = '用户名长度不能少于 3 个字符';
