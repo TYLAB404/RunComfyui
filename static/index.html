@@ -461,7 +461,7 @@
                   </div>
                   <div class="text-[11px] opacity-90 leading-normal">
                     <span v-if="thresholdStatus.isBelow" class="text-rose-200">
-                      ⚠️ 当前账户余额未达该工作流要求，已限制启动。请前往充值卡密后再使用。
+                      ⚠️ 当前账户余额未达该工作流准入门槛，已限制启动。
                     </span>
                     <span v-else-if="thresholdStatus.isAdmin" class="text-purple-200">
                       ✨ 管理员特权已生效，不受工作流准入门槛限制，可直接启动云端渲染调度。
@@ -472,10 +472,7 @@
                   </div>
                 </div>
               </div>
-              <div class="flex items-center gap-2 shrink-0">
-                <button v-if="thresholdStatus.isBelow" @click="activeTab = 'profile'" class="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold shadow-lg shadow-rose-950/50 transition">
-                  去充值 💳
-                </button>
+              <div v-if="currentUser?.role === 'admin'" class="flex items-center gap-2 shrink-0">
                 <button v-if="currentUser?.role === 'admin'" @click="openEditThresholdModal(currentWorkflow)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium transition" title="管理员快速调整门槛">
                   ⚙️ 门槛设置
                 </button>
