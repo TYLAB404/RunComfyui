@@ -617,7 +617,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="u in paginatedUsers" :key="u.id" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="u in (paginatedUsers || filteredUsers)" :key="u.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <div class="flex items-center gap-2.5">
                           <div class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 font-bold flex items-center justify-center shrink-0">
@@ -713,7 +713,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="a in paginatedAnnouncements" :key="a.id" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="a in (paginatedAnnouncements || announcements)" :key="a.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
                           {{ a.tag || '官方公告' }}
@@ -906,7 +906,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="t in paginatedAdminTasks" :key="t.taskId" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="t in (paginatedAdminTasks || allTasks)" :key="t.taskId" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <div class="font-mono text-indigo-400 font-bold truncate max-w-[150px]" :title="t.taskId">{{ t.taskId }}</div>
                         <div class="text-[10px] text-slate-400">用户: <span class="text-slate-200 font-semibold">{{ t.username || '匿名' }}</span> <span v-if="t.userId" class="font-mono text-slate-500 text-[9px]">(ID: {{ t.userId }})</span></div>
@@ -1131,7 +1131,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="wf in paginatedAdminWorkflows" :key="wf.id" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="wf in (paginatedAdminWorkflows || filteredWorkflows)" :key="wf.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <div class="flex items-center gap-2.5">
                           <img v-if="wf.coverImage" :src="wf.coverImage" class="w-9 h-9 rounded-lg object-cover border border-slate-800 flex-shrink-0" alt="cover" />
@@ -1319,7 +1319,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="k in paginatedKeys" :key="k.id" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="k in (paginatedKeys || keys)" :key="k.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3 font-semibold text-white">
                         <div class="flex items-center gap-2">
                           <span>{{ k.name }}</span>
