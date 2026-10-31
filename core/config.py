@@ -58,7 +58,13 @@ def resolve_real_workflow_id(wf_id: str, cfg: Dict[str, Any]) -> str:
 def filter_workflows_for_user(workflows: List[Dict[str, Any]], current_user: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
     sorted_all = sort_workflows(workflows)
     if current_user and current_user.get("role") == "admin":
-        return sorted_all
+        admin_res = []
+        for w in sorted_all:
+            cw = dict(w)
+            cw["minPointsEnabled"] = bool(w.get("minPointsEnabled", False))
+            cw["minPoints"] = int(w.get("minPoints") or 0)
+            admin_res.append(cw)
+        return admin_res
     
     res = []
     user_id_str = str(current_user["id"]) if current_user else ""
@@ -76,6 +82,8 @@ def filter_workflows_for_user(workflows: List[Dict[str, Any]], current_user: Opt
             target_w["id"] = get_virtual_workflow_id(str(w.get("id")))
             
         if target_w:
+            target_w["minPointsEnabled"] = bool(w.get("minPointsEnabled", False))
+            target_w["minPoints"] = int(w.get("minPoints") or 0)
             res.append(target_w)
             
     return res
