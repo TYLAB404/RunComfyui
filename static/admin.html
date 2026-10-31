@@ -27,6 +27,8 @@
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Cloudflare Turnstile 人机安全验证 -->
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <style>
     [v-cloak] { display: none; }
     /* 自定义滚动条 */
@@ -106,9 +108,20 @@
               placeholder="••••••••" 
               class="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-700 rounded-xl text-white focus:outline-none focus:border-indigo-500 transition">
           </div>
+
+          <!-- Cloudflare Turnstile 人机安全验证挂载容器 -->
+          <div class="pt-1">
+            <div v-show="turnstileEnabled && turnstileSiteKey" class="flex justify-center my-2">
+              <div id="admin-turnstile-container" class="min-h-[65px] flex items-center justify-center"></div>
+            </div>
+            <div v-if="!turnstileEnabled || !turnstileSiteKey" class="text-[11px] text-center text-slate-500 py-1.5 bg-slate-950/60 rounded-xl border border-slate-800/80">
+              🛡️ 免人机验证模式 (未开启 Turnstile 或开发测试环境)
+            </div>
+          </div>
+
           <button 
             type="submit" 
-            :disabled="adminLoginLoading"
+            :disabled="adminLoginLoading || (turnstileEnabled && turnstileSiteKey && !adminTurnstileToken)"
             class="w-full mt-2 py-2.5 px-4 rounded-xl font-bold text-white bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 shadow-md shadow-indigo-600/30 disabled:opacity-50 transition flex items-center justify-center gap-2">
             <span v-if="adminLoginLoading" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block"></span>
             <span>{{ adminLoginLoading ? '正在核验身份...' : '验证并进入控制台' }}</span>
@@ -2609,6 +2622,58 @@
         const adminLoginForm = ref({ identifier: '', password: '' });
         const adminLoginLoading = ref(false);
         const adminLoginError = ref('');
+        const turnstileEnabled = ref(false);
+        const turnstileSiteKey = ref('');
+        const adminTurnstileToken = ref('');
+        let adminTurnstileWidgetId = null;
+
+        const renderAdminTurnstile = () => {
+          if (!turnstileEnabled.value || !turnstileSiteKey.value) return;
+          const container = document.getElementById('admin-turnstile-container');
+          if (window.turnstile && container) {
+            try {
+              if (adminTurnstileWidgetId !== null) {
+                try { window.turnstile.remove(adminTurnstileWidgetId); } catch(e){}
+                adminTurnstileWidgetId = null;
+              }
+              adminTurnstileWidgetId = window.turnstile.render('#admin-turnstile-container', {
+                sitekey: turnstileSiteKey.value,
+                theme: 'dark',
+                callback: (token) => {
+                  adminTurnstileToken.value = token;
+                  adminLoginError.value = '';
+                },
+                'expired-callback': () => {
+                  adminTurnstileToken.value = '';
+                },
+                'error-callback': () => {
+                  adminTurnstileToken.value = '';
+                }
+              });
+            } catch (e) {
+              console.warn('Admin Turnstile render warning:', e);
+              setTimeout(renderAdminTurnstile, 300);
+            }
+          } else {
+            setTimeout(renderAdminTurnstile, 150);
+          }
+        };
+
+        const loadPublicConfig = async () => {
+          try {
+            const res = await fetch('/api/auth/public-config');
+            if (res.ok) {
+              const data = await res.json();
+              turnstileEnabled.value = !!data.turnstileEnabled;
+              turnstileSiteKey.value = data.turnstileSiteKey || '';
+              if (turnstileEnabled.value && turnstileSiteKey.value) {
+                renderAdminTurnstile();
+              }
+            }
+          } catch (e) {
+            console.warn('Failed to load public config:', e);
+          }
+        };
 
         const sectionTitles = {
           overview: '系统运行概览',
@@ -2793,6 +2858,10 @@
         // 管理员独立网关提交登录
         const submitAdminLogin = async () => {
           adminLoginError.value = '';
+          if (turnstileEnabled.value && turnstileSiteKey.value && !adminTurnstileToken.value) {
+            adminLoginError.value = '请先完成 Cloudflare 人机安全验证';
+            return;
+          }
           adminLoginLoading.value = true;
           try {
             const res = await fetch('/api/admin/auth/login', {
@@ -2800,7 +2869,8 @@
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 identifier: adminLoginForm.value.identifier.trim(),
-                password: adminLoginForm.value.password
+                password: adminLoginForm.value.password,
+                turnstileToken: adminTurnstileToken.value
               })
             });
             const data = await res.json();
@@ -2815,6 +2885,10 @@
             }
           } catch (err) {
             adminLoginError.value = err.message || '网络连接异常';
+            if (window.turnstile && adminTurnstileWidgetId !== null) {
+              try { window.turnstile.reset(adminTurnstileWidgetId); } catch(e){}
+              adminTurnstileToken.value = '';
+            }
           } finally {
             adminLoginLoading.value = false;
             refreshIcons();
@@ -2825,6 +2899,10 @@
           localStorage.removeItem('rh_admin_token');
           currentUser.value = null;
           authChecked.value = true;
+          adminTurnstileToken.value = '';
+          if (turnstileEnabled.value && turnstileSiteKey.value) {
+            setTimeout(renderAdminTurnstile, 200);
+          }
           refreshIcons();
         };
 
@@ -4362,6 +4440,7 @@
         let keyPoolLiveTimer = null;
         onMounted(() => {
           checkAdminAuth();
+          loadPublicConfig();
           keyPoolLiveTimer = setInterval(() => {
             if (activeSection.value === 'keys' || activeSection.value === 'overview') {
               loadKeyPoolStatus();
@@ -4408,6 +4487,11 @@
           adminLoginForm,
           adminLoginLoading,
           adminLoginError,
+          turnstileEnabled,
+          turnstileSiteKey,
+          adminTurnstileToken,
+          renderAdminTurnstile,
+          loadPublicConfig,
           overview,
           users,
           userSearchQuery,
