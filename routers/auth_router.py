@@ -535,35 +535,14 @@ def route_register():
 @router.get("/admin/")
 async def route_secure_admin_portal(request: Request):
     """
-    404 隐形门禁（Masking 403 as 404 / 资源枚举防御）：
-    对任何未登录访客、普通注册用户或黑客扫描器，直接返回 HTTP 404 Not Found，
-    物理层面彻底抹除后台管理入口的存在性。
-    仅当且仅当持有合法数字签名且角色为 admin 的超级管理员请求时，才向其放行投递后台页面。
+    管理控制台页面入口：
+    向用户交付 admin.html。前端自带管理员身份校验与独立超级管理员登录门户；
+    所有敏感操作接口均在服务端通过 Depends(get_current_admin) 进行绝对权限拦截。
     """
-    token = request.cookies.get("auth_token")
-    if not token:
-        token = request.query_params.get("token")
-    if not token:
-        auth_hdr = request.headers.get("authorization", "")
-        if auth_hdr.startswith("Bearer "):
-            token = auth_hdr.split(" ", 1)[1].strip()
-
-    if not token:
-        raise HTTPException(status_code=404, detail="Not Found")
-
-    try:
-        payload = decode_jwt_token(token)
-        user_id = payload.get("sub")
-        user = get_user_by_id(user_id) if user_id else None
-        if not user or user.get("role") != "admin" or not user.get("isActive", True):
-            raise HTTPException(status_code=404, detail="Not Found")
-    except Exception:
-        raise HTTPException(status_code=404, detail="Not Found")
-
     admin_file = os.path.join(BASE_DIR, "templates", "admin.html")
     if not os.path.exists(admin_file):
         admin_file = os.path.join(STATIC_DIR, "admin.html")
     if not os.path.exists(admin_file):
-        raise HTTPException(status_code=404, detail="Not Found")
+        raise HTTPException(status_code=404, detail="Admin template not found")
 
     return FileResponse(admin_file, media_type="text/html")

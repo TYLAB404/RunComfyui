@@ -236,78 +236,71 @@ def save_preset_workflow_schema(wf_id: str, schema_data: Dict[str, Any]):
 
 @router.post("/api/workflows/inspect")
 def inspect_workflow_endpoint(payload: Dict[str, Any]):
-    """通过 RunningHub OpenAPI 读取工作流的 ComfyUI 原始结构并做深度动态提取（附带预置工作流高速本地缓存与离线容灾）"""
+    """通过 RunningHub OpenAPI 实时动态拉取工作流的 ComfyUI 原始结构并做深度动态提取"""
     workflow_id = payload.get("workflowId")
     if not workflow_id:
         raise HTTPException(status_code=400, detail="Missing workflowId")
     
     cfg = load_config()
     real_workflow_id = resolve_real_workflow_id(workflow_id, cfg)
-
-    # 1. 优先尝试本地预置缓存（零延迟、免去外网依赖、无需配置 API Key 即可秒级开启创作）
-    force_refresh = bool(payload.get("forceRefresh", False))
-    if not force_refresh:
-        cached = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
-        if cached:
-            res = dict(cached)
-            res["workflowId"] = str(workflow_id)
-            return res
-
-    # 2. 从 RunningHub OpenAPI 获取最新结构
     api_key = payload.get("apiKey") or get_active_api_key(cfg)
-    if not api_key:
-        fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
-        if fallback:
-            res = dict(fallback)
-            res["workflowId"] = str(workflow_id)
-            return res
-        raise HTTPException(status_code=400, detail="平台未配置可用 RunningHub API Key，请在管理后台【API 密钥池】中配置有效密钥")
-    
-    url = f"{RUNNINGHUB_API_URL}/api/openapi/getJsonApiFormat"
-    try:
-        res = HTTP_SESSION.post(url, json={"apiKey": api_key, "workflowId": str(real_workflow_id)}, timeout=15)
-        raw_data = res.json()
-    except Exception as e:
-        fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
-        if fallback:
-            res = dict(fallback)
-            res["workflowId"] = str(workflow_id)
-            return res
-        raise HTTPException(status_code=500, detail=f"连接 RunningHub 云端失败: {str(e)}")
-    
-    if raw_data.get("code") != 0:
-        fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
-        if fallback:
-            res = dict(fallback)
-            res["workflowId"] = str(workflow_id)
-            return res
 
-        err_msg = str(raw_data.get("msg") or "获取工作流信息失败")
-        if "WORKFLOW_NOT_SAVED" in err_msg.upper() or "NOT_RUNNING" in err_msg.upper():
-            err_msg = "该工作流在 RunningHub 上尚未保存或未运行过：请在 RunningHub 网页版画布左上角点击【保存 (Alt+S)】或先运行一次，云端即可同步编译并开放 API 格式！"
-        raise HTTPException(status_code=400, detail=err_msg)
-    
-    prompt_str = raw_data.get("data", {}).get("prompt", "{}")
-    try:
-        nodes = json.loads(prompt_str)
-    except Exception:
-        nodes = {}
+    # 1. 如果已配置 API Key，始终优先向 RunningHub 实时动态拉取（保证新上传/新修改的工作流参数即时生效）
+    if api_key:
+        url = f"{RUNNINGHUB_API_URL}/api/openapi/getJsonApiFormat"
+        try:
+            res = HTTP_SESSION.post(url, json={"apiKey": api_key, "workflowId": str(real_workflow_id)}, timeout=15)
+            raw_data = res.json()
+            if raw_data.get("code") == 0:
+                prompt_str = raw_data.get("data", {}).get("prompt", "{}")
+                try:
+                    nodes = json.loads(prompt_str)
+                except Exception:
+                    nodes = {}
 
-    parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
-    visual_graph = build_visual_graph(nodes, set(parsed.get("hiddenAuxiliaryNodeIds") or []))
-    result = {
-        "status": "ok",
-        "workflowId": str(workflow_id),
-        "totalNodes": len(nodes),
-        "rawPrompt": nodes,
-        "visualGraph": visual_graph,
-        "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
-        "dynamicSchema": parsed["dynamicSchema"]
-    }
+                parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
+                visual_graph = build_visual_graph(nodes, set(parsed.get("hiddenAuxiliaryNodeIds") or []))
+                result = {
+                    "status": "ok",
+                    "workflowId": str(workflow_id),
+                    "totalNodes": len(nodes),
+                    "rawPrompt": nodes,
+                    "visualGraph": visual_graph,
+                    "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
+                    "dynamicSchema": parsed["dynamicSchema"]
+                }
+                # 动态刷新持久化缓存以备容灾
+                save_preset_workflow_schema(str(real_workflow_id), result)
+                return result
+            else:
+                err_msg = str(raw_data.get("msg") or "获取工作流信息失败")
+                if "WORKFLOW_NOT_SAVED" in err_msg.upper() or "NOT_RUNNING" in err_msg.upper():
+                    err_msg = "该工作流在 RunningHub 上尚未保存或未运行过：请在 RunningHub 网页版画布左上角点击【保存 (Alt+S)】或先运行一次，云端即可同步编译并开放 API 格式！"
+                # 云端报错时，若是预置工作流则尝试降级，新工作流则准确抛出错误
+                fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
+                if fallback:
+                    res = dict(fallback)
+                    res["workflowId"] = str(workflow_id)
+                    return res
+                raise HTTPException(status_code=400, detail=err_msg)
+        except HTTPException:
+            raise
+        except Exception as e:
+            fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
+            if fallback:
+                res = dict(fallback)
+                res["workflowId"] = str(workflow_id)
+                return res
+            raise HTTPException(status_code=500, detail=f"连接 RunningHub 失败: {str(e)}")
 
-    # 动态写入本地缓存
-    save_preset_workflow_schema(str(real_workflow_id), result)
-    return result
+    # 2. 若当前未配置有效 API Key，预置工作流尝试容灾，新工作流则友好引导进入后台配置
+    fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
+    if fallback:
+        res = dict(fallback)
+        res["workflowId"] = str(workflow_id)
+        return res
+
+    raise HTTPException(status_code=400, detail="未配置有效 API Key。请以管理员身份登录管理后台 (/admin.html)，在【API 密钥池】中添加并启用您的 RunningHub 密钥")
 
 @router.post("/api/workflows/parse_json")
 async def parse_workflow_json_endpoint(
