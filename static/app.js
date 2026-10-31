@@ -599,23 +599,51 @@ createApp({
       id: '',
       name: '',
       category: '视频生成',
-      description: ''
+      description: '',
+      minPointsEnabled: false,
+      minPoints: 50
     });
 
     let pollingTimer = null;
 
-    // 当前选中的工作流元数据
+    // 当前选中的工作流元数据 (支持虚拟 ID 与真实 ID 双向容错匹配)
     const currentWorkflow = computed(() => {
-      return workflows.value.find(w => w.id === selectedWorkflowId.value);
+      const sel = String(selectedWorkflowId.value || '').trim();
+      if (!sel) return null;
+      return workflows.value.find(w => 
+        String(w.id) === sel || 
+        String(w.virtualId || '') === sel || 
+        (w.realId && String(w.realId) === sel)
+      ) || null;
     });
 
     // 工作流准入门槛判断：当前工作流是否开启门槛且当前非管理员用户余额不足
     const isBelowThreshold = computed(() => {
-      if (!currentWorkflow.value || !currentWorkflow.value.minPointsEnabled) return false;
+      const wf = currentWorkflow.value;
+      if (!wf || !wf.minPointsEnabled) return false;
       if (currentUser.value && currentUser.value.role === 'admin') return false;
       const userPts = currentUser.value ? Number(currentUser.value.points || 0) : 0;
-      const reqPts = Number(currentWorkflow.value.minPoints || 0);
+      const reqPts = Number(wf.minPoints || 0);
       return userPts < reqPts;
+    });
+
+    // 准入门槛综合状态计算（供前台顶部提示栏、卡片和按钮展示）
+    const thresholdStatus = computed(() => {
+      const wf = currentWorkflow.value;
+      if (!wf || !wf.minPointsEnabled) return { enabled: false };
+      const isAdmin = Boolean(currentUser.value && currentUser.value.role === 'admin');
+      const userPts = currentUser.value ? Number(currentUser.value.points || 0) : 0;
+      const reqPts = Number(wf.minPoints || 0);
+      const isBelow = !isAdmin && (userPts < reqPts);
+      const diff = Math.max(0, reqPts - userPts);
+      return {
+        enabled: true,
+        isAdmin,
+        isBelow,
+        reqPts,
+        userPts,
+        diff
+      };
     });
 
     // 正在运行中的任务数量
@@ -816,7 +844,11 @@ createApp({
         activeKeyName.value = data.activeKeyName || '';
         activeMaskedKey.value = data.activeMaskedKey || '';
 
-        if (workflows.value.length > 0 && selectedWorkflowId.value) {
+        if (workflows.value.length > 0) {
+          const currentExists = selectedWorkflowId.value && workflows.value.some(w => String(w.id) === String(selectedWorkflowId.value));
+          if (!selectedWorkflowId.value || !currentExists) {
+            selectedWorkflowId.value = workflows.value[0].id;
+          }
           await loadWorkflowSchema(selectedWorkflowId.value);
         }
       } catch (err) {
@@ -1584,17 +1616,22 @@ createApp({
 
       isAddingWorkflow.value = true;
       try {
+        const payload = {
+          ...newWf.value,
+          minPointsEnabled: Boolean(newWf.value.minPointsEnabled),
+          minPoints: Math.max(0, parseInt(newWf.value.minPoints) || 0)
+        };
         const res = await authFetch('/api/workflows', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newWf.value)
+          body: JSON.stringify(payload)
         });
         const data = await res.json();
         if (res.ok && data.status === 'ok') {
           await fetchConfig();
           showAddWorkflowModal.value = false;
           const addedId = newWf.value.id;
-          newWf.value = { id: '', name: '', category: '视频生成', description: '' };
+          newWf.value = { id: '', name: '', category: '视频生成', description: '', minPointsEnabled: false, minPoints: 50 };
           selectedWorkflowId.value = addedId;
           await loadWorkflowSchema(addedId);
           activeTab.value = 'studio';
@@ -1606,6 +1643,59 @@ createApp({
         showToastNotification('保存请求发生网络异常: ' + err.message, 'error');
       } finally {
         isAddingWorkflow.value = false;
+      }
+    };
+
+    // 管理员快捷修改门槛弹窗
+    const showEditThresholdModal = ref(false);
+    const editingThresholdWf = ref({
+      id: '',
+      name: '',
+      minPointsEnabled: false,
+      minPoints: 50
+    });
+    const isSavingThreshold = ref(false);
+
+    const openEditThresholdModal = (wf) => {
+      if (!wf) return;
+      editingThresholdWf.value = {
+        id: wf.id,
+        name: wf.name || '',
+        minPointsEnabled: Boolean(wf.minPointsEnabled),
+        minPoints: wf.minPoints !== undefined ? Number(wf.minPoints) : 50
+      };
+      showEditThresholdModal.value = true;
+    };
+
+    const saveWorkflowThreshold = async () => {
+      if (!editingThresholdWf.value.id) return;
+      isSavingThreshold.value = true;
+      try {
+        const wfToSave = workflows.value.find(w => String(w.id) === String(editingThresholdWf.value.id)) || {};
+        const payload = {
+          ...wfToSave,
+          id: editingThresholdWf.value.id,
+          name: editingThresholdWf.value.name || wfToSave.name,
+          minPointsEnabled: Boolean(editingThresholdWf.value.minPointsEnabled),
+          minPoints: Math.max(0, parseInt(editingThresholdWf.value.minPoints) || 0)
+        };
+        const res = await authFetch('/api/workflows', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'ok') {
+          await fetchConfig();
+          showEditThresholdModal.value = false;
+          showToastNotification('工作流准入门槛已成功更新并生效！', 'success');
+        } else {
+          showToastNotification('保存门槛失败: ' + (data.detail || JSON.stringify(data)), 'error');
+        }
+      } catch (err) {
+        showToastNotification('网络异常: ' + err.message, 'error');
+      } finally {
+        isSavingThreshold.value = false;
       }
     };
 
@@ -2027,6 +2117,7 @@ createApp({
             localStorage.setItem('rh_auth_token', data.token);
             currentUser.value = data.user;
             authSuccessMsg.value = '登录成功，欢迎回来！';
+            await fetchConfig();
             await refreshTasks();
             await refreshGallery();
             setTimeout(() => {
@@ -2359,6 +2450,12 @@ createApp({
       selectedWorkflowId,
       currentWorkflow,
       isBelowThreshold,
+      thresholdStatus,
+      showEditThresholdModal,
+      editingThresholdWf,
+      isSavingThreshold,
+      openEditThresholdModal,
+      saveWorkflowThreshold,
       tasks,
       gallery,
       latestTask,
