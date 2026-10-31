@@ -535,30 +535,43 @@ def route_register():
 @router.get("/admin/")
 async def route_secure_admin_portal(request: Request):
     """
-    管理后台门户：
-    1. 任何访客访问 /admin 或 /admin.html，直接返回管理后台界面 templates/admin.html。
-    2. 未登录或非管理员时，前端页面自动呈现安全登录弹窗并阻断所有后台数据展示与操作。
-    3. 所有数据 API (/api/admin/*) 严格受 JWT 与管理员角色 (role=='admin') 双重鉴权保护。
+    404 隐形门禁与安全直通门户：
+    1. 任何未授权访客、黑客字典扫描、普通用户直接盲打 /admin 或 /admin.html，一律返回 404 Not Found 彻底抹除后台存在性！
+    2. 管理员在前台登录后，点击【管理后台】按钮，通过 ?token= 携带已签名的管理员 JWT 凭证直通，后端校验放行并种植安全 Cookie。
+    3. 专属暗号（?door=master）：若管理员在全新未登录设备上直接访问，可带暗号开启超级管理员独立登录门户。
     """
-    admin_file = os.path.join(BASE_DIR, "templates", "admin.html")
-    if not os.path.exists(admin_file):
-        admin_file = os.path.join(STATIC_DIR, "admin.html")
-    if not os.path.exists(admin_file):
-        raise HTTPException(status_code=404, detail="Admin template not found")
-
-    response = FileResponse(admin_file, media_type="text/html")
-    
-    # 若 URL 或 Cookie 携带管理员 Token，顺带种植安全会话 Cookie
     token = request.query_params.get("token") or request.cookies.get("auth_token")
+    if not token:
+        auth_hdr = request.headers.get("authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            token = auth_hdr.split(" ", 1)[1].strip()
+
+    is_admin = False
     if token:
         try:
             payload = decode_jwt_token(token)
             user_id = payload.get("sub")
             user = get_user_by_id(user_id) if user_id else None
             if user and user.get("role") == "admin" and user.get("isActive", True):
-                is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
-                response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_secure)
+                is_admin = True
         except Exception:
-            pass
+            is_admin = False
 
+    # 敲门暗号安全检查
+    door_knock = request.query_params.get("door", "").strip()
+    is_door_pass = bool(door_knock and door_knock in ["master", "admin", "runninghub"])
+
+    if not is_admin and not is_door_pass:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    admin_file = os.path.join(BASE_DIR, "templates", "admin.html")
+    if not os.path.exists(admin_file):
+        admin_file = os.path.join(STATIC_DIR, "admin.html")
+    if not os.path.exists(admin_file):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    response = FileResponse(admin_file, media_type="text/html")
+    if is_admin and token:
+        is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
+        response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_secure)
     return response
