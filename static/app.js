@@ -203,6 +203,19 @@ createApp({
     });
     const tasks = ref([]);
     const gallery = ref([]);
+    const galleryPage = ref(1);
+    const galleryPageSize = ref(10); // 用户端每页显示 10 件成果
+    const galleryTotalPages = computed(() => {
+      return Math.max(1, Math.ceil((gallery.value.length || 0) / galleryPageSize.value));
+    });
+    const paginatedGallery = computed(() => {
+      const start = (galleryPage.value - 1) * galleryPageSize.value;
+      return gallery.value.slice(start, start + galleryPageSize.value);
+    });
+    const scrollToGalleryTop = () => {
+      const el = document.getElementById('gallery-section-top');
+      if (el) el.scrollIntoView({ behavior: 'smooth' });
+    };
     const isGenerating = ref(false);
     const isDetecting = ref(false);
     const isLoadingSchema = ref(false);
@@ -1128,13 +1141,15 @@ createApp({
       try {
         const res = await authFetch('/api/gallery');
         const data = await res.json();
-        if (Array.isArray(data)) {
-          const newHash = data.map(g => `${g.filename}:${g.fileType}`).join('|');
-          if (newHash !== lastGalleryHash) {
-            lastGalleryHash = newHash;
-            gallery.value = data;
-            nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
+        const items = Array.isArray(data) ? data : (data.items || []);
+        const newHash = items.map(g => `${g.filename}:${g.fileType}`).join('|');
+        if (newHash !== lastGalleryHash) {
+          lastGalleryHash = newHash;
+          gallery.value = items;
+          if (galleryPage.value > galleryTotalPages.value) {
+            galleryPage.value = galleryTotalPages.value;
           }
+          nextTick(() => { if (window.lucide) window.lucide.createIcons(); });
         }
       } catch (err) {
         console.error('Failed to fetch gallery:', err);
@@ -2458,6 +2473,11 @@ createApp({
       saveWorkflowThreshold,
       tasks,
       gallery,
+      galleryPage,
+      galleryPageSize,
+      galleryTotalPages,
+      paginatedGallery,
+      scrollToGalleryTop,
       latestTask,
       currentMonitorTask,
       focusedTaskId,
