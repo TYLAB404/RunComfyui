@@ -1210,17 +1210,75 @@ createApp({
       await loadWorkflowSchema(selectedWorkflowId.value);
     };
 
-    // 获取任务列表 (带增量指纹比对，避免无变动时频繁引起 Vue 虚拟 DOM 遍历与内存抖动)
+    // 建立任务运行时间单调递增基准锚点映射，彻底杜绝网络轮询与本地时钟竞争导致的时间回跳
+    const taskTimeAnchors = new Map(); // taskId -> { anchorTime: number, maxDuration: number, status: string }
+
+    // 获取任务列表 (带增量指纹比对与单调递增防抖)
     let lastTasksHash = '';
     const refreshTasks = async () => {
       try {
         const res = await authFetch('/api/tasks');
         const data = await res.json();
         if (Array.isArray(data)) {
-          const newHash = data.map(t => `${t.taskId}:${t.status}:${t.duration}:${t.progressPercent}:${t.currentStep}:${t.statusText}:${t.updatedAt}:${(t.outputs||[]).length}`).join('|');
+          const now = Date.now();
+
+          // 核心时间同步防护：对活跃任务注入时间保护，严禁已累加时间倒退
+          data.forEach(t => {
+            const tid = String(t.taskId);
+            const remoteDur = Math.max(0, Number(t.duration) || 0);
+
+            if (t.status === 'RUNNING' || t.status === 'QUEUED') {
+              let anchor = taskTimeAnchors.get(tid);
+              if (!anchor) {
+                anchor = {
+                  anchorTime: now - remoteDur * 1000,
+                  maxDuration: remoteDur,
+                  status: t.status
+                };
+                taskTimeAnchors.set(tid, anchor);
+              } else {
+                // 如果状态流转（例如由 QUEUED 排队变成 RUNNING 运行中），重新锚定计算起点
+                if (anchor.status !== t.status) {
+                  anchor.status = t.status;
+                  anchor.anchorTime = now - remoteDur * 1000;
+                  anchor.maxDuration = remoteDur;
+                } else {
+                  // 服务端确认耗时已超越当前估算值时，向前校准基准点（单调递增，绝不倒退）
+                  if (remoteDur > anchor.maxDuration) {
+                    anchor.anchorTime = Math.min(anchor.anchorTime, now - remoteDur * 1000);
+                    anchor.maxDuration = remoteDur;
+                  }
+                }
+              }
+
+              // 计算当前绝对秒数，永远只增不减
+              const elapsed = Math.max(0, Math.floor((now - anchor.anchorTime) / 1000));
+              anchor.maxDuration = Math.max(anchor.maxDuration, elapsed);
+              t.duration = anchor.maxDuration;
+            } else {
+              // 任务已完成或失败，清理锚点，使用服务端官方最终结算秒数
+              taskTimeAnchors.delete(tid);
+            }
+          });
+
+          // 指纹哈希中排除每秒都变动的 duration，防止全量 DOM 抖动重建
+          const newHash = data.map(t => `${t.taskId}:${t.status}:${t.progressPercent}:${t.currentStep}:${t.statusText}:${t.updatedAt}:${(t.outputs||[]).length}`).join('|');
           if (newHash !== lastTasksHash) {
             lastTasksHash = newHash;
             tasks.value = data;
+          } else {
+            // 指纹未变时（仅秒数或微小进度变动），直接就地更新对象属性，保证零闪烁与极致平滑
+            data.forEach(t => {
+              const localT = (tasks.value || []).find(x => String(x.taskId) === String(t.taskId));
+              if (localT) {
+                if (localT.status === 'RUNNING' || localT.status === 'QUEUED') {
+                  localT.duration = t.duration;
+                  localT.statusText = t.statusText;
+                  localT.progressPercent = t.progressPercent;
+                  localT.currentStep = t.currentStep;
+                }
+              }
+            });
           }
 
           const hasActive = data.some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
@@ -2506,12 +2564,26 @@ createApp({
       await refreshTasks();
       await refreshGallery();
 
-      // 本地秒级平滑跳秒心跳：为运行中和排队中的任务实时递增已等待秒数，彻底消除网络轮询间歇的停滞感
+      // 本地秒级平滑跳秒心跳：基于系统绝对毫秒时间戳驱动，单调递增，彻底消除网络抖动与后台切回时的跳秒
       tickTimer = setInterval(() => {
         if (document.hidden) return;
+        const now = Date.now();
         (tasks.value || []).forEach(t => {
           if (t.status === 'RUNNING' || t.status === 'QUEUED') {
-            t.duration = (t.duration || 0) + 1;
+            const tid = String(t.taskId);
+            let anchor = taskTimeAnchors.get(tid);
+            if (!anchor) {
+              const currentDur = Math.max(0, Number(t.duration) || 0);
+              anchor = {
+                anchorTime: now - currentDur * 1000,
+                maxDuration: currentDur,
+                status: t.status
+              };
+              taskTimeAnchors.set(tid, anchor);
+            }
+            const elapsed = Math.max(0, Math.floor((now - anchor.anchorTime) / 1000));
+            anchor.maxDuration = Math.max(anchor.maxDuration, elapsed);
+            t.duration = anchor.maxDuration;
           }
         });
       }, 1000);
