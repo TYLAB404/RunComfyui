@@ -617,7 +617,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="u in filteredUsers" :key="u.id" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="u in paginatedUsers" :key="u.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <div class="flex items-center gap-2.5">
                           <div class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 font-bold flex items-center justify-center shrink-0">
@@ -663,6 +663,19 @@
                 </table>
               </div>
 
+              <!-- 用户管理分页控件 -->
+              <div v-if="filteredUsers.length > userPageSize" class="p-3.5 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+                <div>共 <strong class="text-white font-mono">{{ filteredUsers.length }}</strong> 名用户，当前第 <strong class="text-indigo-400 font-mono">{{ userPage }} / {{ userTotalPages }}</strong> 页</div>
+                <div class="flex items-center gap-1.5 font-medium">
+                  <button :disabled="userPage <= 1" @click="userPage = 1" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">首页</button>
+                  <button :disabled="userPage <= 1" @click="userPage--" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">上一页</button>
+                  <span class="px-2.5 py-1 font-mono text-slate-200 bg-slate-950/60 rounded border border-slate-800">{{ userPage }} / {{ userTotalPages }}</span>
+                  <button :disabled="userPage >= userTotalPages" @click="userPage++" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">下一页</button>
+                  <button :disabled="userPage >= userTotalPages" @click="userPage = userTotalPages" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">末页</button>
+                </div>
+              </div>
+
+
             </div>
 
           </section>
@@ -700,7 +713,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="a in announcements" :key="a.id" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="a in paginatedAnnouncements" :key="a.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
                           {{ a.tag || '官方公告' }}
@@ -730,6 +743,19 @@
                   </tbody>
                 </table>
               </div>
+
+              <!-- 公告分页控件 -->
+              <div v-if="announcements.length > announcementPageSize" class="p-3.5 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+                <div>共 <strong class="text-white font-mono">{{ announcements.length }}</strong> 条公告，当前第 <strong class="text-indigo-400 font-mono">{{ announcementPage }} / {{ announcementTotalPages }}</strong> 页</div>
+                <div class="flex items-center gap-1.5 font-medium">
+                  <button :disabled="announcementPage <= 1" @click="announcementPage = 1" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">首页</button>
+                  <button :disabled="announcementPage <= 1" @click="announcementPage--" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">上一页</button>
+                  <span class="px-2.5 py-1 font-mono text-slate-200 bg-slate-950/60 rounded border border-slate-800">{{ announcementPage }} / {{ announcementTotalPages }}</span>
+                  <button :disabled="announcementPage >= announcementTotalPages" @click="announcementPage++" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">下一页</button>
+                  <button :disabled="announcementPage >= announcementTotalPages" @click="announcementPage = announcementTotalPages" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">末页</button>
+                </div>
+              </div>
+
 
             </div>
 
@@ -880,7 +906,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="t in allTasks" :key="t.taskId" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="t in paginatedAdminTasks" :key="t.taskId" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <div class="font-mono text-indigo-400 font-bold truncate max-w-[150px]" :title="t.taskId">{{ t.taskId }}</div>
                         <div class="text-[10px] text-slate-400">用户: <span class="text-slate-200 font-semibold">{{ t.username || '匿名' }}</span> <span v-if="t.userId" class="font-mono text-slate-500 text-[9px]">(ID: {{ t.userId }})</span></div>
@@ -945,6 +971,19 @@
                   </tbody>
                 </table>
               </div>
+
+              <!-- 全平台任务分页控件 -->
+              <div v-if="allTasks.length > adminTaskPageSize" class="p-3.5 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+                <div>共 <strong class="text-white font-mono">{{ allTasks.length }}</strong> 条任务记录，当前第 <strong class="text-indigo-400 font-mono">{{ adminTaskPage }} / {{ adminTaskTotalPages }}</strong> 页</div>
+                <div class="flex items-center gap-1.5 font-medium">
+                  <button :disabled="adminTaskPage <= 1" @click="adminTaskPage = 1" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">首页</button>
+                  <button :disabled="adminTaskPage <= 1" @click="adminTaskPage--" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">上一页</button>
+                  <span class="px-2.5 py-1 font-mono text-slate-200 bg-slate-950/60 rounded border border-slate-800">{{ adminTaskPage }} / {{ adminTaskTotalPages }}</span>
+                  <button :disabled="adminTaskPage >= adminTaskTotalPages" @click="adminTaskPage++" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">下一页</button>
+                  <button :disabled="adminTaskPage >= adminTaskTotalPages" @click="adminTaskPage = adminTaskTotalPages" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">末页</button>
+                </div>
+              </div>
+
 
             </div>
 
@@ -1092,7 +1131,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="wf in filteredWorkflows" :key="wf.id" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="wf in paginatedAdminWorkflows" :key="wf.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <div class="flex items-center gap-2.5">
                           <img v-if="wf.coverImage" :src="wf.coverImage" class="w-9 h-9 rounded-lg object-cover border border-slate-800 flex-shrink-0" alt="cover" />
@@ -1192,6 +1231,19 @@
                 </table>
               </div>
 
+              <!-- 工作流分页控件 -->
+              <div v-if="filteredWorkflows.length > adminWorkflowPageSize" class="p-3.5 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+                <div>共 <strong class="text-white font-mono">{{ filteredWorkflows.length }}</strong> 个工作流，当前第 <strong class="text-indigo-400 font-mono">{{ adminWorkflowPage }} / {{ adminWorkflowTotalPages }}</strong> 页</div>
+                <div class="flex items-center gap-1.5 font-medium">
+                  <button :disabled="adminWorkflowPage <= 1" @click="adminWorkflowPage = 1" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">首页</button>
+                  <button :disabled="adminWorkflowPage <= 1" @click="adminWorkflowPage--" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">上一页</button>
+                  <span class="px-2.5 py-1 font-mono text-slate-200 bg-slate-950/60 rounded border border-slate-800">{{ adminWorkflowPage }} / {{ adminWorkflowTotalPages }}</span>
+                  <button :disabled="adminWorkflowPage >= adminWorkflowTotalPages" @click="adminWorkflowPage++" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">下一页</button>
+                  <button :disabled="adminWorkflowPage >= adminWorkflowTotalPages" @click="adminWorkflowPage = adminWorkflowTotalPages" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">末页</button>
+                </div>
+              </div>
+
+
             </div>
 
           </section>
@@ -1267,7 +1319,7 @@
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
-                    <tr v-for="k in keys" :key="k.id" class="hover:bg-slate-800/30 transition">
+                    <tr v-for="k in paginatedKeys" :key="k.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3 font-semibold text-white">
                         <div class="flex items-center gap-2">
                           <span>{{ k.name }}</span>
@@ -1316,6 +1368,19 @@
                   </tbody>
                 </table>
               </div>
+
+              <!-- 密钥池分页控件 -->
+              <div v-if="keys.length > keyPageSize" class="p-3.5 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-400">
+                <div>共 <strong class="text-white font-mono">{{ keys.length }}</strong> 个密钥，当前第 <strong class="text-indigo-400 font-mono">{{ keyPage }} / {{ keyTotalPages }}</strong> 页</div>
+                <div class="flex items-center gap-1.5 font-medium">
+                  <button :disabled="keyPage <= 1" @click="keyPage = 1" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">首页</button>
+                  <button :disabled="keyPage <= 1" @click="keyPage--" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">上一页</button>
+                  <span class="px-2.5 py-1 font-mono text-slate-200 bg-slate-950/60 rounded border border-slate-800">{{ keyPage }} / {{ keyTotalPages }}</span>
+                  <button :disabled="keyPage >= keyTotalPages" @click="keyPage++" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">下一页</button>
+                  <button :disabled="keyPage >= keyTotalPages" @click="keyPage = keyTotalPages" class="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-white transition">末页</button>
+                </div>
+              </div>
+
 
             </div>
 
@@ -2985,6 +3050,55 @@
         const userSearchQuery = ref('');
         const announcements = ref([]);
         const allTasks = ref([]);
+        const adminTaskPage = ref(1);
+        const adminTaskPageSize = ref(15);
+        const adminTaskTotalPages = computed(() => {
+          return Math.max(1, Math.ceil((allTasks.value.length || 0) / adminTaskPageSize.value));
+        });
+        const paginatedAdminTasks = computed(() => {
+          const start = (adminTaskPage.value - 1) * adminTaskPageSize.value;
+          return allTasks.value.slice(start, start + adminTaskPageSize.value);
+        });
+
+        const userPage = ref(1);
+        const userPageSize = ref(15);
+        const userTotalPages = computed(() => {
+          return Math.max(1, Math.ceil((filteredUsers.value.length || 0) / userPageSize.value));
+        });
+        const paginatedUsers = computed(() => {
+          const start = (userPage.value - 1) * userPageSize.value;
+          return filteredUsers.value.slice(start, start + userPageSize.value);
+        });
+
+        const adminWorkflowPage = ref(1);
+        const adminWorkflowPageSize = ref(15);
+        const adminWorkflowTotalPages = computed(() => {
+          return Math.max(1, Math.ceil((filteredWorkflows.value.length || 0) / adminWorkflowPageSize.value));
+        });
+        const paginatedAdminWorkflows = computed(() => {
+          const start = (adminWorkflowPage.value - 1) * adminWorkflowPageSize.value;
+          return filteredWorkflows.value.slice(start, start + adminWorkflowPageSize.value);
+        });
+
+        const keyPage = ref(1);
+        const keyPageSize = ref(15);
+        const keyTotalPages = computed(() => {
+          return Math.max(1, Math.ceil((keys.value.length || 0) / keyPageSize.value));
+        });
+        const paginatedKeys = computed(() => {
+          const start = (keyPage.value - 1) * keyPageSize.value;
+          return keys.value.slice(start, start + keyPageSize.value);
+        });
+
+        const announcementPage = ref(1);
+        const announcementPageSize = ref(10);
+        const announcementTotalPages = computed(() => {
+          return Math.max(1, Math.ceil((announcements.value.length || 0) / announcementPageSize.value));
+        });
+        const paginatedAnnouncements = computed(() => {
+          const start = (announcementPage.value - 1) * announcementPageSize.value;
+          return announcements.value.slice(start, start + announcementPageSize.value);
+        });
         const taskFilterStatus = ref('ALL');
         const taskFilterUser = ref('');
         const taskFilterLoading = ref(false);
@@ -3094,6 +3208,18 @@
 
         // 检查管理员身份
         const checkAdminAuth = async () => {
+          try {
+            const urlParams = new URLSearchParams(window.location.search);
+            const paramToken = urlParams.get('token');
+            if (paramToken) {
+              localStorage.setItem('rh_admin_token', paramToken);
+              localStorage.setItem('rh_auth_token', paramToken);
+              const cleanUrl = window.location.pathname + (window.location.hash || '');
+              window.history.replaceState({}, document.title, cleanUrl);
+            }
+          } catch (e) {
+            console.warn('URL token parse:', e);
+          }
           const token = localStorage.getItem('rh_admin_token') || localStorage.getItem('rh_auth_token');
           if (!token) {
             authChecked.value = true;
@@ -4852,6 +4978,9 @@
 
         // 自动静默轮询看板：当管理员在 'keys' 页面时，每 2.5 秒自动同步一次并发池状态，指示灯原地实时变绿，无需手动刷新！
         let keyPoolLiveTimer = null;
+        watch(userSearchQuery, () => { userPage.value = 1; });
+        watch(workflowFilter, () => { adminWorkflowPage.value = 1; });
+
         onMounted(() => {
           checkAdminAuth();
           loadPublicConfig();
@@ -4916,9 +5045,21 @@
           users,
           userSearchQuery,
           filteredUsers,
+          userPage,
+          userPageSize,
+          userTotalPages,
+          paginatedUsers,
           announcements,
+          announcementPage,
+          announcementPageSize,
+          announcementTotalPages,
+          paginatedAnnouncements,
           annoModal,
           allTasks,
+          adminTaskPage,
+          adminTaskPageSize,
+          adminTaskTotalPages,
+          paginatedAdminTasks,
           taskFilterStatus,
           taskFilterUser,
           taskFilterLoading,
@@ -4938,6 +5079,10 @@
           getWorkflowCountByCategory,
           workflowFilter,
           filteredWorkflows,
+          adminWorkflowPage,
+          adminWorkflowPageSize,
+          adminWorkflowTotalPages,
+          paginatedAdminWorkflows,
           loadWorkflows,
           adminToggleWorkflowActive,
           adminToggleWorkflowPin,
@@ -4964,6 +5109,10 @@
           toggleMaintenance,
           saveMaintenanceMessage,
           keys,
+          keyPage,
+          keyPageSize,
+          keyTotalPages,
+          paginatedKeys,
           systemConfig,
           editPointsModal,
           resetPwdModal,
