@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from core.config import (
     load_config, save_config, get_active_api_key,
-    filter_workflows_for_user, sort_workflows, resolve_real_workflow_id, RUNNINGHUB_API_URL
+    filter_workflows_for_user, sort_workflows, resolve_real_workflow_id, RUNNINGHUB_API_URL,
+    DATA_DIR
 )
 from core.auth import get_current_user_optional, get_current_admin
 from core.http_client import HTTP_SESSION
@@ -209,27 +210,78 @@ def admin_toggle_workflow_official(workflow_id: str, _: Dict[str, Any] = Depends
     save_config(cfg)
     return {"status": "ok", "workflow": target, "isOfficial": target["isOfficial"]}
 
+PRESET_SCHEMAS_PATH = os.path.join(DATA_DIR, "preset_workflow_schemas.json")
+_PRESET_SCHEMAS_CACHE: Dict[str, Any] = {}
+
+def get_preset_workflow_schema(wf_id: str) -> Optional[Dict[str, Any]]:
+    global _PRESET_SCHEMAS_CACHE
+    if not _PRESET_SCHEMAS_CACHE and os.path.exists(PRESET_SCHEMAS_PATH):
+        try:
+            with open(PRESET_SCHEMAS_PATH, "r", encoding="utf-8") as f:
+                _PRESET_SCHEMAS_CACHE = json.load(f)
+        except Exception as e:
+            print(f"[Workflow Schema] Failed to load preset schemas: {e}")
+    target_id = str(wf_id).strip()
+    return _PRESET_SCHEMAS_CACHE.get(target_id)
+
+def save_preset_workflow_schema(wf_id: str, schema_data: Dict[str, Any]):
+    global _PRESET_SCHEMAS_CACHE
+    target_id = str(wf_id).strip()
+    _PRESET_SCHEMAS_CACHE[target_id] = schema_data
+    try:
+        with open(PRESET_SCHEMAS_PATH, "w", encoding="utf-8") as f:
+            json.dump(_PRESET_SCHEMAS_CACHE, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[Workflow Schema] Failed to persist schema: {e}")
+
 @router.post("/api/workflows/inspect")
 def inspect_workflow_endpoint(payload: Dict[str, Any]):
-    """通过 RunningHub OpenAPI 读取工作流的 ComfyUI 原始结构并做深度动态提取"""
+    """通过 RunningHub OpenAPI 读取工作流的 ComfyUI 原始结构并做深度动态提取（附带预置工作流高速本地缓存与离线容灾）"""
     workflow_id = payload.get("workflowId")
     if not workflow_id:
         raise HTTPException(status_code=400, detail="Missing workflowId")
     
     cfg = load_config()
     real_workflow_id = resolve_real_workflow_id(workflow_id, cfg)
+
+    # 1. 优先尝试本地预置缓存（零延迟、免去外网依赖、无需配置 API Key 即可秒级开启创作）
+    force_refresh = bool(payload.get("forceRefresh", False))
+    if not force_refresh:
+        cached = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
+        if cached:
+            res = dict(cached)
+            res["workflowId"] = str(workflow_id)
+            return res
+
+    # 2. 从 RunningHub OpenAPI 获取最新结构
     api_key = payload.get("apiKey") or get_active_api_key(cfg)
     if not api_key:
-        raise HTTPException(status_code=400, detail="未配置有效 API Key，请先进入顶部切换或设置中添加启用密钥")
+        fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
+        if fallback:
+            res = dict(fallback)
+            res["workflowId"] = str(workflow_id)
+            return res
+        raise HTTPException(status_code=400, detail="平台未配置可用 RunningHub API Key，请在管理后台【API 密钥池】中配置有效密钥")
     
     url = f"{RUNNINGHUB_API_URL}/api/openapi/getJsonApiFormat"
     try:
         res = HTTP_SESSION.post(url, json={"apiKey": api_key, "workflowId": str(real_workflow_id)}, timeout=15)
         raw_data = res.json()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Request to RunningHub failed: {str(e)}")
+        fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
+        if fallback:
+            res = dict(fallback)
+            res["workflowId"] = str(workflow_id)
+            return res
+        raise HTTPException(status_code=500, detail=f"连接 RunningHub 云端失败: {str(e)}")
     
     if raw_data.get("code") != 0:
+        fallback = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
+        if fallback:
+            res = dict(fallback)
+            res["workflowId"] = str(workflow_id)
+            return res
+
         err_msg = str(raw_data.get("msg") or "获取工作流信息失败")
         if "WORKFLOW_NOT_SAVED" in err_msg.upper() or "NOT_RUNNING" in err_msg.upper():
             err_msg = "该工作流在 RunningHub 上尚未保存或未运行过：请在 RunningHub 网页版画布左上角点击【保存 (Alt+S)】或先运行一次，云端即可同步编译并开放 API 格式！"
@@ -243,7 +295,7 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
 
     parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
     visual_graph = build_visual_graph(nodes, set(parsed.get("hiddenAuxiliaryNodeIds") or []))
-    return {
+    result = {
         "status": "ok",
         "workflowId": str(workflow_id),
         "totalNodes": len(nodes),
@@ -252,6 +304,10 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
         "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
         "dynamicSchema": parsed["dynamicSchema"]
     }
+
+    # 动态写入本地缓存
+    save_preset_workflow_schema(str(real_workflow_id), result)
+    return result
 
 @router.post("/api/workflows/parse_json")
 async def parse_workflow_json_endpoint(
