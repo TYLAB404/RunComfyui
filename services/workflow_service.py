@@ -92,26 +92,28 @@ def get_field_options_and_category(
     fname_lower = field_name.lower()
     ctype_lower = ctype.lower()
 
-    # 1. 判断字段分类
+    # 1. 判断字段分类 (严格区分模型实体与权重数值/缩放方法)
     category = None
-    if "ckpt" in fname_lower or "checkpoint" in fname_lower or ("checkpoint" in ctype_lower and fname_lower in ("ckpt_name", "model_name")):
-        category = "checkpoint"
-    elif "lora" in fname_lower:
-        category = "lora"
-    elif "vae" in fname_lower:
-        category = "vae"
-    elif "control_net" in fname_lower or "controlnet" in fname_lower:
-        category = "controlnet"
-    elif "unet" in fname_lower or ("diffusion" in ctype_lower and "model" in fname_lower):
-        category = "unet"
-    elif "clip" in fname_lower and "clip_skip" not in fname_lower:
-        category = "clip"
-    elif "upscale" in fname_lower or "upscale" in ctype_lower:
-        category = "upscale"
-    elif fname_lower == "sampler_name":
-        category = "sampler"
-    elif fname_lower == "scheduler":
-        category = "scheduler"
+    is_numeric = isinstance(current_value, (int, float)) and not isinstance(current_value, bool)
+    if not is_numeric:
+        if "ckpt" in fname_lower or "checkpoint" in fname_lower or ("checkpoint" in ctype_lower and fname_lower in ("ckpt_name", "model_name")):
+            category = "checkpoint"
+        elif "lora" in fname_lower and not any(w in fname_lower for w in ["weight", "strength", "scale"]):
+            category = "lora"
+        elif "vae" in fname_lower and not any(w in fname_lower for w in ["weight", "strength"]):
+            category = "vae"
+        elif ("control_net" in fname_lower or "controlnet" in fname_lower) and not any(w in fname_lower for w in ["weight", "strength"]):
+            category = "controlnet"
+        elif "unet" in fname_lower or ("diffusion" in ctype_lower and "model" in fname_lower):
+            category = "unet"
+        elif "clip" in fname_lower and not any(w in fname_lower for w in ["skip", "weight", "strength", "scale"]):
+            category = "clip"
+        elif ("upscale_model" in fname_lower or ("upscale" in fname_lower and "model" in fname_lower) or "upscalemodel" in ctype_lower) and not any(w in fname_lower for w in ["method", "by", "scale", "ratio"]):
+            category = "upscale"
+        elif fname_lower == "sampler_name":
+            category = "sampler"
+        elif fname_lower == "scheduler":
+            category = "scheduler"
 
     # 2. 从当前节点定义中尝试获取 spec options
     node_options: List[str] = []
