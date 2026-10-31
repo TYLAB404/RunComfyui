@@ -2611,6 +2611,13 @@ createApp({
     let galleryTimer = null;
     let tickTimer = null;
     onMounted(async () => {
+      // 优雅移除启动加载遮罩
+      const preloader = document.getElementById('app-preloader');
+      if (preloader) {
+        preloader.style.opacity = '0';
+        setTimeout(() => { if (preloader.parentNode) preloader.remove(); }, 250);
+      }
+
       await fetchPublicConfig();
       await fetchCurrentUser();
       await fetchAnnouncements();
