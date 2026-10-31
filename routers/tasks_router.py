@@ -24,7 +24,7 @@ from services.billing_service import resolve_instance_tier, check_user_can_start
 from services.runninghub import (
     ACTIVE_POLL_TASKS, CANCELLED_TASKS, ACTIVE_TASK_PREVIEWS,
     submit_proxy_prompt_async, poll_task_status, listen_websocket_stream,
-    dispatch_queued_task, execute_task_cancellation
+    dispatch_queued_task, execute_task_cancellation, sanitize_error_msg
 )
 
 router = APIRouter(tags=["Tasks"])
@@ -413,3 +413,42 @@ async def cancel_task_endpoint(task_id: str, current_user: Optional[Dict[str, An
             raise HTTPException(status_code=403, detail="无权操作其他用户的任务")
 
     return await execute_task_cancellation(t, is_admin=False)
+
+@router.get("/api/proxy/view")
+async def proxy_media_view(
+    filename: str,
+    subfolder: Optional[str] = "",
+    type: Optional[str] = "temp",
+    format: Optional[str] = "",
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
+):
+    """安全代理获取 RunningHub 实例产物，杜绝将明文 Key 暴露给前端页面"""
+    cfg = load_config()
+    api_key = get_active_api_key(cfg)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="未配置有效 API Key")
+
+    target_url = f"https://www.runninghub.cn/proxy/{api_key}/view"
+    params = {
+        "filename": filename,
+        "subfolder": subfolder or "",
+        "type": type or "temp"
+    }
+    if format:
+        params["format"] = format
+
+    try:
+        from core.http_client import HTTP_SESSION
+        from fastapi.responses import Response
+        resp = await asyncio.to_thread(
+            HTTP_SESSION.get, target_url, params=params, timeout=20
+        )
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="获取产物失败")
+
+        content_type = resp.headers.get("Content-Type", "application/octet-stream")
+        return Response(content=resp.content, media_type=content_type)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"产物代理读取异常: {sanitize_error_msg(str(e), api_key)}")

@@ -1,4 +1,5 @@
 import os
+import re
 import io
 import time
 import json
@@ -42,6 +43,18 @@ def get_output_fingerprint(item: Dict[str, Any]) -> str:
         return fname
     return clean
 
+def sanitize_error_msg(msg: Any, api_key: Optional[str] = None) -> str:
+    """全面脱敏异常信息与错误日志中的 API Key 与敏感 URL 参数"""
+    if not msg:
+        return ""
+    s = str(msg)
+    if api_key and len(str(api_key)) >= 4:
+        s = s.replace(str(api_key), "******")
+    s = re.sub(r'/proxy/[a-zA-Z0-9_\-\.]{6,}/', '/proxy/******/', s)
+    s = re.sub(r'apiKey=([a-zA-Z0-9_\-\.]{6,})', 'apiKey=******', s)
+    s = re.sub(r'"apiKey"\s*:\s*"[^"]+"', '"apiKey": "******"', s)
+    return s
+
 async def submit_proxy_prompt_async(api_key: str, proxy_payload: Dict[str, Any]) -> Tuple[Optional[str], str]:
     """向 RunningHub 云端 ComfyUI 原生提交 Prompt 任务"""
     hosts = ["www.runninghub.ai", "runninghub.ai"]
@@ -58,7 +71,7 @@ async def submit_proxy_prompt_async(api_key: str, proxy_payload: Dict[str, Any])
             r = HTTP_SESSION.post(url, json=payload, timeout=25)
             return r.status_code, r.text
         except Exception as e:
-            return 0, str(e)
+            return 0, sanitize_error_msg(str(e), api_key)
 
     for attempt in range(4):
         for host in hosts:
@@ -117,7 +130,7 @@ async def submit_proxy_prompt_async(api_key: str, proxy_payload: Dict[str, Any])
                 last_err = f"云端服务返回 HTTP {status_code}: {resp_text}"
         await asyncio.sleep(2.5)
 
-    return None, last_err or "云端服务繁忙，请稍后重试"
+    return None, sanitize_error_msg(last_err or "云端服务繁忙，请稍后重试", api_key)
 
 async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str = ""):
     """后台长连接监听 RunningHub 实时 WebSocket 管道并截流进度和预览图"""
@@ -310,6 +323,10 @@ async def listen_websocket_stream(net_wss_url: str, task_id: str, api_key: str =
 
 async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = None):
     """后台异步轮询 RunningHub 任务执行状态流水"""
+    # 关键防御：本地排队占位任务禁止向 RunningHub 发起状态查询，防止误自毁！
+    if not task_id or str(task_id).startswith("task_"):
+        print(f"[Poll Status Guard] Skipped polling for local queue task placeholder: {task_id}")
+        return
     start_time = time.time()
     run_start_time: Optional[float] = None
     outputs_url = f"{RUNNINGHUB_API_URL}/task/openapi/outputs"
@@ -644,7 +661,7 @@ async def dispatch_queued_task(
                 remote_task_id, last_err = await submit_proxy_prompt_async(api_key, proxy_payload)
                 if not remote_task_id:
                     if is_key_fatal_error(None, str(last_err)):
-                        print(f"[Silent Failover In Queue] Key {key_id} ({key_name}) failed: {last_err}. Marking unhealthy and trying next key...")
+                        print(f"[Silent Failover In Queue] Key {key_id} ({key_name}) failed: {sanitize_error_msg(last_err, api_key)}. Marking unhealthy and trying next key...")
                         await KEY_POOL_MANAGER.mark_key_unhealthy(key_id, f"原生代理鉴权/风控拒绝: {last_err}")
                         excluded.add(key_id)
                         continue
@@ -653,7 +670,7 @@ async def dispatch_queued_task(
                         db_atomic_cancel_and_refund(local_task_id, reason=f"原生代理提交失败退还: {last_err}")
                         db_update_task(local_task_id, {
                             "status": "FAILED",
-                            "error": str(last_err),
+                            "error": sanitize_error_msg(str(last_err), api_key),
                             "statusText": f"云端原生代理提交失败: {str(last_err)[:40]}",
                             "cost": 0,
                             "updatedAt": int(time.time())
@@ -704,7 +721,7 @@ async def dispatch_queued_task(
                         excluded.add(key_id)
                         continue
                     elif is_key_fatal_error(code, msg):
-                        print(f"[Silent Failover In Queue] Key {key_id} ({key_name}) rejected with [{code}] {msg}. Silently failing over...")
+                        print(f"[Silent Failover In Queue] Key {key_id} ({key_name}) rejected with [{code}] {sanitize_error_msg(msg, api_key)}. Silently failing over...")
                         await KEY_POOL_MANAGER.mark_key_unhealthy(key_id, f"云端拒绝任务 [{code}]: {msg}")
                         excluded.add(key_id)
                         continue
@@ -774,7 +791,7 @@ async def reconcile_pending_tasks():
                     continue
                 
                 # 1. 本地排队任务在重启前未成功派发给 RunningHub (本地临时 ID)
-                if t.get("status") == "QUEUED" and tid.startswith("task_"):
+                if (t.get("status") in ["QUEUED", "RUNNING"]) and tid.startswith("task_"):
                     print(f"[Reconcile] 本地排队任务 {tid} 在重启前未派发，执行自动退款与终态清理")
                     try:
                         db_atomic_cancel_and_refund(tid, reason="服务器重启维护，未派发排队任务自动退还算力")

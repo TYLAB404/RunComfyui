@@ -1072,7 +1072,7 @@
                         {{ wf.category || '通用' }}
                       </td>
                       <td class="py-3 px-3 font-mono text-amber-400">
-                        <div>{{ wf.pointsCost || 5 }} 点</div>
+                        <div>底价: {{ wf.pointsCost || 5 }} RC币</div>
                         <div v-if="wf.minPointsEnabled" class="text-[10px] text-amber-300 font-sans mt-0.5 flex items-center gap-1 font-bold">
                           <span>🛡️ 门槛: {{ wf.minPoints || 0 }} RC币</span>
                         </div>

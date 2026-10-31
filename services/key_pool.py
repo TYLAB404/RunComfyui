@@ -102,6 +102,7 @@ class KeyPoolManager:
                 st = self._states[key_id]
                 # 若指定了 task_id 且与当前锁定的任务不匹配，说明该 Key 已被新任务占用，防止旧任务 finally 误释放
                 if task_id and st.get("task_id") and str(st.get("task_id")) != str(task_id):
+                    print(f"[KeyPool Guard] Ignored release_key for {key_id}: task_id mismatch (busy with {st.get('task_id')}, caller gave {task_id})")
                     return
                 st["is_busy"] = False
                 st["task_id"] = None
