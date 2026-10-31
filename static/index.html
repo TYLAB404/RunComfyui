@@ -2027,7 +2027,7 @@
       </div>
 
       <!-- ================= TAB 4: 生成作品画廊 (现代化卡片架构) ================= -->
-      <div v-show="activeTab === 'gallery'" class="space-y-5">
+      <div v-show="activeTab === 'gallery'" class="space-y-5" id="gallery-section-top">
         <div class="flex items-center justify-between">
           <div>
             <div class="flex items-center gap-2">
@@ -2044,19 +2044,19 @@
           </button>
         </div>
 
-        <!-- 温馨提示：仅展示最近 50 条任务成果 & 及时保存提醒 -->
+        <!-- 温馨提示：仅展示最近 30 条任务成果 & 及时保存提醒（去除 RunningHub 字样） -->
         <div class="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-start sm:items-center gap-3 text-amber-300 text-xs shadow-sm">
           <i data-lucide="alert-triangle" class="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5 sm:mt-0"></i>
           <div class="flex-1 leading-relaxed">
-            <span class="font-bold">⚠️ 温馨提示：</span>画廊仅展示您<span class="font-semibold text-amber-200 underline underline-offset-2">最近 50 条任务</span>的生成成果。RunningHub 官方临时直链具有时效性，为防止原厂清理源文件导致链接失效，<span class="font-bold text-amber-100">请尽快点击卡片中的下载按钮保存您的满意成果！</span>
+            <span class="font-bold">温馨提示：</span>画廊仅展示您<span class="font-semibold text-amber-200 underline underline-offset-2">最近 30 条任务</span>的生成成果。云端算力临时直链具有时效性，为防止云端定期清理源文件导致链接失效，<span class="font-bold text-amber-100">请尽快点击卡片中的下载按钮保存您的满意成果！</span>
           </div>
         </div>
 
         <!-- 类似图二的现代轻量卡片架构 -->
-        <!-- 规范统一的现代化成果画廊网格 -->
+        <!-- 规范统一的现代化成果画廊网格（支持分页渲染，防止一次性加载多数据） -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div 
-            v-for="item in gallery" 
+            v-for="item in paginatedGallery" 
             :key="item.taskId + '_' + item.filename" 
             class="bg-slate-900/90 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 flex flex-col sm:flex-row gap-4 shadow-lg transition duration-200">
             
@@ -2166,6 +2166,40 @@
               </div>
             </div>
 
+          </div>
+        </div>
+
+        <!-- 用户画廊分页控制栏 -->
+        <div v-if="gallery.length > galleryPageSize" class="mt-5 flex flex-col sm:flex-row items-center justify-between gap-3 p-4 bg-slate-900/80 border border-slate-800 rounded-2xl text-xs text-slate-400 shadow-sm">
+          <div class="flex items-center gap-2">
+            <span>共 <strong class="text-white font-mono">{{ gallery.length }}</strong> 件作品 (来自最近 30 条任务)，当前第 <strong class="text-indigo-400 font-mono">{{ galleryPage }} / {{ galleryTotalPages }}</strong> 页</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button 
+              :disabled="galleryPage <= 1" 
+              @click="galleryPage = 1; scrollToGalleryTop()"
+              class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-200 transition cursor-pointer">首页</button>
+            <button 
+              :disabled="galleryPage <= 1" 
+              @click="galleryPage--; scrollToGalleryTop()"
+              class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-200 transition flex items-center gap-1 cursor-pointer">
+              <i data-lucide="chevron-left" class="w-3.5 h-3.5"></i>
+              <span>上一页</span>
+            </button>
+            <span class="px-3 py-1.5 rounded-xl bg-indigo-600/20 text-indigo-300 font-mono font-bold border border-indigo-500/30">
+              {{ galleryPage }} / {{ galleryTotalPages }}
+            </span>
+            <button 
+              :disabled="galleryPage >= galleryTotalPages" 
+              @click="galleryPage++; scrollToGalleryTop()"
+              class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-200 transition flex items-center gap-1 cursor-pointer">
+              <span>下一页</span>
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+            </button>
+            <button 
+              :disabled="galleryPage >= galleryTotalPages" 
+              @click="galleryPage = galleryTotalPages; scrollToGalleryTop()"
+              class="px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-30 disabled:pointer-events-none text-slate-200 transition cursor-pointer">末页</button>
           </div>
         </div>
 

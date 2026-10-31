@@ -15,8 +15,12 @@ router = APIRouter(tags=["Gallery"])
 
 
 @router.get("/api/gallery")
-def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
-    """获取专属画廊成果，限制仅展示最新 50 条任务的成果（严格保持 RunningHub 原始直链）"""
+def get_gallery(
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
+):
+    """获取专属画廊成果，限制仅展示最新 30 条任务的成果（严格保持官方原始直链，支持服务端分页）"""
     if current_user:
         user_id_str = str(current_user["id"])
         tasks = db_load_tasks(user_id=user_id_str, limit=500)
@@ -26,7 +30,7 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
 
     items = []
     seen = set()
-    MAX_TASKS = 50
+    MAX_TASKS = 30
     tasks_with_outputs_count = 0
 
     for t in tasks:
@@ -36,7 +40,7 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
         for out in t.get("outputs", []):
             if out.get("userHidden") or out.get("isTakedown"):
                 continue
-            # 用户端画廊严格保持 RunningHub 原始直链
+            # 用户端画廊严格保持官方原始直链
             url = out.get("remoteUrl") or out.get("url")
             if not url or url.startswith("data:"):
                 continue
@@ -47,7 +51,7 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
             seen.add(fp)
             valid_outs.append((out, fname, url))
 
-        # 仅当任务确实包含有效成果时，计入 50 条任务配额
+        # 仅当任务确实包含有效成果时，计入 30 条任务配额
         if not valid_outs:
             continue
 
@@ -81,6 +85,25 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
             })
 
     items.sort(key=lambda x: x["createdAt"], reverse=True)
+
+    # 若指定了分页参数，按分页结构返回
+    if page is not None and page_size is not None and page_size > 0:
+        import math
+        p = max(1, int(page))
+        ps = max(1, min(100, int(page_size)))
+        total_items = len(items)
+        total_pages = max(1, math.ceil(total_items / ps))
+        start = (p - 1) * ps
+        end = start + ps
+        return {
+            "items": items[start:end],
+            "total": total_items,
+            "page": p,
+            "pageSize": ps,
+            "totalPages": total_pages,
+            "taskCount": tasks_with_outputs_count
+        }
+
     return items
 
 

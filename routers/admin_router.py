@@ -523,9 +523,11 @@ def admin_get_gallery(
     file_type: Optional[str] = None,
     storage: Optional[str] = None,
     status: Optional[str] = None,
+    page: Optional[int] = None,
+    page_size: Optional[int] = None,
     _: Dict[str, Any] = Depends(get_current_admin),
 ):
-    """管理员全站画廊视图（支持按用户、媒体类型、存储介质、管控状态多维聚合筛选）"""
+    """管理员全站画廊视图（支持按用户、媒体类型、存储介质、管控状态多维聚合筛选与服务端分页）"""
     tasks = db_load_tasks(is_admin=True, limit=500)
     items = []
     seen = set()
@@ -594,6 +596,25 @@ def admin_get_gallery(
                 "workflowName": t.get("workflowName", ""),
             })
     items.sort(key=lambda x: x["createdAt"], reverse=True)
+    total_count = len(items)
+    unique_users = sorted(list({i["username"] for i in items if i.get("username")}))
+
+    if page is not None and page_size is not None and page_size > 0:
+        import math
+        p = max(1, int(page))
+        ps = max(1, min(100, int(page_size)))
+        start = (p - 1) * ps
+        end = start + ps
+        total_pages = max(1, math.ceil(total_count / ps))
+        return {
+            "items": items[start:end],
+            "total": total_count,
+            "page": p,
+            "pageSize": ps,
+            "totalPages": total_pages,
+            "allUsers": unique_users
+        }
+
     return items
 
 
