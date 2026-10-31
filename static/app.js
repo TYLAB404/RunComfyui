@@ -184,15 +184,41 @@ createApp({
     const workflows = ref([]);
     const selectedWorkflowId = ref('');
 
-    // 工作流市场/创作中心 过滤与分类状态
+    // 工作流市场/创作中心 过滤与全站分类状态
     const workflowSearch = ref('');
     const selectedWfCategory = ref('全部');
-    const workflowCategories = ref(['全部', '视频生成', '图像精绘', '声音音频', '画质增强']);
+    const rawCategories = ref(['文生图', '图生图', '视频生成', '声音音频', '画质增强', '其他']);
+    const workflowCategories = computed(() => ['全部', ...rawCategories.value]);
+
+    const getCategoryBadgeClass = (category) => {
+      switch (category) {
+        case '视频生成':
+        case 'AI视频':
+          return 'bg-purple-500/15 text-purple-300 border-purple-500/30';
+        case '文生图':
+          return 'bg-blue-500/15 text-blue-300 border-blue-500/30';
+        case '图生图':
+          return 'bg-teal-500/15 text-teal-300 border-teal-500/30';
+        case '图像精绘':
+        case '人像写真':
+          return 'bg-pink-500/15 text-pink-300 border-pink-500/30';
+        case '声音音频':
+        case '声音克隆':
+          return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30';
+        case '画质增强':
+        case '高清放大':
+          return 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+        case '官方预设':
+          return 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30';
+        default:
+          return 'bg-slate-800/80 text-slate-300 border-slate-700/60';
+      }
+    };
 
     const filteredWorkflows = computed(() => {
       let list = workflows.value || [];
       if (selectedWfCategory.value !== '全部') {
-        list = list.filter(w => (w.category || '视频生成') === selectedWfCategory.value);
+        list = list.filter(w => (w.category || '其他') === selectedWfCategory.value);
       }
       if (workflowSearch.value && workflowSearch.value.trim()) {
         const q = workflowSearch.value.trim().toLowerCase();
@@ -955,6 +981,9 @@ createApp({
         const res = await authFetch('/api/config');
         const data = await res.json();
         config.value = data;
+        if (data.workflowCategories && Array.isArray(data.workflowCategories)) {
+          rawCategories.value = data.workflowCategories;
+        }
         workflows.value = data.workflows || [];
         keys.value = data.keys || [];
         activeKeyId.value = data.activeKeyId || '';
@@ -2076,6 +2105,9 @@ createApp({
         const res = await fetch('/api/auth/public-config');
         if (res.ok) {
           publicConfig.value = await res.json();
+          if (publicConfig.value.workflowCategories && Array.isArray(publicConfig.value.workflowCategories)) {
+            rawCategories.value = publicConfig.value.workflowCategories;
+          }
         }
       } catch (err) {
         console.error('Failed to fetch public auth config:', err);
@@ -2660,6 +2692,8 @@ createApp({
       workflowSearch,
       selectedWfCategory,
       workflowCategories,
+      rawCategories,
+      getCategoryBadgeClass,
       filteredWorkflows,
       officialWorkflows,
       userWorkflows,

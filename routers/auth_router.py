@@ -136,7 +136,8 @@ def get_public_auth_config():
         "maintenance": sys_cfg.get("maintenance", {"enabled": False, "message": "系统维护中"}),
         "isFirstUser": get_user_count() == 0,
         "cdkeyPurchaseUrl": cdkey_url,
-        "cdkeyPurchaseText": sys_cfg.get("cdkeyPurchaseText", "前往爱发电购买卡密")
+        "cdkeyPurchaseText": sys_cfg.get("cdkeyPurchaseText", "前往爱发电购买卡密"),
+        "workflowCategories": sys_cfg.get("workflowCategories") or ["文生图", "图生图", "视频生成", "声音音频", "画质增强", "其他"]
     }
 
 @router.post("/api/auth/send-code")

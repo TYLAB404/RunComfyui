@@ -29,9 +29,11 @@ def get_config(current_user: Optional[Dict[str, Any]] = Depends(get_current_user
     active_key_str = get_active_api_key(cfg)
     is_admin = current_user and current_user.get("role") == "admin"
     
+    categories = cfg.get("system", {}).get("workflowCategories") or ["文生图", "图生图", "视频生成", "声音音频", "画质增强", "其他"]
     base_res = {
         "hasKey": bool(active_key_str),
         "workflows": filter_workflows_for_user(cfg.get("workflows", []), current_user),
+        "workflowCategories": categories,
         "system": get_system_config_safe(cfg) if is_admin else {
             "siteTitle": cfg.get("system", {}).get("siteTitle", "RunComfyui"),
             "allowRegistration": bool(cfg.get("system", {}).get("allowRegistration", True)),

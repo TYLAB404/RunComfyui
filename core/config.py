@@ -247,6 +247,8 @@ def get_system_config_safe(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, An
     imgbed_raw = decrypt_key(imgbed_enc) if imgbed_enc else ""
     sys_cfg["imgbedAuthHeaderMasked"] = mask_key(imgbed_raw) if imgbed_raw else ""
     sys_cfg["hasImgbedAuthHeader"] = bool(imgbed_raw)
+    if "workflowCategories" not in sys_cfg or not sys_cfg["workflowCategories"]:
+        sys_cfg["workflowCategories"] = ["文生图", "图生图", "视频生成", "声音音频", "画质增强", "其他"]
     return sys_cfg
 
 def get_imgbed_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

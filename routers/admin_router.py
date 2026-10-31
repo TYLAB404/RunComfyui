@@ -101,6 +101,17 @@ class AdminSystemConfigRequest(BaseModel):
     minBalanceRequired: Optional[float] = None
     cdkeyPurchaseUrl: Optional[str] = None
     cdkeyPurchaseText: Optional[str] = None
+    workflowCategories: Optional[List[str]] = None
+
+
+class CategoryActionRequest(BaseModel):
+    name: Optional[str] = None
+    categories: Optional[List[str]] = None
+
+
+class AdminPricingRequest(BaseModel):
+    standardRate: Optional[float] = None
+    plusRate: Optional[float] = None
 
 
 class AnnouncementCreateRequest(BaseModel):
@@ -385,10 +396,95 @@ def admin_update_system_config(
     if req.cdkeyPurchaseText is not None:
         sys_cfg["cdkeyPurchaseText"] = req.cdkeyPurchaseText.strip()
 
+    if req.workflowCategories is not None:
+        cleaned_cats = []
+        for c in req.workflowCategories:
+            c_str = str(c).strip()
+            if c_str and c_str not in cleaned_cats:
+                cleaned_cats.append(c_str)
+        if cleaned_cats:
+            sys_cfg["workflowCategories"] = cleaned_cats
+
     save_config(cfg)
     safe_data = get_system_config_safe(cfg)
     safe_data["status"] = "ok"
     return safe_data
+
+
+DEFAULT_WORKFLOW_CATEGORIES = ["文生图", "图生图", "视频生成", "声音音频", "画质增强", "其他"]
+
+@router.get("/api/admin/workflow-categories")
+def get_admin_workflow_categories(_: Dict[str, Any] = Depends(get_current_admin)):
+    """获取管理后台与前台共享的全站工作流分类列表"""
+    cfg = load_config()
+    sys_cfg = cfg.get("system", {})
+    cats = sys_cfg.get("workflowCategories")
+    if not cats or not isinstance(cats, list):
+        cats = list(DEFAULT_WORKFLOW_CATEGORIES)
+    return {"categories": cats}
+
+
+@router.post("/api/admin/workflow-categories")
+def add_admin_workflow_category(req: CategoryActionRequest, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员添加新工作流分类或批量重设分类"""
+    cfg = load_config()
+    sys_cfg = cfg.setdefault("system", {})
+    cats = sys_cfg.get("workflowCategories")
+    if not cats or not isinstance(cats, list):
+        cats = list(DEFAULT_WORKFLOW_CATEGORIES)
+    
+    if req.categories is not None:
+        new_list = []
+        for c in req.categories:
+            c_str = str(c).strip()
+            if c_str and c_str not in new_list:
+                new_list.append(c_str)
+        sys_cfg["workflowCategories"] = new_list if new_list else list(DEFAULT_WORKFLOW_CATEGORIES)
+    elif req.name:
+        name = str(req.name).strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="分类名称不能为空")
+        if name not in cats:
+            cats.append(name)
+        sys_cfg["workflowCategories"] = cats
+    else:
+        raise HTTPException(status_code=400, detail="请提供要添加的分类名称")
+    
+    save_config(cfg)
+    return {"status": "ok", "categories": sys_cfg["workflowCategories"]}
+
+
+@router.delete("/api/admin/workflow-categories/{cat_name}")
+def delete_admin_workflow_category(cat_name: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员删除指定工作流分类"""
+    cfg = load_config()
+    sys_cfg = cfg.setdefault("system", {})
+    cats = sys_cfg.get("workflowCategories")
+    if not cats or not isinstance(cats, list):
+        cats = list(DEFAULT_WORKFLOW_CATEGORIES)
+    
+    target = str(cat_name).strip()
+    if target in cats:
+        cats = [c for c in cats if c != target]
+    if not cats:
+        cats = ["其他"]
+    sys_cfg["workflowCategories"] = cats
+    save_config(cfg)
+    return {"status": "ok", "categories": cats}
+
+
+@router.put("/api/admin/pricing")
+def update_admin_pricing(req: AdminPricingRequest, _: Dict[str, Any] = Depends(get_current_admin)):
+    """工作流页面中统一微调 Standard 与 Plus 算力实时计费费率"""
+    cfg = load_config()
+    sys_cfg = cfg.setdefault("system", {})
+    pricing_cfg = sys_cfg.setdefault("pricing", {})
+    if req.standardRate is not None:
+        pricing_cfg["standardRate"] = max(0.01, round(float(req.standardRate), 3))
+    if req.plusRate is not None:
+        pricing_cfg["plusRate"] = max(0.01, round(float(req.plusRate), 3))
+    save_config(cfg)
+    return {"status": "ok", "pricing": pricing_cfg}
 
 
 # ==================== 4. 公告与通知 ====================
