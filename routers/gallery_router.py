@@ -16,16 +16,19 @@ router = APIRouter(tags=["Gallery"])
 
 @router.get("/api/gallery")
 def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
-    """获取专属成果画廊（包含完整元信息，严格过滤用户已删除和管理员已下架的作品）"""
+    """获取专属画廊成果，限制仅展示最新 50 条任务的成果（严格保持 RunningHub 原始直链）"""
     if current_user:
         user_id_str = str(current_user["id"])
         tasks = db_load_tasks(user_id=user_id_str, limit=500)
     else:
-        all_tasks = db_load_tasks(limit=100)
+        all_tasks = db_load_tasks(limit=200)
         tasks = [t for t in all_tasks if not t.get("userId")]
 
     items = []
     seen = set()
+    MAX_TASKS = 50
+    tasks_with_outputs_count = 0
+
     for t in tasks:
         created_at = t.get("createdAt", int(time.time()))
         task_id = t.get("taskId")
@@ -33,7 +36,8 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
         for out in t.get("outputs", []):
             if out.get("userHidden") or out.get("isTakedown"):
                 continue
-            url = out.get("url") or out.get("remoteUrl")
+            # 用户端画廊严格保持 RunningHub 原始直链
+            url = out.get("remoteUrl") or out.get("url")
             if not url or url.startswith("data:"):
                 continue
             fname = out.get("filename") or os.path.basename(url.split("?")[0])
@@ -42,6 +46,14 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
                 continue
             seen.add(fp)
             valid_outs.append((out, fname, url))
+
+        # 仅当任务确实包含有效成果时，计入 50 条任务配额
+        if not valid_outs:
+            continue
+
+        tasks_with_outputs_count += 1
+        if tasks_with_outputs_count > MAX_TASKS:
+            break
 
         batch_total = len(valid_outs)
         for idx, (out, fname, url) in enumerate(valid_outs):
@@ -67,6 +79,7 @@ def get_gallery(current_user: Optional[Dict[str, Any]] = Depends(get_current_use
                 "cost": int(t.get("cost", 0) or 0),
                 "consumeCoins": t.get("consumeCoins", "0")
             })
+
     items.sort(key=lambda x: x["createdAt"], reverse=True)
     return items
 
