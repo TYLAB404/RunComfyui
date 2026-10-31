@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>RunComfyui - 极速云端工作流创作平台</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -285,7 +285,7 @@
     </header>
 
     <!-- 移动端底部高灵敏悬浮导航栏 (解决手机端屏幕挤压错位) -->
-    <nav class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 flex items-center justify-around py-2 px-1 shadow-2xl">
+    <nav class="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-slate-900/95 backdrop-blur-xl border-t border-slate-800 flex items-center justify-around py-2 px-1 pb-[max(0.5rem,env(safe-area-inset-bottom))] shadow-2xl">
       <button 
         @click="switchTab('workflows')" 
         :class="activeTab === 'workflows' ? 'text-indigo-400 font-bold' : 'text-slate-400'"
@@ -1035,28 +1035,34 @@
               </div>
             </div>
 
-            <!-- 画布视口主容器 (支持鼠标平移、滚轮缩放、节点拖拽) -->
+            <!-- 画布视口主容器 (支持鼠标/触控单指平移、双指捏合缩放、节点拖拽) -->
             <div 
               id="workflowCanvas"
               ref="canvasViewport"
               class="relative w-full rounded-2xl border border-slate-800 overflow-hidden select-none cursor-grab active:cursor-grabbing shadow-inner"
-              :class="canvasExpanded ? 'h-[750px]' : 'h-[600px]'"
-              style="background-color: #0b0f19; background-image: radial-gradient(circle, rgba(148, 163, 184, 0.15) 1px, transparent 1px); background-size: 24px 24px;"
+              :class="canvasExpanded ? 'h-[750px]' : 'h-[460px] sm:h-[600px]'"
+              style="background-color: #0b0f19; background-image: radial-gradient(circle, rgba(148, 163, 184, 0.15) 1px, transparent 1px); background-size: 24px 24px; touch-action: none;"
               @mousedown="onCanvasMouseDown"
               @mousemove="onCanvasMouseMove"
               @mouseup="onCanvasMouseUp"
               @mouseleave="onCanvasMouseUp"
-              @wheel.prevent="onCanvasWheel">
+              @wheel.prevent="onCanvasWheel"
+              @touchstart="onCanvasTouchStart"
+              @touchmove="onCanvasTouchMove"
+              @touchend="onCanvasTouchEnd"
+              @touchcancel="onCanvasTouchEnd">
               
-              <!-- 快捷交互提示胶囊 -->
-              <div class="absolute bottom-3 left-3 z-10 pointer-events-none flex items-center gap-2 text-[10px] text-slate-400 bg-slate-950/80 px-2.5 py-1 rounded-lg border border-slate-800/80 backdrop-blur-sm">
-                <span>🖱️ 背景拖拽平移</span>
-                <span>•</span>
-                <span>滚轮自由缩放</span>
-                <span>•</span>
-                <span>把手拖拽移动节点</span>
-                <span>•</span>
-                <span>修改直接实时生效</span>
+              <!-- 快捷交互提示胶囊 (移动端友好) -->
+              <div class="absolute bottom-3 left-3 z-10 pointer-events-none flex items-center gap-1.5 sm:gap-2 text-[10px] text-slate-400 bg-slate-950/85 px-2.5 py-1 rounded-lg border border-slate-800/80 backdrop-blur-sm">
+                <span class="sm:hidden">👆 单指平移 · 双指缩放</span>
+                <span class="hidden sm:inline">🖱️ 背景拖拽平移 • 滚轮自由缩放 • 把手移动节点</span>
+              </div>
+
+              <!-- 移动端画布快速缩放复位浮钮 -->
+              <div class="sm:hidden absolute top-3 right-3 z-20 flex items-center gap-1.5 bg-slate-900/90 border border-slate-700/80 p-1 rounded-xl shadow-xl backdrop-blur-md">
+                <button type="button" @click.stop="zoomIn" class="w-7 h-7 rounded-lg bg-slate-800 text-white flex items-center justify-center text-xs font-bold active:scale-95">+</button>
+                <button type="button" @click.stop="zoomOut" class="w-7 h-7 rounded-lg bg-slate-800 text-white flex items-center justify-center text-xs font-bold active:scale-95">-</button>
+                <button type="button" @click.stop="zoomFit" class="px-2 h-7 rounded-lg bg-indigo-600/80 text-white flex items-center justify-center text-[10px] font-semibold active:scale-95">居中</button>
               </div>
 
               <!-- 宽屏展开模式下的悬浮立即运行底栏 -->
@@ -1137,7 +1143,8 @@
                     transform: `translate(${node.x}px, ${node.y}px)`,
                     width: (node.width || 300) + 'px'
                   }"
-                  @mousedown="e => onNodeMouseDown(e, node)">
+                  @mousedown="e => onNodeMouseDown(e, node)"
+                  @touchstart.stop="e => onNodeTouchStart(e, node)">
                   
                   <!-- 节点标题栏 (抓取移动把手) -->
                   <div 
@@ -2389,25 +2396,68 @@
       </div>
     </div>
 
-    <!-- 灯箱 (Lightbox) 放大弹窗 (双轨支持视频播放与图像放大) -->
-    <div v-if="lightboxUrl" class="fixed inset-0 z-50 bg-black/90 flex items-center justify-center p-4" @click.self="lightboxUrl = null; lightboxItem = null">
-      <div v-if="lightboxItem && lightboxItem.batchTotal > 1" class="absolute top-4 left-4 bg-purple-950/80 border border-purple-500/40 text-purple-200 px-3.5 py-1.5 rounded-full text-xs font-mono font-bold shadow-lg backdrop-blur-md flex items-center gap-2">
-        <span class="w-2 h-2 rounded-full bg-purple-400"></span>
-        <span>同组成果 · {{ lightboxItem.batchIndex }} / {{ lightboxItem.batchTotal }}</span>
+    <!-- 灯箱 (Lightbox) 放大弹窗 (双轨支持视频播放与图像放大，极致移动端与安全区适配) -->
+    <div 
+      v-if="lightboxUrl" 
+      class="fixed inset-0 z-[999] bg-black/95 backdrop-blur-md flex flex-col justify-between select-none overflow-hidden" 
+      @click.self="closeLightbox">
+      
+      <!-- 顶部控制与信息栏 (安全区顶部 padding) -->
+      <div class="w-full flex items-center justify-between px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))] z-50 bg-gradient-to-b from-black/90 via-black/50 to-transparent pointer-events-none">
+        <div class="pointer-events-auto flex items-center gap-2">
+          <div v-if="lightboxItem && lightboxItem.batchTotal > 1" class="bg-purple-950/80 border border-purple-500/40 text-purple-200 px-3 py-1 rounded-full text-xs font-mono font-bold shadow-lg backdrop-blur-md flex items-center gap-1.5">
+            <span class="w-2 h-2 rounded-full bg-purple-400"></span>
+            <span>同组 · {{ lightboxItem.batchIndex }} / {{ lightboxItem.batchTotal }}</span>
+          </div>
+          <div v-else class="text-[11px] text-slate-400 font-mono hidden sm:block">
+            <span>支持触控放大 / 轻触背景关闭</span>
+          </div>
+        </div>
+
+        <!-- 显眼易点击的圆形高触达率关闭按钮 (绝不被刘海或状态栏遮挡) -->
+        <button 
+          type="button"
+          @click="closeLightbox" 
+          aria-label="关闭预览"
+          class="pointer-events-auto w-10 h-10 rounded-full bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-white flex items-center justify-center text-lg font-bold shadow-2xl active:scale-90 transition cursor-pointer">
+          ✕
+        </button>
       </div>
-      <video 
-        v-if="isVideoUrl(lightboxUrl)" 
-        :src="lightboxUrl" 
-        controls 
-        autoplay 
-        loop 
-        playsinline 
-        class="max-w-full max-h-full rounded-lg shadow-2xl bg-black"></video>
-      <img 
-        v-else 
-        :src="lightboxUrl" 
-        class="max-w-full max-h-full object-contain rounded-lg shadow-2xl">
-      <button class="absolute top-4 right-4 text-white text-2xl font-bold p-2 hover:text-slate-300" @click="lightboxUrl = null; lightboxItem = null">✕</button>
+
+      <!-- 中部高清媒体显示区 (严格限制视口高宽，杜绝撑爆屏幕或遮挡关闭按钮) -->
+      <div 
+        class="flex-1 flex items-center justify-center p-3 sm:p-6 min-h-0 w-full overflow-hidden cursor-zoom-out" 
+        @click.self="closeLightbox">
+        <video 
+          v-if="isVideoUrl(lightboxUrl)" 
+          :src="lightboxUrl" 
+          controls 
+          autoplay 
+          loop 
+          playsinline 
+          class="max-w-[94vw] max-h-[72dvh] sm:max-h-[82vh] rounded-2xl shadow-2xl bg-black object-contain"></video>
+        <img 
+          v-else 
+          :src="lightboxUrl" 
+          class="max-w-[94vw] max-h-[72dvh] sm:max-h-[82vh] object-contain rounded-2xl shadow-2xl transition-transform">
+      </div>
+
+      <!-- 底部操作栏 (安全区底部 padding，在手机底端拇指最舒适位置提供显眼关闭与保存入口) -->
+      <div class="w-full flex items-center justify-center gap-3 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] z-50 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
+        <a 
+          :href="lightboxUrl" 
+          target="_blank" 
+          download 
+          class="px-4 py-2 rounded-full bg-slate-900/90 border border-slate-700 hover:bg-slate-800 text-xs font-semibold text-slate-200 hover:text-white shadow-lg backdrop-blur-md flex items-center gap-1.5 active:scale-95 transition">
+          <span>⬇️</span> <span>保存原图</span>
+        </a>
+        <button 
+          type="button"
+          @click="closeLightbox" 
+          class="px-5 py-2 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/30 flex items-center gap-1 active:scale-95 transition">
+          <span>✕ 关闭预览</span>
+        </button>
+      </div>
     </div>
 
     <!-- 添加工作流 Modal 弹窗 -->
