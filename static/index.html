@@ -559,6 +559,9 @@
                     v-model="nodeOverrides[m.nodeId][m.fieldName]"
                     @change="m.currentValue = nodeOverrides[m.nodeId][m.fieldName]"
                     class="w-full bg-slate-900 border border-slate-700 hover:border-indigo-500 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-indigo-100 font-mono focus:outline-none transition appearance-none pr-8">
+                    <option v-if="!m.options || m.options.length === 0" :value="m.defaultValue">
+                      ⭐ {{ m.defaultValue }} (预设原版)
+                    </option>
                     <option v-for="opt in m.options" :key="opt" :value="opt">
                       {{ opt === m.defaultValue ? '⭐ ' + opt + ' (预设原版)' : opt }}
                     </option>
