@@ -854,23 +854,43 @@ createApp({
         });
       }
 
+      // 保证所有动态模型槽位的字段在 overrides 和 defaults 中均有有效默认值
+      (data.dynamicSchema.modelNodes || []).forEach(m => {
+        const nid = String(m.nodeId);
+        if (!overrides[nid]) overrides[nid] = {};
+        if (overrides[nid][m.fieldName] === undefined || overrides[nid][m.fieldName] === null) {
+          overrides[nid][m.fieldName] = m.defaultValue;
+        }
+        if (!defaults[nid]) defaults[nid] = {};
+        if (defaults[nid][m.fieldName] === undefined || defaults[nid][m.fieldName] === null) {
+          defaults[nid][m.fieldName] = m.defaultValue;
+        }
+      });
+
       nodeOverrides.value = overrides;
       originalDefaults.value = defaults;
       allEditableNodes.value = data.dynamicSchema.allEditableNodes || [];
 
       // 0. 动态基底与模型版本 (Model Selection)
-      dynamicModels.value = (data.dynamicSchema.modelNodes || []).map(m => ({
-        nodeId: m.nodeId,
-        class_type: m.class_type,
-        category: m.category,
-        categoryLabel: m.categoryLabel || m.category,
-        nodeTitle: m.nodeTitle,
-        fieldName: m.fieldName,
-        defaultValue: m.defaultValue,
-        currentValue: m.defaultValue,
-        options: m.options || [],
-        manualInput: false
-      }));
+      dynamicModels.value = (data.dynamicSchema.modelNodes || []).map(m => {
+        let opts = Array.isArray(m.options) ? [...m.options] : [];
+        const defVal = m.defaultValue ? String(m.defaultValue).trim() : '';
+        if (defVal && !opts.includes(defVal)) {
+          opts.unshift(defVal);
+        }
+        return {
+          nodeId: m.nodeId,
+          class_type: m.class_type,
+          category: m.category,
+          categoryLabel: m.categoryLabel || m.category,
+          nodeTitle: m.nodeTitle,
+          fieldName: m.fieldName,
+          defaultValue: m.defaultValue,
+          currentValue: overrides[String(m.nodeId)]?.[m.fieldName] ?? m.defaultValue,
+          options: opts,
+          manualInput: false
+        };
+      });
 
       // 1. 动态生成提示词绑定表单
       dynamicPrompts.value = (data.dynamicSchema.promptNodes || []).map(p => ({

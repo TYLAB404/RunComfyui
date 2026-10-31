@@ -3,7 +3,7 @@ import json
 import time
 import requests
 from typing import Dict, Any, Optional, List, Tuple, Set
-from core.config import DATA_DIR, RUNNINGHUB_API_URL
+from core.config import DATA_DIR, RUNNINGHUB_API_URL, load_config, get_active_api_key
 from core.http_client import HTTP_SESSION
 
 OBJECT_INFO_CACHE_PATH = os.path.join(DATA_DIR, "object_info_cache.json")
@@ -142,9 +142,13 @@ def get_field_options_and_category(
                     candidates.append(item)
                     merged_set.add(item)
 
-    # 4. 如果既不是预定义分类，当前节点也没有枚举选项，则该字段不是下拉选项
+    # 4. 如果既不是预定义分类，当前节点也没有枚举选项
     if not candidates:
-        return [], category, CATEGORY_LABELS.get(category) if category else None
+        cv_str = str(current_value).strip() if current_value is not None else ""
+        if category in IS_MODEL_CATEGORY and cv_str and cv_str.lower() not in ("none", "(none)"):
+            candidates = [cv_str]
+        else:
+            return [], category, CATEGORY_LABELS.get(category) if category else None
 
     # 5. 确保 current_value 始终位于候选项列表的第 0 位（默认选中且不丢失当前配置）
     cv_str = str(current_value).strip() if current_value is not None else ""
@@ -156,47 +160,61 @@ def get_field_options_and_category(
 
     return candidates, category, CATEGORY_LABELS.get(category) if category else None
 
-def get_cached_object_info(api_key: str) -> Dict[str, Any]:
+def get_cached_object_info(api_key: str = "") -> Dict[str, Any]:
     """
     获取或缓存 RunningHub 云端全部节点的完整定义（19800+ 节点定义）
     用于在用户上传普通 Web 画布格式工作流时，自动将其无缝编译为标准的 ComfyUI API Prompt 格式
     """
     global _MEMORY_OBJECT_INFO
-    if _MEMORY_OBJECT_INFO is not None:
+    if _MEMORY_OBJECT_INFO is not None and len(_MEMORY_OBJECT_INFO) > 50:
         return _MEMORY_OBJECT_INFO
 
-    # 1. 尝试从本地磁盘缓存加载
+    # 1. 尝试从本地磁盘缓存加载（永久兜底保证 19800+ 节点定义绝不丢失）
+    disk_data = None
     if os.path.exists(OBJECT_INFO_CACHE_PATH):
         try:
-            mtime = os.path.getmtime(OBJECT_INFO_CACHE_PATH)
-            # 7天内缓存有效
-            if time.time() - mtime < 86400 * 7:
-                with open(OBJECT_INFO_CACHE_PATH, "r", encoding="utf-8") as f:
-                    _MEMORY_OBJECT_INFO = json.load(f)
-                    return _MEMORY_OBJECT_INFO
+            with open(OBJECT_INFO_CACHE_PATH, "r", encoding="utf-8") as f:
+                disk_data = json.load(f)
+                if isinstance(disk_data, dict) and len(disk_data) > 50:
+                    _MEMORY_OBJECT_INFO = disk_data
+                    # 30天内缓存视为新鲜，直接返回
+                    mtime = os.path.getmtime(OBJECT_INFO_CACHE_PATH)
+                    if time.time() - mtime < 86400 * 30:
+                        return _MEMORY_OBJECT_INFO
+        except Exception as e:
+            print(f"[WorkflowService] Warning loading object_info_cache: {e}")
+
+    # 2. 如果未指定 key，自动从系统配置中提取活跃 API Key
+    if not api_key:
+        try:
+            cfg = load_config()
+            api_key = get_active_api_key(cfg)
         except Exception:
             pass
 
-    # 2. 从云端 proxy 获取
-    if not api_key:
-        return {}
+    # 3. 若有 key，尝试从云端代理获取最新拓扑并刷新磁盘缓存
+    if api_key:
+        for host in ["www.runninghub.cn", "www.runninghub.ai"]:
+            try:
+                url = f"https://{host}/proxy/{api_key}/object_info"
+                res = HTTP_SESSION.get(url, timeout=12)
+                if res.status_code == 200:
+                    data = res.json()
+                    if isinstance(data, dict) and len(data) > 50:
+                        _MEMORY_OBJECT_INFO = data
+                        try:
+                            with open(OBJECT_INFO_CACHE_PATH, "w", encoding="utf-8") as f:
+                                json.dump(data, f, ensure_ascii=False)
+                        except Exception:
+                            pass
+                        return _MEMORY_OBJECT_INFO
+            except Exception:
+                continue
 
-    for host in ["www.runninghub.cn", "www.runninghub.ai"]:
-        try:
-            url = f"https://{host}/proxy/{api_key}/object_info"
-            res = HTTP_SESSION.get(url, timeout=12)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, dict) and len(data) > 50:
-                    _MEMORY_OBJECT_INFO = data
-                    try:
-                        with open(OBJECT_INFO_CACHE_PATH, "w", encoding="utf-8") as f:
-                            json.dump(data, f, ensure_ascii=False)
-                    except Exception:
-                        pass
-                    return _MEMORY_OBJECT_INFO
-        except Exception:
-            continue
+    # 4. 若云端获取失败（无网络/无Key/超时），只要本地存在磁盘缓存就必须降级复用，杜绝返回空字典！
+    if disk_data and isinstance(disk_data, dict) and len(disk_data) > 50:
+        _MEMORY_OBJECT_INFO = disk_data
+        return _MEMORY_OBJECT_INFO
 
     return _MEMORY_OBJECT_INFO or {}
 
