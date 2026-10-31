@@ -97,6 +97,7 @@ def init_database():
         """)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email_unique ON users (LOWER(email)) WHERE email != '' AND email IS NOT NULL;")
 
         # 2. 任务表 (Tasks) - 支持持久化与多租户审计
         cursor.execute("""
