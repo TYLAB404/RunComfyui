@@ -99,6 +99,8 @@ class AdminSystemConfigRequest(BaseModel):
     standardRate: Optional[float] = None
     plusRate: Optional[float] = None
     minBalanceRequired: Optional[float] = None
+    cdkeyPurchaseUrl: Optional[str] = None
+    cdkeyPurchaseText: Optional[str] = None
 
 
 class AnnouncementCreateRequest(BaseModel):
@@ -374,6 +376,11 @@ def admin_update_system_config(
         pricing_cfg["plusRate"] = max(0.01, round(float(req.plusRate), 3))
     if req.minBalanceRequired is not None:
         pricing_cfg["minBalanceRequired"] = max(0.0, round(float(req.minBalanceRequired), 2))
+
+    if req.cdkeyPurchaseUrl is not None:
+        sys_cfg["cdkeyPurchaseUrl"] = req.cdkeyPurchaseUrl.strip()
+    if req.cdkeyPurchaseText is not None:
+        sys_cfg["cdkeyPurchaseText"] = req.cdkeyPurchaseText.strip()
 
     save_config(cfg)
     safe_data = get_system_config_safe(cfg)

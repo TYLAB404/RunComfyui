@@ -121,7 +121,7 @@ def get_public_auth_config():
     sys_cfg = cfg.get("system", {})
     smtp_enabled = bool(sys_cfg.get("smtp", {}).get("enabled", False))
     return {
-        "siteTitle": sys_cfg.get("siteTitle", "RunningHub 智能调度中心"),
+        "siteTitle": sys_cfg.get("siteTitle", "RunComfyui 智能创作平台"),
         "turnstileEnabled": bool(sys_cfg.get("turnstileEnabled", False)),
         "turnstileSiteKey": sys_cfg.get("turnstileSiteKey", ""),
         "allowRegistration": bool(sys_cfg.get("allowRegistration", True)),
@@ -129,7 +129,9 @@ def get_public_auth_config():
         "emailVerifyEnabled": smtp_enabled,
         "broadcast": sys_cfg.get("broadcast", {"enabled": False, "message": "", "level": "info"}),
         "maintenance": sys_cfg.get("maintenance", {"enabled": False, "message": "系统维护中"}),
-        "isFirstUser": get_user_count() == 0
+        "isFirstUser": get_user_count() == 0,
+        "cdkeyPurchaseUrl": sys_cfg.get("cdkeyPurchaseUrl", ""),
+        "cdkeyPurchaseText": sys_cfg.get("cdkeyPurchaseText", "前往爱发电购买卡密")
     }
 
 @router.post("/api/auth/send-code")

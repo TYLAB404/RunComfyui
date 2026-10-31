@@ -824,6 +824,43 @@
                   </div>
                 </div>
 
+                <!-- 卡密购买/赞助外链配置 -->
+                <div class="pt-4 border-t border-slate-800 space-y-3">
+                  <div>
+                    <h4 class="text-xs font-bold text-white flex items-center gap-2">
+                      <span class="text-pink-400">⚡</span>
+                      <span>前台卡密购买 / 赞助外链设置</span>
+                    </h4>
+                    <p class="text-[11px] text-slate-400 mt-0.5">用户在卡密兑换弹窗可点击直接跳转至爱发电或发卡网购买卡密；若链接留空则前台自动隐藏按钮</p>
+                  </div>
+
+                  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label class="block text-xs font-medium text-slate-300 mb-1">
+                        跳转目标链接 (URL)
+                      </label>
+                      <input 
+                        type="text" 
+                        v-model="systemConfig.cdkeyPurchaseUrl" 
+                        placeholder="例如: https://afdian.com/a/yourname"
+                        class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs font-mono text-pink-300 focus:outline-none focus:border-pink-500 placeholder:text-slate-600">
+                      <p class="text-[10px] text-slate-500 mt-1">留空时前台兑换弹窗不显示跳转入口</p>
+                    </div>
+
+                    <div>
+                      <label class="block text-xs font-medium text-slate-300 mb-1">
+                        按钮引导文案
+                      </label>
+                      <input 
+                        type="text" 
+                        v-model="systemConfig.cdkeyPurchaseText" 
+                        placeholder="前往爱发电购买卡密"
+                        class="w-full bg-slate-900 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white focus:outline-none focus:border-pink-500 placeholder:text-slate-600">
+                      <p class="text-[10px] text-slate-500 mt-1">默认文案: 前往爱发电购买卡密</p>
+                    </div>
+                  </div>
+                </div>
+
                 <div class="pt-2">
                   <button 
                     @click="saveSystemSettings" 
@@ -1311,6 +1348,43 @@
                 <div class="text-[11px] text-slate-400 font-medium">已作废卡密数</div>
                 <div class="text-2xl font-bold text-rose-400 mt-1 font-mono">{{ cdkeyStats.voidCount || 0 }} <span class="text-xs text-slate-500 font-sans">张</span></div>
                 <div class="text-[10px] text-slate-500 mt-1">已被管理员拉黑失效</div>
+              </div>
+            </div>
+
+            <!-- ⚡ 卡密在线购买与赞助跳转外链设置 (如爱发电 / 个人发卡网) -->
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-4 flex flex-col lg:flex-row items-center justify-between gap-4">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-pink-500/20 to-purple-500/20 border border-pink-500/30 flex items-center justify-center text-pink-400 text-lg flex-shrink-0">
+                  ⚡
+                </div>
+                <div>
+                  <div class="text-xs font-bold text-white flex items-center gap-2">
+                    <span>前台卡密获取/购买跳转外链 (如爱发电、发卡网)</span>
+                    <span v-if="systemConfig.cdkeyPurchaseUrl" class="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded-full font-semibold">已启用前台跳转</span>
+                    <span v-else class="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full">未配置 (前台兑换弹窗隐藏)</span>
+                  </div>
+                  <p class="text-[11px] text-slate-400 mt-0.5">配置后将在前台【卡密核销兑换】弹窗展示高转化率赞助购买外链；留空则自动隐藏。</p>
+                </div>
+              </div>
+
+              <div class="flex flex-col sm:flex-row items-center gap-2 w-full lg:w-auto">
+                <input 
+                  type="text" 
+                  v-model="systemConfig.cdkeyPurchaseUrl" 
+                  placeholder="跳转链接 (如: https://afdian.com/a/yourname)" 
+                  class="w-full sm:w-80 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-pink-500 placeholder:text-slate-600 font-mono">
+                <input 
+                  type="text" 
+                  v-model="systemConfig.cdkeyPurchaseText" 
+                  placeholder="按钮文字 (如: 前往爱发电购买卡密)" 
+                  class="w-full sm:w-48 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-pink-500 placeholder:text-slate-600">
+                <button 
+                  @click="saveSystemSettings" 
+                  :disabled="savingSettings" 
+                  class="px-4 py-2 rounded-xl bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white text-xs font-semibold shadow-md shadow-pink-600/25 transition active:scale-95 flex-shrink-0 flex items-center gap-1.5">
+                  <span v-if="savingSettings" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                  <span>保存外链设置</span>
+                </button>
               </div>
             </div>
 
@@ -2980,6 +3054,8 @@
           turnstileSecretKeyMasked: '',
           defaultUserPoints: 100,
           hideAuxiliaryAudioChain: true,
+          cdkeyPurchaseUrl: '',
+          cdkeyPurchaseText: '前往爱发电购买卡密',
           pricing: {
             standardRate: 0.2,
             plusRate: 0.4,
