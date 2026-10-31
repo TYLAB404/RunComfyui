@@ -219,6 +219,12 @@ def save_config(cfg: Dict[str, Any]):
 
 def get_active_api_key(cfg: Optional[Dict[str, Any]] = None) -> str:
     from core.security import decrypt_key
+    
+    # 优先环境变量直接注入 (方便生产容器/云服务器直接配置 RUNNINGHUB_API_KEY)
+    env_key = os.getenv("RUNNINGHUB_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
     if cfg is None:
         cfg = load_config()
     active_id = cfg.get("activeKeyId")
@@ -227,10 +233,14 @@ def get_active_api_key(cfg: Optional[Dict[str, Any]] = None) -> str:
             raw = decrypt_key(item.get("keyEncrypted", ""))
             if raw:
                 return raw
+            if item.get("key"):
+                return str(item.get("key")).strip()
     for item in cfg.get("apiKeys", []):
         raw = decrypt_key(item.get("keyEncrypted", ""))
         if raw:
             return raw
+        if item.get("key"):
+            return str(item.get("key")).strip()
     return ""
 
 def get_system_config_safe(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

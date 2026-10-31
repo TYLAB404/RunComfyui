@@ -1175,13 +1175,15 @@ createApp({
           body: JSON.stringify({ workflowId: wfId })
         });
         const data = await res.json();
-        if (data.status === 'ok') {
+        if (res.ok && data.status === 'ok') {
           applyParsedSchema(data);
         } else {
           console.warn('获取工作流节点结构失败:', data);
+          showToastNotification(data.detail || '未能获取该工作流节点参数，请检查平台 API Key', 'error');
         }
       } catch (err) {
         console.error('拉取工作流节点失败:', err);
+        showToastNotification('网络异常，未能连接到工作流解析服务', 'error');
       } finally {
         isLoadingSchema.value = false;
       }
