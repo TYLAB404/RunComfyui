@@ -4,12 +4,27 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>RunComfyui - 极速云端工作流创作平台</title>
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Vue 3 -->
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-  <!-- Lucide Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- Local Tailwind with fallback -->
+  <script src="/vendor/tailwind.js"></script>
+  <script>
+    if (!window.tailwind) {
+      document.write('<script src="https://cdn.tailwindcss.com"><\/script>');
+    }
+  </script>
+  <!-- Local Vue 3 with fallback -->
+  <script src="/vendor/vue.global.prod.js"></script>
+  <script>
+    if (!window.Vue) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"><\/script>');
+    }
+  </script>
+  <!-- Local Lucide with fallback -->
+  <script src="/vendor/lucide.min.js"></script>
+  <script>
+    if (!window.lucide) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/lucide@latest"><\/script>');
+    }
+  </script>
   <!-- Cloudflare Turnstile 人机安全验证 -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <script>
@@ -21,6 +36,14 @@
   <link rel="stylesheet" href="/style.css">
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col font-sans selection:bg-indigo-500 selection:text-white antialiased">
+  <!-- 优雅启动加载屏 (彻底解决网络/CDN波动导致的黑色空屏) -->
+  <div id="app-preloader" class="fixed inset-0 z-[9999] flex flex-col items-center justify-center bg-slate-950 transition-opacity duration-300">
+    <div class="relative flex items-center justify-center">
+      <div class="w-12 h-12 rounded-full border-2 border-indigo-500/20 border-t-indigo-500 animate-spin"></div>
+      <div class="absolute w-6 h-6 rounded-full bg-indigo-500/10 flex items-center justify-center text-xs text-indigo-400 font-bold">RC</div>
+    </div>
+    <p class="mt-4 text-xs font-medium text-slate-400 tracking-wider">RunComfyui 工作台加载中...</p>
+  </div>
   <div id="app" v-cloak class="flex flex-col min-h-screen">
     
         <!-- 全站实时广播通知条 -->
@@ -2977,6 +3000,20 @@
 
   </div>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20261031_02"></script>
+  <script>
+    // 安全兜底守护：如果因任何原因 3 秒内未完成挂载，自动剥离 v-cloak 与隐藏 preloader，严防黑屏
+    setTimeout(function() {
+      var p = document.getElementById('app-preloader');
+      if (p) {
+        p.style.opacity = '0';
+        setTimeout(function() { if (p) p.remove(); }, 300);
+      }
+      var app = document.getElementById('app');
+      if (app && app.hasAttribute('v-cloak')) {
+        app.removeAttribute('v-cloak');
+      }
+    }, 3000);
+  </script>
 </body>
 </html>

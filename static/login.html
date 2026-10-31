@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>账户中心 - RunComfyui</title>
   <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="/vendor/tailwind.js"></script>
+  <script>
+    if (!window.tailwind) {
+      document.write('<script src="https://cdn.tailwindcss.com"><\/script>');
+    }
+  </script>
   <script>
     tailwind.config = {
       darkMode: 'class',
@@ -26,7 +31,12 @@
     }
   </script>
   <!-- Vue 3 -->
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="/vendor/vue.global.prod.js"></script>
+  <script>
+    if (!window.Vue) {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"><\/script>');
+    }
+  </script>
   <!-- Cloudflare Turnstile Explicit Script -->
   <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
   <style>
@@ -1113,6 +1123,12 @@
         };
       }
     }).mount('#app');
+    setTimeout(function() {
+      var app = document.getElementById('app');
+      if (app && app.hasAttribute('v-cloak')) {
+        app.removeAttribute('v-cloak');
+      }
+    }, 2500);
   </script>
 </body>
 </html>
