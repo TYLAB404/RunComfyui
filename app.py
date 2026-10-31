@@ -6,7 +6,7 @@ import os
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -135,6 +135,18 @@ app = FastAPI(
     description="High-Performance Enterprise RunComfyui Cloud Gateway",
     lifespan=lifespan,
 )
+
+# 禁用前端核心 HTML 与 JS 的强缓存，确保更新代码立即生效（穿透 CDN 与浏览器缓存）
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.endswith((".html", ".js")) or path == "/":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 
 # 生产级安全 CORS 配置：严禁 wildcard * 与 allow_credentials=True 混用
 _CORS_ORIGINS_ENV = os.getenv("CORS_ORIGINS")

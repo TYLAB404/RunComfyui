@@ -1988,7 +1988,7 @@
                 </tr>
               </thead>
               <tbody class="divide-y divide-slate-800/60 text-slate-300">
-                <tr v-for="t in paginatedTasks" :key="t.taskId" class="hover:bg-slate-800/30 transition">
+                <tr v-for="t in (paginatedTasks || tasks)" :key="t.taskId" class="hover:bg-slate-800/30 transition">
                   <td class="p-3 font-mono text-slate-400">{{ t.taskId }}</td>
                   <td class="p-3 font-medium text-white">{{ t.workflowName || t.workflowId }}</td>
                   <td class="p-3 max-w-[240px] truncate text-slate-400" :title="t.positivePrompt">{{ t.positivePrompt || '-' }}</td>
@@ -3053,7 +3053,7 @@
 
   </div>
 
-  <script src="/app.js?v=20261031_02"></script>
+  <script src="/app.js?v=20261031_06_tasks"></script>
   <script>
     // 安全兜底守护：如果因任何原因 3 秒内未完成挂载，自动剥离 v-cloak 与隐藏 preloader，严防黑屏
     setTimeout(function() {
