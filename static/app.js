@@ -2437,6 +2437,15 @@ createApp({
     };
 
     // ================= 导航切换 =================
+    const openAdminPortal = () => {
+      const token = localStorage.getItem('rh_admin_token') || localStorage.getItem('rh_auth_token') || '';
+      if (token) {
+        window.open('/admin.html?token=' + encodeURIComponent(token), '_blank');
+      } else {
+        window.open('/login.html?redirect=' + encodeURIComponent('/admin.html'), '_blank');
+      }
+    };
+
     const switchTab = (tab) => {
       activeTab.value = tab;
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2684,6 +2693,7 @@ createApp({
       confirmModal,
       confirmAction,
       activeTab,
+      openAdminPortal,
       switchTab,
       config,
       keys,

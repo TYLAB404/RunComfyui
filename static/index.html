@@ -237,8 +237,8 @@
         <template v-else>
           <a 
             href="/admin.html" 
-            target="_blank"
-            class="hidden sm:flex items-center gap-1.5 text-xs bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 px-2.5 sm:px-3 py-1.5 rounded-full transition shadow-sm"
+            @click.prevent="openAdminPortal"
+            class="hidden sm:flex items-center gap-1.5 text-xs bg-indigo-600/25 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/40 px-2.5 sm:px-3 py-1.5 rounded-full transition shadow-sm cursor-pointer"
             title="前往超级管理员专属管理后台">
             <span>⚙️</span>
             <span>管理后台</span>
@@ -286,8 +286,8 @@
                 <div class="border-t border-slate-800 pt-1 mt-1 px-2">
                   <a 
                     href="/admin.html" 
-                    target="_blank"
-                    class="w-full text-center py-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800 transition flex items-center justify-center gap-1.5 text-xs">
+                    @click.prevent="openAdminPortal"
+                    class="w-full text-center py-1.5 text-slate-300 hover:text-white rounded-lg hover:bg-slate-800 transition flex items-center justify-center gap-1.5 text-xs cursor-pointer">
                     <span>⚙️</span> <span>进入管理后台配置</span>
                   </a>
                 </div>
@@ -297,8 +297,8 @@
             <a 
               v-else 
               href="/admin.html"
-              target="_blank"
-              class="flex items-center gap-1 text-xs text-amber-400 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-800/60 px-2.5 sm:px-3 py-1.5 rounded-full transition animate-pulse">
+              @click.prevent="openAdminPortal"
+              class="flex items-center gap-1 text-xs text-amber-400 bg-amber-950/60 hover:bg-amber-900/60 border border-amber-800/60 px-2.5 sm:px-3 py-1.5 rounded-full transition animate-pulse cursor-pointer">
               <span class="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
               <span>后台配置 Key</span>
             </a>
