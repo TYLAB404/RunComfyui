@@ -1,3 +1,4 @@
+import os
 import time
 import json
 import asyncio
@@ -5,10 +6,10 @@ import random
 import re
 from typing import Optional, Dict, Any, Tuple
 from fastapi import APIRouter, Request, Response, HTTPException, Depends
-from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi.responses import StreamingResponse, RedirectResponse, FileResponse
 from pydantic import BaseModel
 
-from core.config import load_config
+from core.config import load_config, BASE_DIR, STATIC_DIR
 from core.security import decrypt_key
 from core.database import (
     is_rate_limited, record_failed_attempt, clear_failed_attempts, get_db_connection
@@ -16,7 +17,7 @@ from core.database import (
 from core.auth import (
     get_user_count, create_user, get_user_by_id, get_user_by_identifier,
     update_user_fields, set_user_password, verify_password,
-    create_jwt_token, verify_turnstile_token, sanitize_user,
+    create_jwt_token, decode_jwt_token, verify_turnstile_token, sanitize_user,
     get_current_user, get_current_user_optional,
     USER_EVENT_CHANNELS
 )
@@ -529,5 +530,39 @@ def route_register():
     return RedirectResponse(url="/login.html?tab=register", status_code=302)
 
 @router.get("/admin")
-def route_admin_portal():
-    return RedirectResponse(url="/admin.html", status_code=302)
+@router.get("/admin.html")
+@router.get("/admin/")
+async def route_secure_admin_portal(request: Request):
+    """
+    404 隐形门禁（Masking 403 as 404 / 资源枚举防御）：
+    对任何未登录访客、普通注册用户或黑客扫描器，直接返回 HTTP 404 Not Found，
+    物理层面彻底抹除后台管理入口的存在性。
+    仅当且仅当持有合法数字签名且角色为 admin 的超级管理员请求时，才向其放行投递后台页面。
+    """
+    token = request.cookies.get("auth_token")
+    if not token:
+        token = request.query_params.get("token")
+    if not token:
+        auth_hdr = request.headers.get("authorization", "")
+        if auth_hdr.startswith("Bearer "):
+            token = auth_hdr.split(" ", 1)[1].strip()
+
+    if not token:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    try:
+        payload = decode_jwt_token(token)
+        user_id = payload.get("sub")
+        user = get_user_by_id(user_id) if user_id else None
+        if not user or user.get("role") != "admin" or not user.get("isActive", True):
+            raise HTTPException(status_code=404, detail="Not Found")
+    except Exception:
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    admin_file = os.path.join(BASE_DIR, "templates", "admin.html")
+    if not os.path.exists(admin_file):
+        admin_file = os.path.join(STATIC_DIR, "admin.html")
+    if not os.path.exists(admin_file):
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    return FileResponse(admin_file, media_type="text/html")
