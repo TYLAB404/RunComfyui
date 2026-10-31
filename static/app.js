@@ -421,6 +421,95 @@ createApp({
       draggedNode = null;
     };
 
+    // 移动端 Touch 触控支持 (单指平移拖动画布/节点，双指捏合缩放画布)
+    let touchStartDistance = 0;
+    let touchStartZoom = 1;
+    let isTouchPinching = false;
+
+    const onCanvasTouchStart = (e) => {
+      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) {
+        return;
+      }
+      if (e.touches.length === 1) {
+        isTouchPinching = false;
+        if (e.target.closest('.canvas-node-card')) {
+          return;
+        }
+        isDraggingCanvas = true;
+        draggedNode = null;
+        canvasDragStart = {
+          x: e.touches[0].clientX - canvasPan.value.x,
+          y: e.touches[0].clientY - canvasPan.value.y
+        };
+      } else if (e.touches.length === 2) {
+        isTouchPinching = true;
+        isDraggingCanvas = false;
+        draggedNode = null;
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        touchStartDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        touchStartZoom = canvasZoom.value;
+      }
+    };
+
+    const onNodeTouchStart = (e, node) => {
+      selectedCanvasNodeId.value = String(node.id);
+      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) {
+        return;
+      }
+      if (e.touches.length === 1) {
+        isTouchPinching = false;
+        isDraggingCanvas = false;
+        draggedNode = node;
+        const touch = e.touches[0];
+        nodeDragOffset = {
+          x: (touch.clientX - canvasPan.value.x) / canvasZoom.value - node.x,
+          y: (touch.clientY - canvasPan.value.y) / canvasZoom.value - node.y
+        };
+        e.stopPropagation();
+      }
+    };
+
+    const onCanvasTouchMove = (e) => {
+      if (isTouchPinching && e.touches.length === 2) {
+        if (e.cancelable) e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const currentDistance = Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+        if (touchStartDistance > 0) {
+          const factor = currentDistance / touchStartDistance;
+          const newZoom = Math.min(2.0, Math.max(0.25, Number((touchStartZoom * factor).toFixed(2))));
+          canvasZoom.value = newZoom;
+        }
+      } else if (e.touches.length === 1) {
+        const touch = e.touches[0];
+        if (draggedNode) {
+          if (e.cancelable) e.preventDefault();
+          draggedNode.x = Math.round((touch.clientX - canvasPan.value.x) / canvasZoom.value - nodeDragOffset.x);
+          draggedNode.y = Math.round((touch.clientY - canvasPan.value.y) / canvasZoom.value - nodeDragOffset.y);
+        } else if (isDraggingCanvas) {
+          if (e.cancelable) e.preventDefault();
+          canvasPan.value.x = touch.clientX - canvasDragStart.x;
+          canvasPan.value.y = touch.clientY - canvasDragStart.y;
+        }
+      }
+    };
+
+    const onCanvasTouchEnd = (e) => {
+      if (e.touches.length === 0) {
+        isDraggingCanvas = false;
+        isTouchPinching = false;
+        draggedNode = null;
+      } else if (e.touches.length === 1) {
+        isTouchPinching = false;
+        draggedNode = null;
+        canvasDragStart = {
+          x: e.touches[0].clientX - canvasPan.value.x,
+          y: e.touches[0].clientY - canvasPan.value.y
+        };
+      }
+    };
+
     const onCanvasWheel = (e) => {
       const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
       const newZoom = Math.min(2.0, Math.max(0.2, canvasZoom.value * zoomFactor));
@@ -1837,6 +1926,17 @@ createApp({
       lightboxItem.value = item;
     };
 
+    const closeLightbox = () => {
+      lightboxUrl.value = null;
+      lightboxItem.value = null;
+    };
+
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && lightboxUrl.value) {
+        closeLightbox();
+      }
+    });
+
     // 浏览器端纯前端直链下载 (零经过服务器，由浏览器直接请求 RunningHub CDN)
     const downloadMedia = async (url, defaultFilename) => {
       if (!url) return;
@@ -2558,6 +2658,11 @@ createApp({
       onCanvasMouseMove,
       onCanvasMouseUp,
       onCanvasWheel,
+      onCanvasTouchStart,
+      onNodeTouchStart,
+      onCanvasTouchMove,
+      onCanvasTouchEnd,
+      closeLightbox,
       focusCanvasNode,
       workflowIssues,
       applyRecommendedFixes,
