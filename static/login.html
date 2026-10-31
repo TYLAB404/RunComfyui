@@ -198,21 +198,6 @@
             <div id="turnstile-container-login" class="min-h-[65px] flex items-center justify-center"></div>
           </div>
 
-          <!-- 用户协议勾选 -->
-          <div class="flex items-start gap-2 pt-1">
-            <input 
-              id="agree-login" 
-              type="checkbox" 
-              v-model="loginForm.agreeTerms"
-              class="mt-1 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-950 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-600">
-            <label for="agree-login" class="text-xs text-slate-400 select-none cursor-pointer leading-relaxed">
-              我已阅读并同意 
-              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
-              和 
-              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>
-            </label>
-          </div>
-
           <!-- 登录按钮 -->
           <button 
             type="submit" 
@@ -221,6 +206,29 @@
             <svg v-if="isSubmitting" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
             <span>{{ isSubmitting ? '正在登录中...' : '登录 ->' }}</span>
           </button>
+
+          <!-- 仿 moyuu 风格协议勾选框 -->
+          <div class="mt-4 p-3 bg-slate-950/70 border border-slate-800 rounded-2xl flex items-center gap-3 transition">
+            <input 
+              id="agree-login" 
+              type="checkbox" 
+              v-model="loginForm.agreeTerms"
+              class="w-4 h-4 rounded text-indigo-500 bg-slate-900 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-500 flex-shrink-0">
+            <label for="agree-login" class="text-xs text-slate-300 select-none cursor-pointer leading-normal">
+              我已阅读并同意 
+              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">用户协议</a> 
+              和 
+              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">隐私政策</a>.
+            </label>
+          </div>
+
+          <!-- 引导提示说明 -->
+          <p class="mt-2 text-center text-[11px] text-slate-400 leading-relaxed">
+            点击登录即表示您同意我们的 
+            <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-slate-300 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
+            和 
+            <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-slate-300 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>.
+          </p>
         </form>
 
         <!-- ================= 表单模式 2: 创建账户 / 注册 (对标 RunComfyui) ================= -->
@@ -341,21 +349,6 @@
             <div id="turnstile-container-register" class="min-h-[65px] flex items-center justify-center"></div>
           </div>
 
-          <!-- 用户协议勾选 -->
-          <div class="flex items-start gap-2 pt-1">
-            <input 
-              id="agree-register" 
-              type="checkbox" 
-              v-model="registerForm.agreeTerms"
-              class="mt-1 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-950 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-600">
-            <label for="agree-register" class="text-xs text-slate-400 select-none cursor-pointer leading-relaxed">
-              我已阅读并同意 
-              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
-              和 
-              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>
-            </label>
-          </div>
-
           <!-- 创建账户按钮 -->
           <button 
             type="submit" 
@@ -364,6 +357,29 @@
             <svg v-if="isSubmitting" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
             <span>{{ isSubmitting ? '正在创建账户...' : '创建账户' }}</span>
           </button>
+
+          <!-- 仿 moyuu 风格协议勾选框 -->
+          <div class="mt-4 p-3 bg-slate-950/70 border border-slate-800 rounded-2xl flex items-center gap-3 transition">
+            <input 
+              id="agree-register" 
+              type="checkbox" 
+              v-model="registerForm.agreeTerms"
+              class="w-4 h-4 rounded text-indigo-500 bg-slate-900 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-500 flex-shrink-0">
+            <label for="agree-register" class="text-xs text-slate-300 select-none cursor-pointer leading-normal">
+              我已阅读并同意 
+              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">用户协议</a> 
+              和 
+              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">隐私政策</a>.
+            </label>
+          </div>
+
+          <!-- 引导提示说明 -->
+          <p class="mt-2 text-center text-[11px] text-slate-400 leading-relaxed">
+            创建账户即表示您同意我们的 
+            <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-slate-300 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
+            和 
+            <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-slate-300 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>.
+          </p>
         </form>
 
         <!-- ================= 表单模式 3: 找回密码 (对标 RunComfyui) ================= -->
@@ -462,21 +478,6 @@
             <div id="turnstile-container-forgot" class="min-h-[65px] flex items-center justify-center"></div>
           </div>
 
-          <!-- 用户协议勾选 -->
-          <div class="flex items-start gap-2 pt-1">
-            <input 
-              id="agree-forgot" 
-              type="checkbox" 
-              v-model="forgotForm.agreeTerms"
-              class="mt-1 w-3.5 h-3.5 rounded text-indigo-600 bg-slate-950 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-600">
-            <label for="agree-forgot" class="text-xs text-slate-400 select-none cursor-pointer leading-relaxed">
-              我已阅读并同意 
-              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
-              和 
-              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>
-            </label>
-          </div>
-
           <!-- 提交重置按钮 -->
           <button 
             type="submit" 
@@ -485,6 +486,29 @@
             <svg v-if="isSubmitting" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
             <span>{{ isSubmitting ? '正在重置中...' : '确认重置密码' }}</span>
           </button>
+
+          <!-- 仿 moyuu 风格协议勾选框 -->
+          <div class="mt-4 p-3 bg-slate-950/70 border border-slate-800 rounded-2xl flex items-center gap-3 transition">
+            <input 
+              id="agree-forgot" 
+              type="checkbox" 
+              v-model="forgotForm.agreeTerms"
+              class="w-4 h-4 rounded text-indigo-500 bg-slate-900 border-slate-700 focus:ring-indigo-500 cursor-pointer accent-indigo-500 flex-shrink-0">
+            <label for="agree-forgot" class="text-xs text-slate-300 select-none cursor-pointer leading-normal">
+              我已阅读并同意 
+              <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">用户协议</a> 
+              和 
+              <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-indigo-400 hover:text-indigo-300 underline underline-offset-2 font-medium">隐私政策</a>.
+            </label>
+          </div>
+
+          <!-- 引导提示说明 -->
+          <p class="mt-2 text-center text-[11px] text-slate-400 leading-relaxed">
+            重置密码即表示您同意我们的 
+            <a href="javascript:void(0)" @click.stop="showTermsModal = true" class="text-slate-300 hover:text-indigo-300 underline underline-offset-2">用户协议</a> 
+            和 
+            <a href="javascript:void(0)" @click.stop="showPrivacyModal = true" class="text-slate-300 hover:text-indigo-300 underline underline-offset-2">隐私政策</a>.
+          </p>
         </form>
 
         <!-- 底部快速指引 -->
@@ -643,7 +667,7 @@
         const loginForm = ref({
           identifier: '',
           password: '',
-          agreeTerms: true
+          agreeTerms: false
         });
 
         // 注册表单
@@ -653,7 +677,7 @@
           password: '',
           confirmPassword: '',
           code: '',
-          agreeTerms: true
+          agreeTerms: false
         });
 
         // 找回密码表单
@@ -662,7 +686,7 @@
           code: '',
           newPassword: '',
           confirmPassword: '',
-          agreeTerms: true
+          agreeTerms: false
         });
 
         // 启动倒计时逻辑
@@ -1049,6 +1073,11 @@
             tab.value = 'register';
           } else if (tabParam === 'forgot' || window.location.hash === '#forgot') {
             tab.value = 'forgot';
+          }
+          if (params.get('terms') === '1') {
+            showTermsModal.value = true;
+          } else if (params.get('privacy') === '1') {
+            showPrivacyModal.value = true;
           }
           await checkExistingAuth();
           await loadPublicConfig();
