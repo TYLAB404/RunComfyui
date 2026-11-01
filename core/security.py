@@ -73,6 +73,7 @@ def reload_cipher():
 @functools.lru_cache(maxsize=512)
 def decrypt_key(encrypted_key: str) -> str:
     """将 Fernet 密文解密为明文 API Key"""
+    global _CIPHER
     if not encrypted_key:
         return ""
     encrypted_key = str(encrypted_key).strip()
@@ -84,10 +85,8 @@ def decrypt_key(encrypted_key: str) -> str:
     except Exception as e:
         # 弹性自愈：若内存中密码本解密失败，尝试重新读取磁盘上的 .secret.key（适配热还原场景）
         try:
-            fresh_cipher = _init_master_cipher()
-            raw_bytes = fresh_cipher.decrypt(encrypted_key.encode("utf-8"))
-            global _CIPHER
-            _CIPHER = fresh_cipher
+            _CIPHER = _init_master_cipher()
+            raw_bytes = _CIPHER.decrypt(encrypted_key.encode("utf-8"))
             return raw_bytes.decode("utf-8")
         except Exception:
             pass
