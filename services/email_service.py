@@ -1,16 +1,22 @@
 import time
 import asyncio
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 from core.config import load_config
 from core.security import decrypt_key
 from core.http_client import HTTP_SESSION
 
 _ALERTED_KEY_INCIDENTS: Dict[str, float] = {}
 
-def send_smtp_email(to_email: str, subject: str, html_body: str, from_title: str = "RunComfyUI") -> Tuple[bool, str]:
+def send_smtp_email(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    from_title: str = "RunComfyUI",
+    attachment_path: Optional[str] = None
+) -> Tuple[bool, str]:
     """
     通用 SMTP 邮件发送基础服务
-    支持 SSL (465) 与 TLS (587/25) 协议，密码加密存储
+    支持 SSL (465) 与 TLS (587/25) 协议，密码加密存储，支持附件发送
     """
     cfg = load_config()
     smtp_cfg = cfg.get("system", {}).get("smtp", {})
@@ -34,20 +40,29 @@ def send_smtp_email(to_email: str, subject: str, html_body: str, from_title: str
     # 智能识别 Resend 发信服务 (海外 SMTP 端口在国内云服务器经常被封锁，使用官方 HTTPS API 极速且 100% 稳定直达)
     if pwd.startswith("re_") or "resend" in host.lower() or "resend" in user.lower():
         try:
+            import base64
             from_addr = f"{from_title} <{sender_email}>" if sender_email else f"{from_title} <admin@notify.2364498.xyz>"
+            payload = {
+                "from": from_addr,
+                "to": [target_email],
+                "subject": subject,
+                "html": html_body
+            }
+            if attachment_path and os.path.exists(attachment_path):
+                with open(attachment_path, "rb") as af:
+                    content_b64 = base64.b64encode(af.read()).decode("utf-8")
+                payload["attachments"] = [{
+                    "filename": os.path.basename(attachment_path),
+                    "content": content_b64
+                }]
             resp = HTTP_SESSION.post(
                 "https://api.resend.com/emails",
                 headers={
                     "Authorization": f"Bearer {pwd}",
                     "Content-Type": "application/json"
                 },
-                json={
-                    "from": from_addr,
-                    "to": [target_email],
-                    "subject": subject,
-                    "html": html_body
-                },
-                timeout=12
+                json=payload,
+                timeout=18
             )
             if resp.status_code in (200, 201):
                 return True, "邮件已成功发送 (Resend)"
@@ -59,6 +74,8 @@ def send_smtp_email(to_email: str, subject: str, html_body: str, from_title: str
     import smtplib
     from email.mime.text import MIMEText
     from email.mime.multipart import MIMEMultipart
+    from email.mime.base import MIMEBase
+    from email import encoders
     from email.header import Header
     from email.utils import formataddr
 
@@ -69,6 +86,19 @@ def send_smtp_email(to_email: str, subject: str, html_body: str, from_title: str
     msg['To'] = formataddr((to_name, target_email))
     msg['Subject'] = Header(subject, 'utf-8')
     msg.attach(MIMEText(html_body, 'html', 'utf-8'))
+
+    if attachment_path and os.path.exists(attachment_path):
+        try:
+            filename = os.path.basename(attachment_path)
+            part = MIMEBase('application', 'octet-stream')
+            with open(attachment_path, 'rb') as af:
+                part.set_payload(af.read())
+            encoders.encode_base64(part)
+            # RFC 2231 / utf-8 兼容头部
+            part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
+            msg.attach(part)
+        except Exception as att_err:
+            print(f"[SMTP Warning] Failed to attach file {attachment_path}: {att_err}")
 
     try:
         if port == 465:
@@ -84,13 +114,13 @@ def send_smtp_email(to_email: str, subject: str, html_body: str, from_title: str
         print(f"[SMTP Error] Failed to send email to {target_email}: {e}")
         return False, f"邮件发送失败: {str(e)}"
 
-def send_admin_alert_email(subject: str, html_body: str) -> Tuple[bool, str]:
-    """发送运维告警邮件至管理员指定邮箱"""
+def send_admin_alert_email(subject: str, html_body: str, attachment_path: Optional[str] = None) -> Tuple[bool, str]:
+    """发送运维告警/通知邮件至管理员指定邮箱（支持携带附件）"""
     cfg = load_config()
     admin_email = (cfg.get("system", {}).get("smtp", {}).get("adminEmail") or "").strip()
     if not admin_email:
         return False, "未配置管理员告警接收邮箱"
-    return send_smtp_email(admin_email, subject, html_body, from_title="RunComfyUI 运维管家")
+    return send_smtp_email(admin_email, subject, html_body, from_title="RunComfyUI 运维管家", attachment_path=attachment_path)
 
 def send_verification_code_email(to_email: str, code: str, purpose: str = "register") -> Tuple[bool, str]:
     """

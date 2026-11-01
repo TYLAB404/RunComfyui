@@ -336,8 +336,8 @@ async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]
         token = auth_header[7:].strip()
     if not token:
         token = request.cookies.get("auth_token")
-    if not token and request.url.path == "/api/events/user":
-        # 严格安全收敛：仅允许浏览器原生 EventSource SSE 长连接接口通过 query 参数传递 token
+    if not token and (request.url.path == "/api/events/user" or request.url.path.startswith("/api/admin/system/backup/download")):
+        # 允许原生 SSE 长连接与文件下载流通过 query 参数传递 token
         token = request.query_params.get("token")
     if not token:
         return None

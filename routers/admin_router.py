@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any, List
 import requests
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import FileResponse
 
 from core.auth import (
     get_current_admin,
@@ -53,6 +54,7 @@ from core.security import decrypt_key, encrypt_key, mask_key
 from core.http_client import http_session
 from services.key_pool import KEY_POOL_MANAGER
 from services.email_service import send_admin_alert_email
+from services.backup_service import create_backup, list_backups, get_backup_path
 from services.imgbed_service import (
     sync_task_outputs_to_imgbed,
     sync_single_file_to_imgbed,
@@ -1086,3 +1088,38 @@ async def admin_test_smtp_email(_: Dict[str, Any] = Depends(get_current_admin)):
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "ok", "message": "测试邮件已成功发送至管理员接收邮箱，请检查收件箱或垃圾箱"}
+
+
+@router.get("/api/admin/system/backup/list")
+async def admin_get_backup_list(_: Dict[str, Any] = Depends(get_current_admin)):
+    """获取所有历史备份快照列表"""
+    backups = await asyncio.to_thread(list_backups)
+    return {"status": "ok", "backups": backups}
+
+
+@router.post("/api/admin/system/backup/create")
+async def admin_create_backup_snapshot(
+    sendEmail: bool = False,
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """立即手动创建全站核心数据快照，可选择同步推送到管理员邮箱"""
+    ok, res, meta = await asyncio.to_thread(create_backup, True, sendEmail)
+    if not ok:
+        raise HTTPException(status_code=500, detail=res)
+    return {"status": "ok", "message": "全站数据快照创建成功", "meta": meta}
+
+
+@router.get("/api/admin/system/backup/download/{filename}")
+async def admin_download_backup(
+    filename: str,
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """一键下载指定备份快照 ZIP 档案"""
+    path = get_backup_path(filename)
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="指定的备份文件不存在或已被自动清理")
+    return FileResponse(
+        path,
+        media_type="application/zip",
+        filename=filename
+    )

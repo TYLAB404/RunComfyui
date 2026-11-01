@@ -75,6 +75,7 @@ from services.key_pool import (
     key_pool_health_inspector_loop,
 )
 from services.runninghub import RUNNINGHUB_API_URL, reconcile_pending_tasks
+from services.backup_service import auto_backup_scheduler_loop
 
 # Router imports
 from routers import (
@@ -120,13 +121,17 @@ async def lifespan(app: FastAPI):
     # 3. 启动对账自愈：自动恢复重启前未完成历史任务的云端轮询接盘（绝不卡死、绝不丢失任务）
     reconcile_task = asyncio.create_task(reconcile_pending_tasks())
 
+    # 4. 启动每日自动灾备备份循环（每日凌晨自动打包快照并推送到异地管理员邮箱）
+    backup_task = asyncio.create_task(auto_backup_scheduler_loop())
+
     yield
 
-    # 4. 优雅停止后台协程
+    # 5. 优雅停止后台协程
     watchdog_task.cancel()
     inspector_task.cancel()
     reconcile_task.cancel()
-    await asyncio.gather(watchdog_task, inspector_task, reconcile_task, return_exceptions=True)
+    backup_task.cancel()
+    await asyncio.gather(watchdog_task, inspector_task, reconcile_task, backup_task, return_exceptions=True)
 
 
 app = FastAPI(
