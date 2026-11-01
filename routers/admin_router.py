@@ -11,7 +11,7 @@ import asyncio
 from typing import Optional, Dict, Any, List
 import requests
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, File, UploadFile, Form
 from fastapi.responses import FileResponse
 
 from core.auth import (
@@ -54,7 +54,15 @@ from core.security import decrypt_key, encrypt_key, mask_key
 from core.http_client import http_session
 from services.key_pool import KEY_POOL_MANAGER
 from services.email_service import send_admin_alert_email
-from services.backup_service import create_backup, list_backups, get_backup_path
+from services.backup_service import (
+    create_backup,
+    list_backups,
+    get_backup_path,
+    create_pre_restore_snapshot,
+    restore_from_zip,
+    validate_backup_zip,
+    BACKUP_DIR,
+)
 from services.imgbed_service import (
     sync_task_outputs_to_imgbed,
     sync_single_file_to_imgbed,
@@ -1123,3 +1131,81 @@ async def admin_download_backup(
         media_type="application/zip",
         filename=filename
     )
+
+
+@router.post("/api/admin/system/backup/pre-restore-snapshot")
+async def admin_create_pre_restore_snapshot(_: Dict[str, Any] = Depends(get_current_admin)):
+    """
+    第一阶段：在回档前强制执行前置保险快照，自动生成带时间戳快照并推送到管理员邮箱，作为后悔药。
+    执行成功后前端方可解锁真正的回档按钮。
+    """
+    ok, res, meta = await asyncio.to_thread(create_pre_restore_snapshot, True)
+    if not ok:
+        raise HTTPException(status_code=500, detail=f"生成前置保险快照失败: {res}")
+    return {
+        "status": "ok",
+        "message": "前置保险快照已成功生成并作为附件推送到您的邮箱！回档按钮已解锁。",
+        "snapshot": meta
+    }
+
+
+@router.post("/api/admin/system/backup/restore")
+async def admin_restore_backup(
+    file: Optional[UploadFile] = File(None),
+    filename: Optional[str] = Form(None),
+    requirePreBackup: bool = Form(True),
+    _: Dict[str, Any] = Depends(get_current_admin)
+):
+    """
+    第二阶段：执行全站数据还原。
+    支持上传外部本地 ZIP 文件，或者从服务器已有快照列表中指定文件名进行恢复。
+    内置 Zip-Slip 路径防穿透、SQLite 事务完整性检测、旧 WAL 缓存清除与热重载。
+    """
+    target_zip_path = None
+    is_temp_file = False
+
+    try:
+        if file and file.filename:
+            # 1. 管理员直接从本地电脑上传备份压缩包
+            if not file.filename.lower().endswith(".zip"):
+                raise HTTPException(status_code=400, detail="只允许上传 .zip 格式的备份档案")
+            temp_name = f"_uploaded_restore_{int(time.time())}_{os.path.basename(file.filename)}"
+            target_zip_path = os.path.join(BACKUP_DIR, temp_name)
+            is_temp_file = True
+
+            with open(target_zip_path, "wb") as out_f:
+                content = await file.read()
+                out_f.write(content)
+
+        elif filename:
+            # 2. 从服务器本地历史快照列表中指定
+            target_zip_path = get_backup_path(filename)
+            if not target_zip_path or not os.path.exists(target_zip_path):
+                raise HTTPException(status_code=404, detail="指定的服务器历史备份文件不存在")
+
+        else:
+            raise HTTPException(status_code=400, detail="请上传备份压缩包或指定服务器已有的历史快照")
+
+        # 执行带有保险快照与完整性校验的回档逻辑
+        ok, res_msg, meta = await asyncio.to_thread(
+            restore_from_zip,
+            target_zip_path,
+            requirePreBackup,
+            True
+        )
+
+        if not ok:
+            raise HTTPException(status_code=400, detail=res_msg)
+
+        return {
+            "status": "ok",
+            "message": res_msg,
+            "meta": meta
+        }
+
+    finally:
+        if is_temp_file and target_zip_path and os.path.exists(target_zip_path):
+            try:
+                os.remove(target_zip_path)
+            except Exception:
+                pass

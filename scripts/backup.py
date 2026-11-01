@@ -16,7 +16,13 @@ import shutil
 # 自动加入父目录路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from services.backup_service import create_backup, list_backups, get_backup_path, BACKUP_DIR
+from services.backup_service import (
+    create_backup,
+    list_backups,
+    get_backup_path,
+    restore_from_zip,
+    BACKUP_DIR,
+)
 from core.config import BASE_DIR, DATA_DIR
 
 
@@ -65,17 +71,20 @@ def main():
                 sys.exit(1)
 
         print(f"[*] 准备从 {zip_path} 恢复数据...")
-        confirm = input("[!] 警告：恢复操作将覆盖当前 data/app.db 和配置文件！是否继续？(y/N): ")
+        confirm = input("[!] 警告：回档操作将覆盖当前 data/app.db 和配置文件！\n    系统将首先自动为您生成一份【前置保险快照】并发送至管理员邮箱。\n    是否继续？(y/N): ")
         if confirm.lower() != 'y':
             print("已取消还原操作。")
             sys.exit(0)
 
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zf:
-                zf.extractall(BASE_DIR)
-            print("[OK] 恢复成功！数据文件已成功解压还原至目标目录。建议重启服务以加载最新数据。")
-        except Exception as e:
-            print(f"[FAIL] 恢复失败: {e}")
+        ok, msg, meta = restore_from_zip(zip_path, pre_backup=True, send_email=True)
+        if ok:
+            pre_file = meta.get("preRestoreSnapshot", {}).get("filename", "未知")
+            print(f"[OK] 恢复成功！{msg}")
+            print(f"    - 前置保险快照已生成并发送至邮箱: {pre_file}")
+            print(f"    - 已恢复关键资产: {', '.join(meta.get('restoredFiles', []))}")
+            print("[*] 提示：数据已完成热重载。如果服务处于运行状态，已自动加载最新数据。")
+        else:
+            print(f"[FAIL] 恢复失败: {msg}")
             sys.exit(1)
 
     else:

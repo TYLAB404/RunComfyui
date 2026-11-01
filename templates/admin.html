@@ -2344,6 +2344,83 @@
             </div>
           </div>
 
+          <!-- 回档控制区 (Restore Section - 双重门禁解锁) -->
+          <div class="p-3.5 rounded-xl bg-slate-950 border border-amber-500/30 space-y-3 text-xs">
+            <div class="flex items-center justify-between">
+              <div class="font-bold text-amber-300 flex items-center gap-1.5">
+                <i data-lucide="rotate-ccw" class="w-4 h-4 text-amber-400"></i>
+                <span>从备份包还原全站数据 (数据回档)</span>
+              </div>
+              <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/20">双重安全解锁门禁</span>
+            </div>
+
+            <!-- 方式切换 -->
+            <div class="grid grid-cols-2 gap-2">
+              <button type="button" @click="setRestoreMode('upload')" :class="restoreMode === 'upload' ? 'bg-amber-600/30 border-amber-500/60 text-amber-200' : 'bg-slate-900 border-slate-800 text-slate-400'" class="p-2 rounded-xl border text-center font-medium transition">
+                从电脑上传 ZIP 压缩包
+              </button>
+              <button type="button" @click="setRestoreMode('select')" :class="restoreMode === 'select' ? 'bg-amber-600/30 border-amber-500/60 text-amber-200' : 'bg-slate-900 border-slate-800 text-slate-400'" class="p-2 rounded-xl border text-center font-medium transition">
+                从已有服务器快照选择
+              </button>
+            </div>
+
+            <!-- 选项 A: 上传本地文件 -->
+            <div v-if="restoreMode === 'upload'" class="space-y-1.5">
+              <label class="block text-slate-400 text-[11px]">选择本地备份文件 (.zip 格式)</label>
+              <input type="file" ref="restoreFileInput" accept=".zip" @change="onRestoreFileChange" class="w-full text-xs text-slate-300 file:mr-2 file:py-1 file:px-2.5 file:rounded-lg file:border-0 file:text-xs file:bg-slate-800 file:text-slate-200 hover:file:bg-slate-700 bg-slate-900 border border-slate-800 rounded-xl p-1.5 cursor-pointer">
+              <div v-if="selectedRestoreFile" class="text-[11px] text-sky-400">
+                已选中待还原文件: <span class="font-mono text-white">{{ selectedRestoreFile.name }}</span> ({{ (selectedRestoreFile.size / 1024).toFixed(1) }} KB)
+              </div>
+            </div>
+
+            <!-- 选项 B: 下拉选择已有快照 -->
+            <div v-else class="space-y-1.5">
+              <label class="block text-slate-400 text-[11px]">选择服务器历史快照</label>
+              <select v-model="selectedRestoreFilename" @change="isPreSnapshotDone = false" class="w-full bg-slate-900 border border-slate-800 rounded-xl p-2 text-slate-200 text-xs font-mono">
+                <option value="">-- 请选择要回档的快照文件 --</option>
+                <option v-for="b in backupList" :key="b.filename" :value="b.filename">
+                  {{ b.filename }} ({{ b.sizeFormatted }} · {{ b.typeTag }})
+                </option>
+              </select>
+            </div>
+
+            <!-- 警告与解锁流程 -->
+            <div class="p-2.5 rounded-xl bg-amber-950/20 border border-amber-500/20 text-[11px] text-amber-300/90 leading-relaxed">
+              ⚠️ <strong>安全回档必读：</strong>回档将覆盖现有数据。系统必须<strong>先为您当前的系统拍摄一份【强制前置保险快照】并发送至您的邮箱</strong>（防手滑后悔药）。保险快照生成成功后，回档按钮才会正式解锁！
+            </div>
+
+            <!-- 双步按钮组 -->
+            <div class="flex flex-col sm:flex-row items-center gap-2 pt-1">
+              <!-- 第一步按钮 -->
+              <button 
+                type="button"
+                @click="executePreRestoreSnapshot" 
+                :disabled="isTakingPreSnapshot || (!selectedRestoreFile && !selectedRestoreFilename)"
+                class="w-full sm:flex-1 py-2 px-3 rounded-xl bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 font-bold transition flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed text-xs"
+              >
+                <i data-lucide="camera" :class="{'animate-spin': isTakingPreSnapshot}" class="w-3.5 h-3.5"></i>
+                <span>{{ isTakingPreSnapshot ? '正在拍摄保险快照并发送邮箱...' : (isPreSnapshotDone ? '前置保险快照已就绪 ✓' : '第一步：拍摄保险快照 (解锁回档)') }}</span>
+              </button>
+
+              <!-- 第二步按钮（必须第一步完成方可解锁） -->
+              <button 
+                type="button"
+                @click="confirmAndExecuteRestore" 
+                :disabled="!isPreSnapshotDone || isRestoring"
+                class="w-full sm:flex-1 py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold transition flex items-center justify-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed text-xs shadow-lg shadow-rose-900/30"
+              >
+                <i data-lucide="alert-triangle" :class="{'animate-spin': isRestoring}" class="w-3.5 h-3.5"></i>
+                <span>{{ isRestoring ? '正在还原数据与重载...' : '第二步：确认回档并重载系统' }}</span>
+              </button>
+            </div>
+
+            <!-- 解锁成功提示 -->
+            <div v-if="isPreSnapshotDone" class="text-[11px] text-emerald-400 flex items-center gap-1">
+              <i data-lucide="check-circle-2" class="w-3.5 h-3.5 text-emerald-400"></i>
+              <span>保险快照已生成并作为附件发送至管理员邮箱！回档按钮已解锁，确认无误后点击第二步执行还原。</span>
+            </div>
+          </div>
+
           <div class="flex justify-end border-t border-slate-800 pt-3">
             <button @click="showBackupModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 text-slate-300">关闭</button>
           </div>
@@ -3247,6 +3324,13 @@
         const backupList = ref([]);
         const isCreatingBackup = ref(false);
         const backupSendEmail = ref(false);
+        const restoreMode = ref('upload');
+        const selectedRestoreFile = ref(null);
+        const selectedRestoreFilename = ref('');
+        const isTakingPreSnapshot = ref(false);
+        const isPreSnapshotDone = ref(false);
+        const isRestoring = ref(false);
+        const restoreFileInput = ref(null);
 
         let _iconRefreshTimer = null;
         const refreshIcons = () => {
@@ -4925,6 +5009,103 @@
           window.open('/api/admin/system/backup/download/' + encodeURIComponent(filename) + '?token=' + encodeURIComponent(token), '_blank');
         };
 
+        const setRestoreMode = (mode) => {
+          restoreMode.value = mode;
+          isPreSnapshotDone.value = false;
+          refreshIcons();
+        };
+
+        const onRestoreFileChange = (e) => {
+          if (e.target.files && e.target.files[0]) {
+            selectedRestoreFile.value = e.target.files[0];
+            isPreSnapshotDone.value = false;
+            refreshIcons();
+          }
+        };
+
+        const executePreRestoreSnapshot = async () => {
+          if (!selectedRestoreFile.value && !selectedRestoreFilename.value) {
+            showToastNotification('请先选择待回档的文件或快照', 'error');
+            return;
+          }
+          isTakingPreSnapshot.value = true;
+          try {
+            const res = await authFetch('/api/admin/system/backup/pre-restore-snapshot', { method: 'POST' });
+            if (res.ok) {
+              isPreSnapshotDone.value = true;
+              showToastNotification('前置保险快照已成功拍摄并发送至您的邮箱！回档按钮已解锁。', 'success');
+              await fetchBackupList();
+              refreshIcons();
+            } else {
+              const err = await res.json();
+              showToastNotification('生成保险快照失败: ' + (err.detail || '未知原因'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('网络请求异常: ' + e.message, 'error');
+          } finally {
+            isTakingPreSnapshot.value = false;
+          }
+        };
+
+        const confirmAndExecuteRestore = async () => {
+          if (!isPreSnapshotDone.value) {
+            showToastNotification('请先点击第一步完成保险快照拍摄', 'error');
+            return;
+          }
+
+          const confirmed = window.confirm(
+            '⚠️ 最终严重警告：\n\n' +
+            '您正在执行全站数据回档！此操作将覆盖现有用户、积分总账与系统配置。\n' +
+            '系统已在第一步为您当前的系统生成了保险快照并发送至邮箱（防手滑后悔药）。\n\n' +
+            '确定立即执行覆盖还原并自动重载系统吗？'
+          );
+          if (!confirmed) return;
+
+          isRestoring.value = true;
+          try {
+            const formData = new FormData();
+            if (restoreMode.value === 'upload') {
+              if (!selectedRestoreFile.value) {
+                showToastNotification('请上传有效的备份 ZIP 文件', 'error');
+                isRestoring.value = false;
+                return;
+              }
+              formData.append('file', selectedRestoreFile.value);
+            } else {
+              if (!selectedRestoreFilename.value) {
+                showToastNotification('请选择要恢复的历史快照', 'error');
+                isRestoring.value = false;
+                return;
+              }
+              formData.append('filename', selectedRestoreFilename.value);
+            }
+            formData.append('requirePreBackup', 'false');
+
+            const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || '';
+            const res = await fetch('/api/admin/system/backup/restore', {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${token}`
+              },
+              body: formData
+            });
+
+            if (res.ok) {
+              showToastNotification('🎉 数据还原成功！全站已完成热重载，系统将在 3 秒后刷新...', 'success');
+              setTimeout(() => {
+                window.location.reload();
+              }, 3000);
+            } else {
+              const err = await res.json();
+              showToastNotification('还原失败: ' + (err.detail || '未知错误'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('请求异常: ' + e.message, 'error');
+          } finally {
+            isRestoring.value = false;
+          }
+        };
+
         const resetKeyInPool = async (keyId) => {
           try {
             const res = await authFetch(`/api/admin/key-pool/${keyId}/reset`, { method: 'POST' });
@@ -5237,10 +5418,21 @@
           backupList,
           isCreatingBackup,
           backupSendEmail,
+          restoreMode,
+          selectedRestoreFile,
+          selectedRestoreFilename,
+          isTakingPreSnapshot,
+          isPreSnapshotDone,
+          isRestoring,
+          restoreFileInput,
           openBackupModal,
           fetchBackupList,
           createBackupNow,
           downloadBackupFile,
+          setRestoreMode,
+          onRestoreFileChange,
+          executePreRestoreSnapshot,
+          confirmAndExecuteRestore,
           inspectAllKeys,
           resumeKeyInPool,
           openSmtpModal,
