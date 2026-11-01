@@ -1111,7 +1111,12 @@ async def admin_create_backup_snapshot(
     _: Dict[str, Any] = Depends(get_current_admin)
 ):
     """立即手动创建全站核心数据快照，可选择同步推送到管理员邮箱"""
-    ok, res, meta = await asyncio.to_thread(create_backup, True, sendEmail)
+    ok, res, meta = await asyncio.to_thread(
+        create_backup,
+        prefix="runcomfyui_backup_",
+        include_workflows=True,
+        send_email=sendEmail
+    )
     if not ok:
         raise HTTPException(status_code=500, detail=res)
     return {"status": "ok", "message": "全站数据快照创建成功", "meta": meta}
