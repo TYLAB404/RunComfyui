@@ -1378,8 +1378,32 @@ createApp({
       }
     };
 
+    // 上传区域点击拦截：若用户余额未达工作流准入门槛，拦截文件弹窗并给出人性化提示
+    const handleUploadAreaClick = (event) => {
+      if (isBelowThreshold.value) {
+        if (event) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        const reqPts = Number(currentWorkflow.value?.minPoints || 0);
+        const curPts = Math.floor(currentUser.value?.points || 0);
+        const diff = Math.max(0, reqPts - curPts);
+        showToastNotification(
+          `温馨提示：该工作流已设置准入门槛（账户需持有 ≥ ${reqPts} RC币，当前持有 ${curPts} RC币，差额 ${diff} RC币）。请先完成充值达到门槛后，即可解锁素材上传与任务运行！`,
+          'warning'
+        );
+        return false;
+      }
+      return true;
+    };
+
     // 参考图上传处理 (自动上传至 RunningHub OpenAPI 并关联对应节点)
     const handleNodeImageUpload = async (event, imgNode) => {
+      if (isBelowThreshold.value) {
+        if (event && event.target) event.target.value = '';
+        handleUploadAreaClick(event);
+        return;
+      }
       const file = event.target.files[0];
       if (!file) return;
 
@@ -1418,6 +1442,11 @@ createApp({
 
     // 参考视频上传处理 (自动上传至 RunningHub OpenAPI 并关联对应节点)
     const handleNodeVideoUpload = async (event, vidNode) => {
+      if (isBelowThreshold.value) {
+        if (event && event.target) event.target.value = '';
+        handleUploadAreaClick(event);
+        return;
+      }
       const file = event.target.files[0];
       if (!file) return;
 
@@ -1456,6 +1485,11 @@ createApp({
 
     // 参考音频上传处理 (自动上传至 RunningHub OpenAPI 并关联对应节点)
     const handleNodeAudioUpload = async (event, audNode) => {
+      if (isBelowThreshold.value) {
+        if (event && event.target) event.target.value = '';
+        handleUploadAreaClick(event);
+        return;
+      }
       const file = event.target.files[0];
       if (!file) return;
 
@@ -2898,6 +2932,7 @@ createApp({
       onWorkflowChange,
       loadWorkflowSchema,
       randomizeDynamicSeed,
+      handleUploadAreaClick,
       handleNodeImageUpload,
       handleNodeVideoUpload,
       handleNodeAudioUpload,

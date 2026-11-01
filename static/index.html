@@ -614,10 +614,20 @@
                 </span>
               </div>
               <div class="flex items-center gap-3">
-                <label class="cursor-pointer flex-1 border border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-3 text-center transition bg-slate-950">
-                  <input type="file" accept="image/*" @change="e => handleNodeImageUpload(e, imgNode)" class="hidden">
-                  <div class="text-xs text-slate-400">
-                    <span v-if="!imgNode.isUploading">📁 点击选择或拖入本地图片</span>
+                <label 
+                  :class="[
+                    'flex-1 border border-dashed rounded-xl p-3 text-center transition select-none',
+                    isBelowThreshold 
+                      ? 'border-amber-500/40 bg-amber-950/20 cursor-not-allowed opacity-80' 
+                      : 'cursor-pointer border-slate-700 hover:border-indigo-500 bg-slate-950'
+                  ]"
+                  @click="handleUploadAreaClick($event)">
+                  <input type="file" accept="image/*" :disabled="isBelowThreshold" @change="e => handleNodeImageUpload(e, imgNode)" class="hidden">
+                  <div class="text-xs">
+                    <span v-if="isBelowThreshold" class="text-amber-400 font-medium flex items-center justify-center gap-1.5">
+                      🔒 余额未达门槛 (需 {{ currentWorkflow?.minPoints }} RC币) 已禁止上传
+                    </span>
+                    <span v-else-if="!imgNode.isUploading" class="text-slate-400">📁 点击选择或拖入本地图片</span>
                     <span v-else class="text-indigo-400 animate-pulse">正在上传图片...</span>
                   </div>
                 </label>
@@ -630,10 +640,14 @@
                 <span class="text-slate-500 whitespace-nowrap">当前文件名:</span>
                 <input 
                   type="text" 
+                  :disabled="isBelowThreshold"
                   :value="imgNode.uploadedFileName || imgNode.defaultValue"
                   @input="e => { imgNode.uploadedFileName = e.target.value; if (nodeOverrides[imgNode.nodeId]) nodeOverrides[imgNode.nodeId][imgNode.fieldName] = e.target.value; }" 
-                  placeholder="留空则使用工作流默认图片"
-                  class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-300 font-mono text-xs focus:outline-none focus:border-indigo-500">
+                  :placeholder="isBelowThreshold ? '未达到门槛，已锁定输入' : '留空则使用工作流默认图片'"
+                  :class="[
+                    'flex-1 border rounded-lg px-2.5 py-1 font-mono text-xs focus:outline-none transition',
+                    isBelowThreshold ? 'bg-slate-900/60 border-slate-800/80 text-slate-500 cursor-not-allowed' : 'bg-slate-950 border-slate-800 text-slate-300 focus:border-indigo-500'
+                  ]">
               </div>
             </div>
           </div>
@@ -651,15 +665,25 @@
                 </span>
               </div>
               <div class="flex items-center gap-3">
-                <label class="cursor-pointer flex-1 border border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-3 text-center transition bg-slate-950">
-                  <input type="file" accept="video/*" @change="e => handleNodeVideoUpload(e, vidNode)" class="hidden">
-                  <div class="text-xs text-slate-400">
-                    <span v-if="!vidNode.isUploading">🎞️ 点击选择或拖入参考视频 (MP4/WebM)</span>
+                <label 
+                  :class="[
+                    'flex-1 border border-dashed rounded-xl p-3 text-center transition select-none',
+                    isBelowThreshold 
+                      ? 'border-amber-500/40 bg-amber-950/20 cursor-not-allowed opacity-80' 
+                      : 'cursor-pointer border-slate-700 hover:border-indigo-500 bg-slate-950'
+                  ]"
+                  @click="handleUploadAreaClick($event)">
+                  <input type="file" accept="video/*" :disabled="isBelowThreshold" @change="e => handleNodeVideoUpload(e, vidNode)" class="hidden">
+                  <div class="text-xs">
+                    <span v-if="isBelowThreshold" class="text-amber-400 font-medium flex items-center justify-center gap-1.5">
+                      🔒 余额未达门槛 (需 {{ currentWorkflow?.minPoints }} RC币) 已禁止上传
+                    </span>
+                    <span v-else-if="!vidNode.isUploading" class="text-slate-400">🎞️ 点击选择或拖入参考视频 (MP4/WebM)</span>
                     <span v-else class="text-indigo-400 animate-pulse">正在上传视频...</span>
                   </div>
                 </label>
                 <div v-if="vidNode.previewUrl" class="relative w-16 h-14 rounded-lg overflow-hidden border border-slate-700 bg-black flex-shrink-0">
-                  <video :src="vidNode.previewUrl" class="w-full h-full object-cover" muted autoplay loop></video>
+                  <video :src="vidNode.previewUrl" class="w-full h-full object-cover" muted preload="metadata"></video>
                   <button @click="vidNode.previewUrl = null; vidNode.uploadedFileName = ''" class="absolute top-0 right-0 bg-red-600 text-white text-[10px] w-4 h-4 rounded-bl flex items-center justify-center">✕</button>
                 </div>
               </div>
@@ -667,10 +691,14 @@
                 <span class="text-slate-500 whitespace-nowrap">当前视频名:</span>
                 <input 
                   type="text" 
+                  :disabled="isBelowThreshold"
                   :value="vidNode.uploadedFileName || vidNode.defaultValue"
                   @input="e => { vidNode.uploadedFileName = e.target.value; if (nodeOverrides[vidNode.nodeId]) nodeOverrides[vidNode.nodeId][vidNode.fieldName] = e.target.value; }" 
-                  placeholder="留空则使用工作流默认参考视频"
-                  class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-300 font-mono text-xs focus:outline-none focus:border-indigo-500">
+                  :placeholder="isBelowThreshold ? '未达到门槛，已锁定输入' : '留空则使用工作流默认参考视频'"
+                  :class="[
+                    'flex-1 border rounded-lg px-2.5 py-1 font-mono text-xs focus:outline-none transition',
+                    isBelowThreshold ? 'bg-slate-900/60 border-slate-800/80 text-slate-500 cursor-not-allowed' : 'bg-slate-950 border-slate-800 text-slate-300 focus:border-indigo-500'
+                  ]">
               </div>
             </div>
           </div>
@@ -689,23 +717,39 @@
                 <span v-if="audNode.isUploading" class="text-indigo-400 animate-pulse text-[11px]">正在上传音频...</span>
               </div>
               <div class="flex items-center gap-3">
-                <label class="flex-1 flex items-center justify-center gap-2 p-3 border-2 border-dashed border-slate-700/80 hover:border-indigo-500 rounded-xl cursor-pointer bg-slate-900/50 hover:bg-slate-850 transition">
-                  <span class="text-indigo-400 text-sm">📤</span>
-                  <span class="text-xs text-slate-300 font-medium">选择本地音频 (MP3/WAV/FLAC/OGG/M4A)</span>
-                  <input type="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac" @change="e => handleNodeAudioUpload(e, audNode)" class="hidden" />
+                <label 
+                  :class="[
+                    'flex-1 flex items-center justify-center gap-2 p-3 border-2 border-dashed rounded-xl transition select-none',
+                    isBelowThreshold 
+                      ? 'border-amber-500/40 bg-amber-950/20 cursor-not-allowed opacity-80' 
+                      : 'border-slate-700/80 hover:border-indigo-500 cursor-pointer bg-slate-900/50 hover:bg-slate-850'
+                  ]"
+                  @click="handleUploadAreaClick($event)">
+                  <span v-if="isBelowThreshold" class="text-amber-400 text-xs font-medium flex items-center gap-1.5">
+                    🔒 余额未达门槛 (需 {{ currentWorkflow?.minPoints }} RC币) 已禁止上传
+                  </span>
+                  <template v-else>
+                    <span class="text-indigo-400 text-sm">📤</span>
+                    <span class="text-xs text-slate-300 font-medium">选择本地音频 (MP3/WAV/FLAC/OGG/M4A)</span>
+                  </template>
+                  <input type="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac" :disabled="isBelowThreshold" @change="e => handleNodeAudioUpload(e, audNode)" class="hidden" />
                 </label>
               </div>
               <div v-if="audNode.previewUrl" class="space-y-1">
-                <audio :src="audNode.previewUrl" controls class="w-full h-8 rounded-lg"></audio>
+                <audio :src="audNode.previewUrl" controls preload="metadata" class="w-full h-8 rounded-lg"></audio>
               </div>
               <div class="flex items-center gap-2 text-xs">
                 <span class="text-slate-500 whitespace-nowrap">当前音频名:</span>
                 <input 
                   type="text" 
+                  :disabled="isBelowThreshold"
                   :value="audNode.uploadedFileName || audNode.defaultValue"
                   @input="e => { audNode.uploadedFileName = e.target.value; if (nodeOverrides[audNode.nodeId]) nodeOverrides[audNode.nodeId][audNode.fieldName] = e.target.value; }" 
-                  placeholder="留空则使用工作流默认参考音频"
-                  class="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-300 font-mono text-xs focus:outline-none focus:border-indigo-500">
+                  :placeholder="isBelowThreshold ? '未达到门槛，已锁定输入' : '留空则使用工作流默认参考音频'"
+                  :class="[
+                    'flex-1 border rounded-lg px-2.5 py-1 font-mono text-xs focus:outline-none transition',
+                    isBelowThreshold ? 'bg-slate-900/60 border-slate-800/80 text-slate-500 cursor-not-allowed' : 'bg-slate-950 border-slate-800 text-slate-300 focus:border-indigo-500'
+                  ]">
               </div>
             </div>
           </div>
