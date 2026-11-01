@@ -333,7 +333,13 @@
                   <span class="text-xs font-medium">总注册用户</span>
                   <i data-lucide="users" class="w-4 h-4 text-indigo-400"></i>
                 </div>
-                <div class="text-2xl font-bold font-mono text-white">{{ overview.totalUsers || 0 }}</div>
+                <div class="text-2xl font-bold font-mono text-white flex items-baseline justify-between">
+                  <span>{{ overview.totalUsers || 0 }}</span>
+                  <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 flex items-center gap-1.5" title="当前活跃在线人数（含网页活跃及后台挂机）">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    在线 {{ overview.onlineUsers || 0 }}
+                  </span>
+                </div>
                 <div class="mt-2 text-[11px] text-emerald-400 flex items-center gap-1">
                   <i data-lucide="check" class="w-3 h-3"></i>
                   <span>正常活跃: {{ overview.activeUsers || 0 }} 人</span>
@@ -608,6 +614,7 @@
                   <thead>
                     <tr class="border-b border-slate-800 text-slate-400">
                       <th class="py-3 px-3">用户档案</th>
+                      <th class="py-3 px-3">实时状态</th>
                       <th class="py-3 px-3">角色权限</th>
                       <th class="py-3 px-3">剩余点数</th>
                       <th class="py-3 px-3">任务总数</th>
@@ -620,14 +627,38 @@
                     <tr v-for="u in (paginatedUsers || filteredUsers)" :key="u.id" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
                         <div class="flex items-center gap-2.5">
-                          <div class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 font-bold flex items-center justify-center shrink-0">
-                            {{ (u.username || 'U')[0].toUpperCase() }}
+                          <div class="relative shrink-0">
+                            <div class="w-8 h-8 rounded-full bg-indigo-600/20 text-indigo-400 font-bold flex items-center justify-center">
+                              {{ (u.username || 'U')[0].toUpperCase() }}
+                            </div>
+                            <span v-if="u.onlineStatus?.statusKey === 'ONLINE_RUNNING'" class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-slate-900 animate-pulse" title="在线 · 渲染中"></span>
+                            <span v-else-if="u.onlineStatus?.statusKey === 'ONLINE'" class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 border-2 border-slate-900" title="在线"></span>
+                            <span v-else-if="u.onlineStatus?.statusKey === 'HOSTING_RUNNING'" class="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-purple-500 border-2 border-slate-900 animate-pulse" title="长任务挂机中"></span>
+                            <span v-else class="absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full bg-slate-600 border border-slate-900" title="离线"></span>
                           </div>
                           <div>
                             <div class="font-bold text-white">{{ u.username }}</div>
                             <div class="text-[10px] text-slate-500">{{ u.email || '未绑定邮箱' }}</div>
                           </div>
                         </div>
+                      </td>
+                      <td class="py-3 px-3">
+                        <span v-if="u.onlineStatus?.statusKey === 'ONLINE_RUNNING'" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 inline-flex items-center gap-1.5" title="用户心跳有效且有任务进行中">
+                          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                          在线 · 渲染中 ({{ u.onlineStatus.runningTasksCount }})
+                        </span>
+                        <span v-else-if="u.onlineStatus?.statusKey === 'ONLINE'" class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 inline-flex items-center gap-1.5" title="用户心跳活跃">
+                          <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                          在线
+                        </span>
+                        <span v-else-if="u.onlineStatus?.statusKey === 'HOSTING_RUNNING'" class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/30 inline-flex items-center gap-1.5 shadow-sm shadow-purple-500/10" title="网页关闭但后台仍在执行生图">
+                          <span class="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse"></span>
+                          挂机渲染中 ({{ u.onlineStatus.runningTasksCount }})
+                        </span>
+                        <span v-else class="px-2 py-0.5 rounded text-[10px] text-slate-500 bg-slate-800/40 border border-slate-800 inline-flex items-center gap-1.5">
+                          <span class="w-1.5 h-1.5 rounded-full bg-slate-600"></span>
+                          {{ u.onlineStatus?.statusText || '离线' }}
+                        </span>
                       </td>
                       <td class="py-3 px-3">
                         <span :class="u.role === 'admin' ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60' : 'bg-slate-800 text-slate-300'" class="px-2 py-0.5 rounded text-[10px] font-bold">
@@ -655,7 +686,7 @@
                       </td>
                     </tr>
                     <tr v-if="filteredUsers.length === 0">
-                      <td colspan="7" class="py-8 text-center text-slate-500">
+                      <td colspan="8" class="py-8 text-center text-slate-500">
                         未匹配到符合条件的用户记录
                       </td>
                     </tr>
@@ -826,41 +857,56 @@
 
           </section>
 
-          <!-- 5. 全局任务审计流视图 (Tasks) -->
+          <!-- 5. 全局任务审计流与控制中心 (Tasks & Audit CRUD) -->
           <section v-if="activeSection === 'tasks'" class="space-y-4">
             
             <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-5 space-y-4">
               
               <!-- 顶部工具栏与多维筛选 -->
-              <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
+              <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-4 border-b border-slate-800/80">
                 <div>
                   <div class="flex items-center gap-2">
-                    <h3 class="text-sm font-bold text-white">平台全量任务流水监控</h3>
+                    <h3 class="text-sm font-bold text-white flex items-center gap-2">
+                      <i data-lucide="shield-alert" class="w-4 h-4 text-indigo-400"></i>
+                      <span>平台全量任务审计流与智能管控中心</span>
+                    </h3>
                     <span class="px-2 py-0.5 rounded-full text-xs font-mono bg-indigo-500/15 text-indigo-400 border border-indigo-500/30">
                       {{ allTasks.length }} 条流水
                     </span>
+                    <span v-if="selectedTaskIds.length > 0" class="px-2 py-0.5 rounded-full text-xs font-mono bg-rose-500/15 text-rose-300 border border-rose-500/30 animate-pulse">
+                      已勾选 {{ selectedTaskIds.length }} 项
+                    </span>
                   </div>
-                  <p class="text-xs text-slate-500 mt-1">支持按用户分类、按状态筛选（进行中/成功/失败/已取消），支持任意进行中任务的强制取消与退款</p>
+                  <p class="text-xs text-slate-500 mt-1">精准识别取消发起主体（用户主动 / 管理员中断 / 系统看门狗熔断 / 云端异常撤单），支持全景参数复盘、审计批注与手工调账</p>
                 </div>
 
-                <div class="flex flex-wrap items-center gap-2.5">
+                <div class="flex flex-wrap items-center gap-2">
+                  <!-- 关键字搜索 -->
+                  <div class="relative w-44 sm:w-52">
+                    <input 
+                      type="text" 
+                      v-model="taskSearchKeyword" 
+                      @keyup.enter="loadTasks"
+                      placeholder="搜任务ID/工作流/用户名/批注..." 
+                      class="w-full bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 pl-7 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500">
+                    <i data-lucide="search" class="w-3.5 h-3.5 text-slate-500 absolute left-2 top-2"></i>
+                  </div>
+
                   <!-- 用户筛选 -->
-                  <div class="flex items-center gap-1.5 text-xs">
-                    <span class="text-slate-400 text-[11px]">用户:</span>
+                  <div class="flex items-center gap-1 text-xs">
                     <select 
                       v-model="taskFilterUser" 
                       @change="loadTasks" 
-                      class="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 max-w-[150px]">
+                      class="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500 max-w-[130px]">
                       <option value="">全部用户</option>
                       <option v-for="u in users" :key="u.id" :value="u.id">
-                        {{ u.username }} ({{ u.role === 'admin' ? '管理员' : '普通用户' }})
+                        {{ u.username }}
                       </option>
                     </select>
                   </div>
 
                   <!-- 状态筛选 -->
-                  <div class="flex items-center gap-1.5 text-xs">
-                    <span class="text-slate-400 text-[11px]">状态:</span>
+                  <div class="flex items-center gap-1 text-xs">
                     <select 
                       v-model="taskFilterStatus" 
                       @change="loadTasks" 
@@ -872,6 +918,30 @@
                       <option value="CANCELLED">⏹ 已取消 (CANCELLED)</option>
                     </select>
                   </div>
+
+                  <!-- 取消责任主体筛选 -->
+                  <div class="flex items-center gap-1 text-xs">
+                    <select 
+                      v-model="taskFilterCancelledBy" 
+                      @change="loadTasks" 
+                      class="bg-slate-950 border border-slate-800 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500">
+                      <option value="ALL">全部取消主体</option>
+                      <option value="USER">👤 用户主动 (USER)</option>
+                      <option value="ADMIN">👑 管理员中断 (ADMIN)</option>
+                      <option value="SYSTEM">⏱️ 系统熔断 (SYSTEM)</option>
+                      <option value="CLOUD">☁️ 云端撤销 (CLOUD)</option>
+                    </select>
+                  </div>
+
+                  <!-- 批量删除勾选 -->
+                  <button 
+                    :disabled="selectedTaskIds.length === 0"
+                    @click="adminBatchDeleteSelected" 
+                    :class="selectedTaskIds.length > 0 ? 'bg-rose-950/80 hover:bg-rose-900 border-rose-800/80 text-rose-300' : 'bg-slate-800/40 text-slate-600 border-slate-800 cursor-not-allowed'"
+                    class="px-2.5 py-1.5 rounded-xl text-xs transition border flex items-center gap-1">
+                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                    <span>批量清理 ({{ selectedTaskIds.length }})</span>
+                  </button>
 
                   <!-- 批量清理失败或取消任务 -->
                   <button 
@@ -896,19 +966,33 @@
                 <table class="w-full text-left text-xs">
                   <thead>
                     <tr class="border-b border-slate-800 text-slate-400">
+                      <th class="py-3 px-3 w-8">
+                        <input 
+                          type="checkbox" 
+                          :checked="isAllTasksSelected" 
+                          @change="toggleSelectAllTasks"
+                          class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer">
+                      </th>
                       <th class="py-3 px-3">任务 ID / 用户</th>
                       <th class="py-3 px-3">工作流模型</th>
-                      <th class="py-3 px-3">状态</th>
+                      <th class="py-3 px-3">运行状态 / 取消主体 / 诊断</th>
                       <th class="py-3 px-3">耗时 / RC币</th>
                       <th class="py-3 px-3">产出预览</th>
                       <th class="py-3 px-3">创建时间</th>
-                      <th class="py-3 px-3 text-right">管控操作</th>
+                      <th class="py-3 px-3 text-right">审计与管控</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-slate-800/60">
                     <tr v-for="t in (paginatedAdminTasks || allTasks)" :key="t.taskId" class="hover:bg-slate-800/30 transition">
                       <td class="py-3 px-3">
-                        <div class="font-mono text-indigo-400 font-bold truncate max-w-[150px]" :title="t.taskId">{{ t.taskId }}</div>
+                        <input 
+                          type="checkbox" 
+                          :value="t.taskId" 
+                          v-model="selectedTaskIds"
+                          class="rounded bg-slate-950 border-slate-700 text-indigo-600 focus:ring-0 cursor-pointer">
+                      </td>
+                      <td class="py-3 px-3">
+                        <div class="font-mono text-indigo-400 font-bold truncate max-w-[150px] cursor-pointer hover:underline" @click="openTaskAudit(t)" :title="'点击全景审计: ' + t.taskId">{{ t.taskId }}</div>
                         <div class="text-[10px] text-slate-400">用户: <span class="text-slate-200 font-semibold">{{ t.username || '匿名' }}</span> <span v-if="t.userId" class="font-mono text-slate-500 text-[9px]">(ID: {{ t.userId }})</span></div>
                       </td>
                       <td class="py-3 px-3">
@@ -916,11 +1000,38 @@
                         <div class="text-[10px] text-slate-500 font-mono">{{ t.workflowId }}</div>
                       </td>
                       <td class="py-3 px-3">
-                        <span :class="getStatusBadge(t.status)" class="px-2 py-0.5 rounded text-[10px] font-bold">
-                          {{ t.status }}
-                        </span>
-                        <div v-if="t.error || t.errorMessage" class="text-[10px] text-rose-400 mt-1 max-w-[160px] truncate" :title="t.error || t.errorMessage">
-                          {{ t.error || t.errorMessage }}
+                        <div v-if="t.status === 'CANCELLED'" class="space-y-1">
+                          <span v-if="t.cancelledBy === 'USER'" class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-400 border border-amber-500/30 inline-flex items-center gap-1" title="用户在网页端主动取消">
+                            👤 用户主动取消
+                          </span>
+                          <span v-else-if="t.cancelledBy === 'ADMIN'" class="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/15 text-rose-400 border border-rose-500/30 inline-flex items-center gap-1" :title="'管理员【' + (t.cancelledOperator || 'Admin') + '】后台强制中断'">
+                            👑 管理员中断 ({{ t.cancelledOperator || 'Admin' }})
+                          </span>
+                          <span v-else-if="t.cancelledBy === 'SYSTEM'" class="px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/15 text-blue-400 border border-blue-500/30 inline-flex items-center gap-1" title="系统安全看门狗超时自动熔断">
+                            ⏱️ 系统熔断退单
+                          </span>
+                          <span v-else-if="t.cancelledBy === 'CLOUD'" class="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-500/15 text-purple-400 border border-purple-500/30 inline-flex items-center gap-1" title="云端GPU节点返回撤销">
+                            ☁️ 云端异常撤单
+                          </span>
+                          <span v-else class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300">
+                            ⏹ 已取消
+                          </span>
+                          <div v-if="t.cancelReason" class="text-[10px] text-slate-400 max-w-[170px] truncate" :title="t.cancelReason">
+                            {{ t.cancelReason }}
+                          </div>
+                        </div>
+                        <div v-else>
+                          <span :class="getStatusBadge(t.status)" class="px-2 py-0.5 rounded text-[10px] font-bold">
+                            {{ t.status }}
+                          </span>
+                          <div v-if="t.error || t.errorMessage" class="text-[10px] text-rose-400 mt-1 max-w-[160px] truncate" :title="t.error || t.errorMessage">
+                            {{ t.error || t.errorMessage }}
+                          </div>
+                        </div>
+                        <div v-if="t.adminNote" class="mt-1">
+                          <span class="px-1.5 py-0.5 rounded text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 inline-flex items-center gap-1" :title="t.adminNote">
+                            ✏️ {{ t.adminNote }}
+                          </span>
                         </div>
                       </td>
                       <td class="py-3 px-3 font-mono">
@@ -933,7 +1044,8 @@
                             v-for="(out, idx) in t.outputs.slice(0, 2)" 
                             :key="idx" 
                             :src="out.fileUrl || out.url" 
-                            class="w-8 h-8 rounded object-cover border border-slate-700">
+                            class="w-8 h-8 rounded object-cover border border-slate-700 cursor-pointer"
+                            @click="openTaskAudit(t)">
                           <span v-if="t.outputs.length > 2" class="text-[10px] text-slate-500">+{{ t.outputs.length - 2 }}</span>
                         </div>
                         <span v-else class="text-[10px] text-slate-600">无产出</span>
@@ -943,6 +1055,15 @@
                       </td>
                       <td class="py-3 px-3 text-right">
                         <div class="flex items-center justify-end gap-1.5">
+                          <!-- 全景审计按钮 -->
+                          <button 
+                            @click="openTaskAudit(t)"
+                            title="全景参数审计、节点分析与批注调账"
+                            class="px-2 py-1 rounded-lg bg-indigo-950/60 hover:bg-indigo-600 text-indigo-300 hover:text-white text-[11px] font-medium border border-indigo-800/50 transition flex items-center gap-1">
+                            <i data-lucide="eye" class="w-3 h-3"></i>
+                            <span>审计</span>
+                          </button>
+
                           <!-- 强制取消按钮 (仅运行中或排队中可见) -->
                           <button 
                             v-if="t.status === 'QUEUED' || t.status === 'RUNNING' || t.status === 'PENDING'"
@@ -950,7 +1071,7 @@
                             title="强制中断此任务并自动退还RC币"
                             class="px-2 py-1 rounded-lg bg-rose-950/60 hover:bg-rose-600 text-rose-300 hover:text-white text-[11px] font-medium border border-rose-800/50 transition flex items-center gap-1">
                             <i data-lucide="slash" class="w-3 h-3"></i>
-                            <span>强行取消</span>
+                            <span>取消</span>
                           </button>
 
                           <!-- 清理任务记录 (彻底从数据库删除台账) -->
@@ -964,7 +1085,7 @@
                       </td>
                     </tr>
                     <tr v-if="allTasks.length === 0">
-                      <td colspan="7" class="py-12 text-center text-slate-500">
+                      <td colspan="8" class="py-12 text-center text-slate-500">
                         当前筛选条件下无任何任务流水记录
                       </td>
                     </tr>
@@ -3028,6 +3149,298 @@
         </div>
       </transition>
 
+      <!-- 全景任务审计流与控制台 Modal (面向管理后台深度审计与调账) -->
+      <div v-if="taskAuditModal.show" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-5">
+        <div class="bg-slate-900 border border-slate-800 rounded-3xl max-w-4xl w-full max-h-[92vh] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+          
+          <!-- 弹窗顶栏 -->
+          <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-slate-950/70">
+            <div class="flex items-center gap-3">
+              <div class="w-9 h-9 rounded-xl bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 flex items-center justify-center font-bold text-base">
+                🔍
+              </div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <h3 class="text-sm font-bold text-white">全景任务审计与参数溯源</h3>
+                  <span class="font-mono text-xs text-indigo-400 bg-indigo-950/80 px-2 py-0.5 rounded border border-indigo-800/60 select-all cursor-pointer hover:bg-indigo-900/80" @click="copyTextToClipboard(taskAuditModal.task?.taskId, '任务ID')" title="点击复制任务ID">
+                    {{ taskAuditModal.task?.taskId }}
+                  </span>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-0.5">全链路节点入参、取消责任归属判定、耗时与扣费对账、审计批注与手工调账</p>
+              </div>
+            </div>
+            
+            <div class="flex items-center gap-2">
+              <span :class="getStatusBadge(taskAuditModal.task?.status)" class="px-2.5 py-1 rounded text-xs font-bold">
+                {{ taskAuditModal.task?.status }}
+              </span>
+              <button @click="taskAuditModal.show = false" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition">
+                ✕
+              </button>
+            </div>
+          </div>
+
+          <!-- 弹窗标签导航栏 -->
+          <div class="px-6 pt-3 border-b border-slate-800 flex items-center gap-4 bg-slate-950/40 text-xs">
+            <button 
+              @click="taskAuditModal.activeTab = 'overview'" 
+              :class="taskAuditModal.activeTab === 'overview' ? 'text-indigo-400 border-b-2 border-indigo-500 font-bold' : 'text-slate-400 hover:text-slate-200'" 
+              class="pb-2.5 transition flex items-center gap-1.5">
+              <span>📌 任务台账与参数</span>
+            </button>
+            <button 
+              v-if="taskAuditModal.task?.status === 'CANCELLED' || taskAuditModal.task?.cancelledBy"
+              @click="taskAuditModal.activeTab = 'cancellation'" 
+              :class="taskAuditModal.activeTab === 'cancellation' ? 'text-amber-400 border-b-2 border-amber-500 font-bold' : 'text-slate-400 hover:text-slate-200'" 
+              class="pb-2.5 transition flex items-center gap-1.5">
+              <span>⚠️ 取消溯源诊断</span>
+            </button>
+            <button 
+              @click="taskAuditModal.activeTab = 'outputs'" 
+              :class="taskAuditModal.activeTab === 'outputs' ? 'text-indigo-400 border-b-2 border-indigo-500 font-bold' : 'text-slate-400 hover:text-slate-200'" 
+              class="pb-2.5 transition flex items-center gap-1.5">
+              <span>🖼️ 产物成果 ({{ (taskAuditModal.task?.outputs || []).length }})</span>
+            </button>
+            <button 
+              @click="taskAuditModal.activeTab = 'crud'" 
+              :class="taskAuditModal.activeTab === 'crud' ? 'text-emerald-400 border-b-2 border-emerald-500 font-bold' : 'text-slate-400 hover:text-slate-200'" 
+              class="pb-2.5 transition flex items-center gap-1.5">
+              <span>✏️ 审计批注与调账</span>
+            </button>
+          </div>
+
+          <!-- 弹窗内容主体 -->
+          <div class="p-6 overflow-y-auto flex-1 space-y-5 text-xs text-slate-300">
+            
+            <!-- Tab 1: 任务台账与参数 -->
+            <div v-if="taskAuditModal.activeTab === 'overview'" class="space-y-4">
+              <!-- 核心指标卡 -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
+                  <span class="text-[11px] text-slate-500 block mb-1">所属用户</span>
+                  <div class="font-bold text-white truncate">{{ taskAuditModal.task?.username || '匿名用户' }}</div>
+                  <div class="text-[10px] text-slate-500 font-mono">UID: {{ taskAuditModal.task?.userId || '-' }}</div>
+                </div>
+                <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
+                  <span class="text-[11px] text-slate-500 block mb-1">工作流模型</span>
+                  <div class="font-bold text-white truncate">{{ taskAuditModal.task?.workflowName || '未命名' }}</div>
+                  <div class="text-[10px] text-slate-500 font-mono">WFID: {{ taskAuditModal.task?.workflowId || '-' }}</div>
+                </div>
+                <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
+                  <span class="text-[11px] text-slate-500 block mb-1">运行时长</span>
+                  <div class="font-bold font-mono text-emerald-400">{{ formatDuration(taskAuditModal.task?.duration || 0) }}</div>
+                  <div class="text-[10px] text-slate-500 font-mono">限额: {{ taskAuditModal.task?.maxBillableSeconds || 0 }}s</div>
+                </div>
+                <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800">
+                  <span class="text-[11px] text-slate-500 block mb-1">消耗RC币</span>
+                  <div class="font-bold font-mono text-amber-400">{{ Math.floor(taskAuditModal.task?.cost || 0) }} RC币</div>
+                  <div class="text-[10px] text-slate-500 font-mono">算力: {{ taskAuditModal.task?.instanceType || 'default' }}</div>
+                </div>
+              </div>
+
+              <!-- 提示词参数 -->
+              <div class="space-y-3">
+                <div class="p-3.5 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1.5">
+                  <div class="flex items-center justify-between text-slate-400">
+                    <span class="font-bold text-indigo-300 flex items-center gap-1">✨ 正向提示词 (Positive Prompt)</span>
+                    <button 
+                      v-if="taskAuditModal.task?.positivePrompt"
+                      @click="copyTextToClipboard(taskAuditModal.task?.positivePrompt, '正向提示词')" 
+                      class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200">
+                      复制文本
+                    </button>
+                  </div>
+                  <div class="p-2.5 rounded-lg bg-slate-900 border border-slate-800/80 font-mono text-slate-200 leading-relaxed max-h-32 overflow-y-auto selection:bg-indigo-500">
+                    {{ taskAuditModal.task?.positivePrompt || '无正向提示词' }}
+                  </div>
+                </div>
+
+                <div class="p-3.5 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1.5">
+                  <div class="flex items-center justify-between text-slate-400">
+                    <span class="font-bold text-rose-300 flex items-center gap-1">🚫 反向提示词 (Negative Prompt)</span>
+                    <button 
+                      v-if="taskAuditModal.task?.negativePrompt"
+                      @click="copyTextToClipboard(taskAuditModal.task?.negativePrompt, '反向提示词')" 
+                      class="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-200">
+                      复制文本
+                    </button>
+                  </div>
+                  <div class="p-2.5 rounded-lg bg-slate-900 border border-slate-800/80 font-mono text-slate-200 leading-relaxed max-h-24 overflow-y-auto selection:bg-rose-500">
+                    {{ taskAuditModal.task?.negativePrompt || '无反向提示词' }}
+                  </div>
+                </div>
+              </div>
+
+              <!-- 时间与硬件节点信息 -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-slate-400 text-xs">
+                <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                  <div class="flex justify-between">
+                    <span>创建时间:</span>
+                    <span class="font-mono text-white">{{ formatTimestamp(taskAuditModal.task?.createdAt) }}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>更新时间:</span>
+                    <span class="font-mono text-white">{{ formatTimestamp(taskAuditModal.task?.updatedAt) }}</span>
+                  </div>
+                </div>
+                <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 space-y-1">
+                  <div class="flex justify-between">
+                    <span>占用 Key 通道:</span>
+                    <span class="font-mono text-white">{{ taskAuditModal.task?.keyId || '默认活跃池' }}</span>
+                  </div>
+                  <div class="flex justify-between">
+                    <span>进度步数:</span>
+                    <span class="font-mono text-white">{{ taskAuditModal.task?.currentStep || '-' }} ({{ taskAuditModal.task?.progressPercent || 0 }}%)</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 2: 取消溯源诊断 -->
+            <div v-if="taskAuditModal.activeTab === 'cancellation'" class="space-y-4">
+              <div class="p-4 rounded-2xl bg-amber-950/30 border border-amber-800/50 space-y-3">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                    <span>🛑</span> <span>取消责任主体判定</span>
+                  </span>
+                  <span v-if="taskAuditModal.task?.cancelledBy === 'USER'" class="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                    👤 用户主动取消 (USER)
+                  </span>
+                  <span v-else-if="taskAuditModal.task?.cancelledBy === 'ADMIN'" class="px-2.5 py-1 rounded-full text-xs font-bold bg-rose-500/20 text-rose-300 border border-rose-500/40">
+                    👑 管理员强制中断 (ADMIN)
+                  </span>
+                  <span v-else-if="taskAuditModal.task?.cancelledBy === 'SYSTEM'" class="px-2.5 py-1 rounded-full text-xs font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                    ⏱️ 系统超时熔断 (SYSTEM)
+                  </span>
+                  <span v-else-if="taskAuditModal.task?.cancelledBy === 'CLOUD'" class="px-2.5 py-1 rounded-full text-xs font-bold bg-purple-500/20 text-purple-300 border border-purple-500/40">
+                    ☁️ 云端节点撤单 (CLOUD)
+                  </span>
+                  <span v-else class="px-2.5 py-1 rounded-full text-xs font-bold bg-slate-800 text-slate-300">
+                    已取消
+                  </span>
+                </div>
+
+                <div class="space-y-2 text-xs">
+                  <div class="flex justify-between py-1 border-b border-amber-900/40">
+                    <span class="text-amber-200/70">经办操作人 / 触发程序:</span>
+                    <span class="font-bold text-white">{{ taskAuditModal.task?.cancelledOperator || '未明确记录' }}</span>
+                  </div>
+                  <div class="flex justify-between py-1 border-b border-amber-900/40">
+                    <span class="text-amber-200/70">取消触发时间:</span>
+                    <span class="font-mono text-white">{{ formatTimestamp(taskAuditModal.task?.cancelledAt) }}</span>
+                  </div>
+                  <div class="flex justify-between py-1 border-b border-amber-900/40">
+                    <span class="text-amber-200/70">算力退费审计:</span>
+                    <span class="text-emerald-400 font-bold">已全额退还扣减点数 (ACID 幂等保障)</span>
+                  </div>
+                </div>
+
+                <div class="p-3 bg-slate-950/80 rounded-xl border border-slate-800 text-slate-300 space-y-1">
+                  <span class="text-[11px] text-slate-400 font-bold block">取消详因与云端回执:</span>
+                  <p class="font-mono text-xs leading-relaxed text-amber-200/90">{{ taskAuditModal.task?.cancelReason || taskAuditModal.task?.error || '无详细附加信息' }}</p>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab 3: 产物成果 -->
+            <div v-if="taskAuditModal.activeTab === 'outputs'" class="space-y-4">
+              <div v-if="taskAuditModal.task?.outputs && taskAuditModal.task.outputs.length" class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                <div v-for="(out, idx) in taskAuditModal.task.outputs" :key="idx" class="p-3 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-2 flex flex-col justify-between">
+                  <div class="rounded-xl overflow-hidden bg-slate-900 border border-slate-800 aspect-square flex items-center justify-center">
+                    <img :src="out.fileUrl || out.url" class="w-full h-full object-cover">
+                  </div>
+                  <div class="space-y-1">
+                    <div class="font-bold text-white text-[11px] truncate">{{ out.filename || ('成果文件 ' + (idx + 1)) }}</div>
+                    <div class="flex items-center gap-2">
+                      <a :href="out.fileUrl || out.url" target="_blank" class="text-indigo-400 hover:text-indigo-300 text-[10px] underline">新窗口查看</a>
+                      <button @click="copyTextToClipboard(out.fileUrl || out.url, '直链')" class="text-slate-400 hover:text-slate-200 text-[10px]">复制直链</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div v-else class="py-12 text-center text-slate-500">
+                该任务尚无有效生成产物或成果已被清理
+              </div>
+            </div>
+
+            <!-- Tab 4: 审计批注与调账 (改 - Update) -->
+            <div v-if="taskAuditModal.activeTab === 'crud'" class="space-y-4">
+              <div class="p-4 bg-slate-950/80 rounded-2xl border border-slate-800 space-y-4">
+                <div>
+                  <label class="block text-xs font-bold text-white mb-1.5 flex items-center gap-1.5">
+                    <span>✏️ 管理员审计批注 (面向管理后台)</span>
+                  </label>
+                  <textarea 
+                    v-model="taskAuditModal.form.adminNote" 
+                    rows="3" 
+                    placeholder="记录关于该任务的审计结论、故障核验情况或与用户的沟通记录..." 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs text-white leading-relaxed focus:outline-none focus:border-indigo-500"></textarea>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-xs font-bold text-white mb-1.5">任务终态修正</label>
+                    <select v-model="taskAuditModal.form.status" class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white">
+                      <option :value="taskAuditModal.task?.status">保持原状态 ({{ taskAuditModal.task?.status }})</option>
+                      <option value="SUCCESS">✅ 修正为 SUCCESS (成功完成)</option>
+                      <option value="FAILED">❌ 修正为 FAILED (执行失败)</option>
+                      <option value="CANCELLED">⏹ 修正为 CANCELLED (已取消)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-bold text-white mb-1.5">手动RC币调账 (补发/扣减)</label>
+                    <input 
+                      type="number" 
+                      v-model.number="taskAuditModal.form.refundPoints" 
+                      placeholder="0 为不调整，正数为补发，负数为扣减" 
+                      class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white">
+                  </div>
+                </div>
+
+                <div>
+                  <label class="block text-xs font-bold text-white mb-1.5">调账原因说明 (将记入用户流水明细)</label>
+                  <input 
+                    type="text" 
+                    v-model="taskAuditModal.form.refundNote" 
+                    placeholder="例如: 经核查云端显存爆仓异常，补发该任务消耗RC币" 
+                    class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white">
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- 弹窗底栏操作 -->
+          <div class="px-6 py-4 border-t border-slate-800 bg-slate-950/70 flex items-center justify-between">
+            <button 
+              @click="adminDeleteTask(taskAuditModal.task?.taskId); taskAuditModal.show = false;"
+              class="px-3.5 py-2 rounded-xl bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs font-semibold transition flex items-center gap-1.5">
+              <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              <span>彻底清理此任务台账</span>
+            </button>
+
+            <div class="flex items-center gap-2.5">
+              <button 
+                @click="taskAuditModal.show = false" 
+                class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition">
+                关闭
+              </button>
+              <button 
+                @click="saveTaskAudit" 
+                :disabled="taskAuditModal.loading"
+                class="px-5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold shadow-md shadow-indigo-600/20 transition flex items-center gap-1.5">
+                <span v-if="taskAuditModal.loading" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                <span>保存审计与调账变更</span>
+              </button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      </transition>
+
     </template>
 
   </div>
@@ -3289,7 +3702,41 @@
         });
         const taskFilterStatus = ref('ALL');
         const taskFilterUser = ref('');
+        const taskFilterCancelledBy = ref('ALL');
+        const taskSearchKeyword = ref('');
         const taskFilterLoading = ref(false);
+        const selectedTaskIds = ref([]);
+
+        const isAllTasksSelected = computed(() => {
+          const currentList = paginatedAdminTasks.value || [];
+          if (currentList.length === 0) return false;
+          return currentList.every(t => selectedTaskIds.value.includes(t.taskId));
+        });
+
+        const toggleSelectAllTasks = () => {
+          const currentList = paginatedAdminTasks.value || [];
+          if (isAllTasksSelected.value) {
+            const pageIds = currentList.map(t => t.taskId);
+            selectedTaskIds.value = selectedTaskIds.value.filter(id => !pageIds.includes(id));
+          } else {
+            const currentSelected = new Set(selectedTaskIds.value);
+            currentList.forEach(t => currentSelected.add(t.taskId));
+            selectedTaskIds.value = Array.from(currentSelected);
+          }
+        };
+
+        const taskAuditModal = ref({
+          show: false,
+          loading: false,
+          activeTab: 'overview',
+          task: null,
+          form: {
+            adminNote: '',
+            status: '',
+            refundPoints: 0,
+            refundNote: ''
+          }
+        });
 
         const workflows = ref([]);
         const workflowsLoading = ref(false);
@@ -3565,11 +4012,123 @@
             if (taskFilterUser.value) {
               params.append('user_id', taskFilterUser.value);
             }
+            if (taskFilterCancelledBy.value && taskFilterCancelledBy.value !== 'ALL') {
+              params.append('cancelled_by', taskFilterCancelledBy.value);
+            }
+            if (taskSearchKeyword.value && taskSearchKeyword.value.trim()) {
+              params.append('keyword', taskSearchKeyword.value.trim());
+            }
             const res = await authFetch('/api/admin/tasks?' + params.toString());
-            if (res.ok) allTasks.value = await res.json();
+            if (res.ok) {
+              allTasks.value = await res.json();
+              adminTaskPage.value = 1;
+            }
           } finally {
             taskFilterLoading.value = false;
           }
+        };
+
+        const openTaskAudit = async (taskOrId) => {
+          const tid = typeof taskOrId === 'string' ? taskOrId : taskOrId.taskId;
+          taskAuditModal.value.show = true;
+          taskAuditModal.value.loading = true;
+          taskAuditModal.value.activeTab = 'overview';
+          try {
+            const res = await authFetch(`/api/admin/tasks/${tid}`);
+            if (res.ok) {
+              const data = await res.json();
+              taskAuditModal.value.task = data;
+              taskAuditModal.value.form = {
+                adminNote: data.adminNote || '',
+                status: data.status || '',
+                refundPoints: 0,
+                refundNote: ''
+              };
+            } else {
+              showToastNotification('获取任务详情失败', 'error');
+            }
+          } catch(e) {
+            showToastNotification('请求失败: ' + e.message, 'error');
+          } finally {
+            taskAuditModal.value.loading = false;
+          }
+        };
+
+        const saveTaskAudit = async () => {
+          if (!taskAuditModal.value.task) return;
+          const tid = taskAuditModal.value.task.taskId;
+          taskAuditModal.value.loading = true;
+          try {
+            const payload = {
+              adminNote: taskAuditModal.value.form.adminNote,
+              status: taskAuditModal.value.form.status,
+              refundPoints: Number(taskAuditModal.value.form.refundPoints || 0),
+              refundNote: taskAuditModal.value.form.refundNote
+            };
+            const res = await authFetch(`/api/admin/tasks/${tid}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+              const data = await res.json();
+              showToastNotification(data.message || '审计记录已成功更新', 'success');
+              taskAuditModal.value.task = data.task;
+              const idx = allTasks.value.findIndex(t => t.taskId === tid);
+              if (idx !== -1) {
+                allTasks.value[idx] = data.task;
+              }
+              taskAuditModal.value.show = false;
+              await loadTasks();
+            } else {
+              const err = await res.json();
+              showToastNotification('保存失败: ' + (err.detail || '未知错误'), 'error');
+            }
+          } catch(e) {
+            showToastNotification('请求失败: ' + e.message, 'error');
+          } finally {
+            taskAuditModal.value.loading = false;
+          }
+        };
+
+        const adminBatchDeleteSelected = async () => {
+          if (selectedTaskIds.value.length === 0) return;
+          const count = selectedTaskIds.value.length;
+          const ok = await confirmAction({
+            title: '批量清理选中任务',
+            message: `确定要彻底删除已选中的 ${count} 条任务审计记录吗？此操作将物理删除底层数据且不可恢复。`,
+            confirmText: `确认清理 ${count} 条记录`,
+            type: 'danger'
+          });
+          if (!ok) return;
+
+          try {
+            const res = await authFetch('/api/admin/tasks/delete-batch', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ taskIds: selectedTaskIds.value })
+            });
+            if (res.ok) {
+              const data = await res.json();
+              showToastNotification(data.message || `成功批量清理 ${count} 条记录`, 'success');
+              selectedTaskIds.value = [];
+              await loadTasks();
+            } else {
+              const err = await res.json();
+              showToastNotification('批量删除失败: ' + (err.detail || '未知错误'), 'error');
+            }
+          } catch(e) {
+            showToastNotification('请求失败: ' + e.message, 'error');
+          }
+        };
+
+        const copyTextToClipboard = (text, label = '内容') => {
+          if (!text) return;
+          navigator.clipboard.writeText(String(text)).then(() => {
+            showToastNotification(`已成功复制${label}到剪贴板`, 'success');
+          }).catch(() => {
+            showToastNotification('复制失败，请手动选取', 'error');
+          });
         };
 
         const adminCancelTask = async (taskId) => {
@@ -5426,7 +5985,17 @@
           paginatedAdminTasks,
           taskFilterStatus,
           taskFilterUser,
+          taskFilterCancelledBy,
+          taskSearchKeyword,
           taskFilterLoading,
+          selectedTaskIds,
+          isAllTasksSelected,
+          toggleSelectAllTasks,
+          taskAuditModal,
+          openTaskAudit,
+          saveTaskAudit,
+          adminBatchDeleteSelected,
+          copyTextToClipboard,
           adminCancelTask,
           adminDeleteTask,
           adminBatchCleanTasks,

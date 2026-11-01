@@ -132,6 +132,20 @@ def init_database():
         except Exception:
             pass
 
+        # 任务审计流扩展列：取消主体识别与审计备注
+        for col_name, col_type in [
+            ("cancelled_by", "TEXT DEFAULT ''"),
+            ("cancel_reason", "TEXT DEFAULT ''"),
+            ("cancelled_at", "INTEGER DEFAULT 0"),
+            ("cancelled_operator", "TEXT DEFAULT ''"),
+            ("admin_note", "TEXT DEFAULT ''"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE tasks ADD COLUMN {col_name} {col_type};")
+                conn.commit()
+            except Exception:
+                pass
+
 
         # 3. 公告表 (Announcements) - 平台官方公告与活动通知
         cursor.execute("""
@@ -297,7 +311,12 @@ def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
         "createdAt": d.get("created_at"),
         "updatedAt": d.get("updated_at"),
         "keyId": d.get("key_id") or "",
-        "maxBillableSeconds": int(d.get("max_billable_seconds", 0) or 0)
+        "maxBillableSeconds": int(d.get("max_billable_seconds", 0) or 0),
+        "cancelledBy": d.get("cancelled_by") or "",
+        "cancelReason": d.get("cancel_reason") or "",
+        "cancelledAt": d.get("cancelled_at") or 0,
+        "cancelledOperator": d.get("cancelled_operator") or "",
+        "adminNote": d.get("admin_note") or ""
     }
 
 def db_load_tasks(
@@ -305,7 +324,9 @@ def db_load_tasks(
     status: Optional[str] = None,
     is_admin: bool = False, 
     limit: int = 200,
-    search_user: Optional[str] = None
+    search_user: Optional[str] = None,
+    cancelled_by: Optional[str] = None,
+    keyword: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -333,6 +354,15 @@ def db_load_tasks(
             else:
                 clauses.append("status = ?")
                 params.append(st_upper)
+
+        if cancelled_by and cancelled_by.upper() != "ALL":
+            clauses.append("cancelled_by = ?")
+            params.append(cancelled_by.upper())
+
+        if keyword and keyword.strip():
+            kw = f"%{keyword.strip()}%"
+            clauses.append("(task_id LIKE ? OR workflow_name LIKE ? OR username LIKE ? OR error_message LIKE ? OR admin_note LIKE ?)")
+            params.extend([kw, kw, kw, kw, kw])
                 
         where_sql = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         sql = f"SELECT * FROM tasks {where_sql} ORDER BY created_at DESC LIMIT ?;"
@@ -419,7 +449,12 @@ def db_update_task(task_id: str, updates: Dict[str, Any]):
             "keyId": "key_id",
             "key_id": "key_id",
             "maxBillableSeconds": "max_billable_seconds",
-            "max_billable_seconds": "max_billable_seconds"
+            "max_billable_seconds": "max_billable_seconds",
+            "cancelledBy": "cancelled_by",
+            "cancelReason": "cancel_reason",
+            "cancelledAt": "cancelled_at",
+            "cancelledOperator": "cancelled_operator",
+            "adminNote": "admin_note"
         }
         for k, v in updates.items():
             if k in mapping:
@@ -1015,3 +1050,26 @@ def db_get_user_cdkey_history(user_id: str) -> List[Dict[str, Any]]:
             })
         return result
 
+
+def db_get_active_task_user_ids() -> Dict[str, int]:
+    """获取有名下处于 RUNNING 或 QUEUED 状态任务的用户及其任务数 (用于在线状态智能感知)"""
+    with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT user_id, COUNT(*) as cnt 
+            FROM tasks 
+            WHERE status IN ('RUNNING', 'QUEUED') AND user_id IS NOT NULL AND user_id != ''
+            GROUP BY user_id;
+        """)
+        rows = cursor.fetchall()
+        return {str(r["user_id"]): int(r["cnt"]) for r in rows}
+
+def db_admin_update_task_audit(task_id: str, updates: Dict[str, Any]) -> bool:
+    """管理员后台专属：修改任务审计备注、修正状态等"""
+    allowed_fields = {"adminNote", "status", "error", "errorMessage", "cancelReason", "cancelledBy"}
+    clean_updates = {k: v for k, v in updates.items() if k in allowed_fields}
+    if not clean_updates:
+        return False
+    clean_updates["updatedAt"] = int(time.time())
+    db_update_task(task_id, clean_updates)
+    return True

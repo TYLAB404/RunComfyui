@@ -452,7 +452,10 @@ async def user_events_stream(
     )
 
 @router.post("/api/auth/logout")
-def logout_user(response: Response):
+def logout_user(response: Response, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
+    if current_user and current_user.get("id"):
+        from core.auth import record_user_offline
+        record_user_offline(str(current_user["id"]))
     response.delete_cookie("auth_token")
     return {"status": "ok", "message": "已安全退出登录"}
 
@@ -575,3 +578,18 @@ async def route_secure_admin_portal(request: Request):
         is_secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
         response.set_cookie(key="auth_token", value=token, httponly=True, max_age=86400 * 7, samesite="lax", secure=is_secure)
     return response
+
+
+@router.post("/api/user/heartbeat")
+async def user_heartbeat(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
+    """用户前端静默心跳探测，实时刷新在线活跃态"""
+    if not current_user:
+        return {"status": "guest", "isOnline": False}
+    from core.auth import record_user_activity, get_user_online_status
+    record_user_activity(str(current_user["id"]))
+    status_info = get_user_online_status(str(current_user["id"]))
+    return {
+        "status": "ok",
+        "onlineStatus": status_info,
+        "timestamp": int(time.time())
+    }

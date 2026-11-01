@@ -412,7 +412,17 @@ async def cancel_task_endpoint(task_id: str, current_user: Optional[Dict[str, An
         if current_user.get("role") != "admin" and str(current_user["id"]) != task_owner:
             raise HTTPException(status_code=403, detail="无权操作其他用户的任务")
 
-    return await execute_task_cancellation(t, is_admin=False)
+    is_admin = bool(current_user and current_user.get("role") == "admin")
+    cancelled_by = "ADMIN" if is_admin else "USER"
+    user_name = current_user.get("username", "用户") if current_user else "用户"
+    reason = f"管理员【{user_name}】后台强制中断" if is_admin else "用户在前端控制台主动取消任务"
+    return await execute_task_cancellation(
+        t,
+        cancelled_by=cancelled_by,
+        operator_name=user_name,
+        reason=reason,
+        is_admin=is_admin
+    )
 
 @router.get("/api/proxy/view")
 async def proxy_media_view(

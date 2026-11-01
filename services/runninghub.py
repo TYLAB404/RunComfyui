@@ -375,7 +375,7 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                         remain_s = max(0, max_billable - run_duration)
                         if run_duration >= max_billable:
                             print(f"[Budget Guard] Task {task_id} reached max billable seconds ({run_duration}s >= {max_billable}s). Cancelling via RunningHub.", flush=True)
-                            await execute_task_cancellation(cur_t, is_admin=True, reason="算力余额时限已达上限自动安全取消")
+                            await execute_task_cancellation(cur_t, cancelled_by="SYSTEM", operator_name="系统安全看门狗", reason="算力余额时限已达上限自动安全熔断取消", is_admin=True)
                             return
                         elif run_duration >= int(max_billable * 0.7):
                             if "算力偏紧" not in cur_text:
@@ -577,6 +577,29 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                         else:
                             display_status = f"执行失败: {err_msg[:40]}"
 
+                        # 智能识别是否为云端主动撤销
+                        is_cloud_cancelled = any(k in raw_err.lower() or k in err_msg.lower() for k in ["cancel", "cancelled", "已取消", "主动终止", "任务被取消"])
+                        now_ts = int(time.time())
+                        if is_cloud_cancelled:
+                            db_atomic_cancel_and_refund(
+                                str(task_id),
+                                reason="[CLOUD] RunningHub云端GPU节点返回任务异常已被取消"
+                            )
+                            db_update_task(str(task_id), {
+                                "status": "CANCELLED",
+                                "error": f"云端撤单: {err_msg}",
+                                "errorMessage": f"云端撤单: {err_msg}",
+                                "statusText": "已取消 · 云端GPU节点撤销",
+                                "cancelledBy": "CLOUD",
+                                "cancelReason": f"云端节点返回取消: {err_msg}",
+                                "cancelledAt": now_ts,
+                                "cancelledOperator": "RunningHub云端节点",
+                                "duration": int(time.time() - start_time),
+                                "updatedAt": now_ts
+                            })
+                            ACTIVE_TASK_PREVIEWS.pop(str(task_id), None)
+                            return
+
                         # 原子化退还扣减的算力点数并更新任务（幂等防护）
                         db_atomic_cancel_and_refund(
                             str(task_id),
@@ -588,7 +611,7 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                             "error": err_msg,
                             "statusText": display_status,
                             "duration": int(time.time() - start_time),
-                            "updatedAt": int(time.time())
+                            "updatedAt": now_ts
                         })
                         ACTIVE_TASK_PREVIEWS.pop(str(task_id), None)
                         return
@@ -824,13 +847,18 @@ async def reconcile_pending_tasks():
         print(f"[Reconcile Error] {e}")
 
 
-async def execute_task_cancellation(t: Dict[str, Any], is_admin: bool = False) -> Dict[str, Any]:
+async def execute_task_cancellation(
+    t: Dict[str, Any],
+    cancelled_by: str = "USER",
+    operator_name: Optional[str] = None,
+    reason: Optional[str] = None,
+    is_admin: bool = False
+) -> Dict[str, Any]:
     """
-    统一封装任务取消服务逻辑（供用户前台与管理员后台共同调用，彻底解耦路由层重复逻辑）：
-    1. 校验任务状态是否处于可取消态
-    2. 标记 CANCELLED_TASKS 并立即释放占用的 Key 池通道
-    3. 精准匹配接单 Key 通知 RunningHub 云端中止任务
-    4. 执行数据库 ACID 原子状态跃迁与幂等积分退还
+    统一封装任务取消服务逻辑，精准注入取消主体与审计元数据：
+    - cancelled_by: 'USER' (用户主动取消) | 'ADMIN' (管理员强制取消) | 'SYSTEM' (系统超时熔断) | 'CLOUD' (云端异常撤单)
+    - operator_name: 操作人账号/系统模块名
+    - reason: 取消详细原因
     """
     task_id_str = str(t.get("taskId") or "").strip()
     cur_status = str(t.get("status") or "")
@@ -843,6 +871,10 @@ async def execute_task_cancellation(t: Dict[str, Any], is_admin: bool = False) -
     CANCELLED_TASKS.add(task_id_str)
     await KEY_POOL_MANAGER.release_key_by_task_id(task_id_str)
 
+    # 规范化取消主体
+    if is_admin and cancelled_by == "USER":
+        cancelled_by = "ADMIN"
+
     cfg = load_config()
     task_key_id = t.get("keyId")
     cancel_api_key = None
@@ -854,7 +886,7 @@ async def execute_task_cancellation(t: Dict[str, Any], is_admin: bool = False) -
     if not cancel_api_key:
         cancel_api_key = get_active_api_key(cfg)
 
-    cloud_status = "已标记本地取消" if is_admin else "本地已标记取消"
+    cloud_status = "本地已标记取消"
     if cancel_api_key and not task_id_str.startswith("task_"):
         try:
             cancel_url = f"{RUNNINGHUB_API_URL}/task/openapi/cancel"
@@ -869,12 +901,26 @@ async def execute_task_cancellation(t: Dict[str, Any], is_admin: bool = False) -
             data = res.json()
             cloud_status = data.get("msg") or "已通知 RunningHub 云端取消"
         except Exception as e:
-            cloud_status = f"云端取消异常: {str(e)}" if is_admin else f"云端取消请求异常: {str(e)}"
+            cloud_status = f"云端取消请求异常: {str(e)}"
 
-    refund_reason = "管理员强制取消任务全额退款" if is_admin else "用户主动取消任务全额退款"
+    # 格式化审计原因与操作者
+    if not reason:
+        if cancelled_by == "USER":
+            reason = "用户在网页端主动取消任务"
+        elif cancelled_by == "ADMIN":
+            reason = f"管理员【{operator_name or 'Admin'}】在后台强制中止"
+        elif cancelled_by == "SYSTEM":
+            reason = "系统调度安全看门狗超时自动熔断退单"
+        elif cancelled_by == "CLOUD":
+            reason = "RunningHub云端GPU节点返回任务异常已被取消"
+        else:
+            reason = "任务已被取消"
+
+    op_display = operator_name or ("用户" if cancelled_by == "USER" else ("管理员" if cancelled_by == "ADMIN" else "系统"))
+
     r_ok, refund_msg, new_bal = db_atomic_cancel_and_refund(
         task_id_str,
-        reason=refund_reason
+        reason=f"[{cancelled_by}] {reason}"
     )
 
     if not r_ok:
@@ -883,20 +929,18 @@ async def execute_task_cancellation(t: Dict[str, Any], is_admin: bool = False) -
             "message": refund_msg
         }
 
-    if is_admin:
-        db_update_task(task_id_str, {
-            "status": "CANCELLED",
-            "error": f"管理员后台强制取消 ({cloud_status})",
-            "errorMessage": f"管理员后台强制取消 ({cloud_status})",
-            "updatedAt": int(time.time()),
-        })
-    else:
-        db_update_task(task_id_str, {
-            "status": "CANCELLED",
-            "error": f"用户已主动取消任务 ({cloud_status})",
-            "statusText": "用户已主动取消",
-            "updatedAt": int(time.time()),
-        })
+    now_ts = int(time.time())
+    db_update_task(task_id_str, {
+        "status": "CANCELLED",
+        "error": f"{reason} ({cloud_status})",
+        "errorMessage": f"{reason} ({cloud_status})",
+        "statusText": f"已取消 · {reason}",
+        "cancelledBy": cancelled_by,
+        "cancelReason": f"{reason} ({cloud_status})",
+        "cancelledAt": now_ts,
+        "cancelledOperator": op_display,
+        "updatedAt": now_ts,
+    })
     ACTIVE_TASK_PREVIEWS.pop(task_id_str, None)
 
     resp = {

@@ -2157,6 +2157,19 @@ createApp({
     };
 
     let userEventSource = null;
+    let userHeartbeatTimer = null;
+
+    const startUserHeartbeat = () => {
+      if (userHeartbeatTimer) clearInterval(userHeartbeatTimer);
+      const sendPulse = async () => {
+        if (!currentUser.value) return;
+        try {
+          await authFetch('/api/user/heartbeat', { method: 'POST' });
+        } catch(e) {}
+      };
+      sendPulse();
+      userHeartbeatTimer = setInterval(sendPulse, 60000);
+    };
 
     const initUserEventStream = () => {
       if (!currentUser.value) return;
@@ -2222,6 +2235,7 @@ createApp({
         if (res.ok) {
           currentUser.value = await res.json();
           initUserEventStream();
+          startUserHeartbeat();
         } else if (res.status === 401 || res.status === 403) {
           localStorage.removeItem('rh_auth_token');
           currentUser.value = null;
@@ -2393,6 +2407,10 @@ createApp({
       if (userEventSource) {
         try { userEventSource.close(); } catch(e){}
         userEventSource = null;
+      }
+      if (userHeartbeatTimer) {
+        clearInterval(userHeartbeatTimer);
+        userHeartbeatTimer = null;
       }
       try {
         await authFetch('/api/auth/logout', { method: 'POST' });

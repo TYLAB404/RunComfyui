@@ -7,7 +7,7 @@ import hashlib
 import uuid
 import asyncio
 import aiohttp
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Tuple, Set
 from fastapi import Request, HTTPException, Depends
 from core.security import SECRET_KEY_FILE
 from core.database import get_db_connection, db_bump_token_version, db_delete_user_completely
@@ -355,6 +355,10 @@ async def get_current_user_optional(request: Request) -> Optional[Dict[str, Any]
     if expected_ver != token_ver:
         return None
 
+    user_id_str = str(user.get("id") or "")
+    if user_id_str:
+        record_user_activity(user_id_str)
+
     return sanitize_user(user)
 
 async def get_current_user(user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)) -> Dict[str, Any]:
@@ -366,3 +370,75 @@ async def get_current_admin(user: Dict[str, Any] = Depends(get_current_user)) ->
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="权限不足：仅管理员可访问此接口")
     return user
+
+
+# ----------------- 用户在线状态感知 (方案 B) -----------------
+_USER_LAST_ACTIVE: Dict[str, float] = {}  # user_id -> timestamp
+
+def record_user_activity(user_id: str):
+    """记录用户最近活跃时间戳"""
+    if user_id:
+        _USER_LAST_ACTIVE[str(user_id)] = time.time()
+
+def record_user_offline(user_id: str):
+    """用户主动登出时立即置为离线"""
+    if user_id:
+        _USER_LAST_ACTIVE.pop(str(user_id), None)
+
+def get_user_online_status(user_id: str, running_tasks_count: int = 0) -> Dict[str, Any]:
+    """
+    方案 B：双重智能活跃判定
+    1. 用户在最近 300 秒内有访问或心跳记录 -> 在线
+    2. 用户名下有正在运行/排队的生图任务 (running_tasks_count > 0) -> 即使关闭网页也判定为挂机渲染中
+    """
+    now = time.time()
+    last_active = _USER_LAST_ACTIVE.get(str(user_id), 0.0)
+    has_heartbeat = (now - last_active) <= 300
+    has_tasks = running_tasks_count > 0
+
+    if has_heartbeat and has_tasks:
+        status_key = "ONLINE_RUNNING"
+        text = f"在线 · 渲染中 ({running_tasks_count})"
+        badge_type = "success"
+    elif has_heartbeat:
+        status_key = "ONLINE"
+        text = "在线"
+        badge_type = "success"
+    elif has_tasks:
+        status_key = "HOSTING_RUNNING"
+        text = f"挂机渲染中 ({running_tasks_count})"
+        badge_type = "running"
+    else:
+        status_key = "OFFLINE"
+        if last_active > 0:
+            diff = int(now - last_active)
+            if diff < 3600:
+                text = f"离线 ({max(1, diff // 60)}分钟前)"
+            elif diff < 86400:
+                text = f"离线 ({diff // 3600}小时前)"
+            else:
+                text = f"离线 ({diff // 86400}天前)"
+        else:
+            text = "离线"
+        badge_type = "offline"
+
+    return {
+        "isOnline": (has_heartbeat or has_tasks),
+        "statusKey": status_key,
+        "statusText": text,
+        "badgeType": badge_type,
+        "lastActiveAt": int(last_active) if last_active > 0 else None,
+        "runningTasksCount": running_tasks_count
+    }
+
+def get_online_user_ids(active_task_user_ids: Optional[Set[str]] = None) -> Set[str]:
+    """获取当前全部在线（心跳有效或长任务挂机）的用户 ID 集合"""
+    now = time.time()
+    online_set = {uid for uid, t in _USER_LAST_ACTIVE.items() if (now - t) <= 300}
+    if active_task_user_ids:
+        online_set.update(str(uid) for uid in active_task_user_ids if uid)
+    return online_set
+
+def count_online_users(active_task_user_ids: Optional[Set[str]] = None) -> int:
+    """计算当前在线总人数"""
+    return len(get_online_user_ids(active_task_user_ids))

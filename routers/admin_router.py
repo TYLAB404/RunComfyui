@@ -161,10 +161,16 @@ def admin_overview(_: Dict[str, Any] = Depends(get_current_admin)):
     secret_enc = sys_cfg.get("turnstileSecretKeyEncrypted", "")
     secret_raw = decrypt_key(secret_enc) if secret_enc else ""
 
+    from core.auth import count_online_users
+    from core.database import db_get_active_task_user_ids
+    active_task_users = db_get_active_task_user_ids()
+    online_count = count_online_users(set(active_task_users.keys()))
+
     return {
         "totalUsers": stats["totalUsers"],
         "adminCount": stats["adminCount"],
         "activeUsers": stats["activeUsers"],
+        "onlineUsers": online_count,
         "totalTasks": stats["totalTasks"],
         "todayTasks": stats["todayTasks"],
         "successTasks": stats["successTasks"],
@@ -187,9 +193,15 @@ def admin_list_users(_: Dict[str, Any] = Depends(get_current_admin)):
     task_counts = db_get_user_task_counts()
 
     result = []
+    from core.auth import get_user_online_status
+    from core.database import db_get_active_task_user_ids
+    active_task_users = db_get_active_task_user_ids()
+
     for u in users:
         safe = sanitize_user(u)
         safe["taskCount"] = task_counts.get(str(u["id"]), u.get("taskCount", 0))
+        uid_str = str(u["id"])
+        safe["onlineStatus"] = get_user_online_status(uid_str, active_task_users.get(uid_str, 0))
         result.append(safe)
     result.sort(key=lambda x: x.get("createdAt", 0), reverse=True)
     return result
@@ -563,22 +575,39 @@ def admin_list_all_tasks(
     status: Optional[str] = None,
     user_id: Optional[str] = None,
     username: Optional[str] = None,
+    cancelled_by: Optional[str] = None,
+    keyword: Optional[str] = None,
     limit: int = 500,
     _: Dict[str, Any] = Depends(get_current_admin),
 ):
-    """管理员全量任务审计视图（支持按用户、状态进行过滤）"""
-    return db_load_tasks(user_id=user_id, status=status, is_admin=True, limit=limit, search_user=username)
+    """管理员全量任务审计视图（支持按用户、状态、取消主体、关键字多维过滤）"""
+    return db_load_tasks(
+        user_id=user_id,
+        status=status,
+        is_admin=True,
+        limit=limit,
+        search_user=username,
+        cancelled_by=cancelled_by,
+        keyword=keyword
+    )
 
 
 @router.post("/api/admin/tasks/{task_id}/cancel")
-async def admin_force_cancel_task(task_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+async def admin_force_cancel_task(task_id: str, admin: Dict[str, Any] = Depends(get_current_admin)):
     """管理员强制取消全站任意进行中任务，并自动执行退费与通知"""
     task_id_str = str(task_id).strip()
     t = db_get_task(task_id_str)
     if not t:
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    return await execute_task_cancellation(t, is_admin=True)
+    admin_name = admin.get("username", "Admin")
+    return await execute_task_cancellation(
+        t,
+        cancelled_by="ADMIN",
+        operator_name=admin_name,
+        reason=f"管理员【{admin_name}】后台强制中断",
+        is_admin=True
+    )
 
 
 @router.delete("/api/admin/tasks/{task_id}")
@@ -1214,3 +1243,69 @@ async def admin_restore_backup(
                 os.remove(target_zip_path)
             except Exception:
                 pass
+
+
+@router.get("/api/admin/tasks/{task_id}")
+def admin_get_task_detail(task_id: str, _: Dict[str, Any] = Depends(get_current_admin)):
+    """获取单条任务全景审计详情"""
+    t = db_get_task(str(task_id).strip())
+    if not t:
+        raise HTTPException(status_code=404, detail="任务记录不存在")
+    return t
+
+
+@router.put("/api/admin/tasks/{task_id}")
+def admin_update_task_audit(task_id: str, payload: Dict[str, Any], admin: Dict[str, Any] = Depends(get_current_admin)):
+    """
+    管理员后台专属：修改任务审计备注、修正状态、手动补扣或补偿积分
+    """
+    task_id_str = str(task_id).strip()
+    t = db_get_task(task_id_str)
+    if not t:
+        raise HTTPException(status_code=404, detail="任务不存在")
+
+    admin_note = payload.get("adminNote")
+    new_status = payload.get("status")
+    refund_points = int(payload.get("refundPoints") or 0)
+    refund_note = payload.get("refundNote") or "管理员审计手动调整积分"
+
+    updates = {}
+    if admin_note is not None:
+        updates["adminNote"] = str(admin_note).strip()
+    if new_status and new_status in ("SUCCESS", "FAILED", "CANCELLED", "RUNNING", "QUEUED"):
+        updates["status"] = new_status
+
+    if updates:
+        from core.database import db_admin_update_task_audit
+        db_admin_update_task_audit(task_id_str, updates)
+
+    # 如果管理员指定了积分补偿
+    if refund_points != 0 and t.get("userId"):
+        from core.database import db_refund_user_points, db_deduct_user_points
+        uid = str(t["userId"])
+        admin_op = admin.get("username", "admin")
+        if refund_points > 0:
+            db_refund_user_points(uid, refund_points, reason=f"任务[{task_id_str}]管理员({admin_op})补发: {refund_note}")
+        else:
+            db_deduct_user_points(uid, abs(refund_points), reason=f"任务[{task_id_str}]管理员({admin_op})扣减: {refund_note}")
+
+    return {
+        "status": "ok",
+        "message": "任务审计信息已成功更新",
+        "task": db_get_task(task_id_str)
+    }
+
+
+@router.post("/api/admin/tasks/delete-batch")
+def admin_delete_tasks_batch_endpoint(payload: Dict[str, Any], _: Dict[str, Any] = Depends(get_current_admin)):
+    """批量删除勾选的任务记录"""
+    task_ids = payload.get("taskIds", [])
+    if not isinstance(task_ids, list) or not task_ids:
+        raise HTTPException(status_code=400, detail="未选中任何任务")
+    from core.database import db_delete_tasks_batch
+    count = db_delete_tasks_batch(task_ids)
+    return {
+        "status": "ok",
+        "deletedCount": count,
+        "message": f"成功批量清理 {count} 条任务审计记录"
+    }
