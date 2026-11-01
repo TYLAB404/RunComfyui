@@ -544,22 +544,20 @@ def db_deduct_user_points(user_id: str, amount: Union[int, float], task_id: str 
             return False, int(row[0]), "用户账户已被封禁，禁止消费"
 
         cur_points = max(0, int(row[0] or 0))
-        # 兜底：若用户余额为 0 则直接返回无法扣费
-        if cur_points == 0:
-            return False, 0, f"算力点数不足（当前余额: 0 RC币, 本次需要: {amt} RC币）"
 
-        # 实际抵扣额度：足额扣款或全额抵扣至 0，绝不扣成负数
+        # 实际抵扣额度：足额扣款或全额抵扣至 0，绝不扣成负数，确保保全成果交付
         deduct_amt = min(amt, cur_points)
         new_balance = cur_points - deduct_amt
 
-        cursor.execute(
-            "UPDATE users SET points = ? WHERE id = ? AND is_active = 1;",
-            (new_balance, str(user_id))
-        )
+        if cur_points > 0:
+            cursor.execute(
+                "UPDATE users SET points = ? WHERE id = ? AND is_active = 1;",
+                (new_balance, str(user_id))
+            )
 
         ledger_reason = reason
         if amt > cur_points:
-            ledger_reason += f" (应收 {amt} RC币，实际抵扣余额 {deduct_amt} RC币)"
+            ledger_reason += f" (应收 {amt} RC币，实际抵扣 {deduct_amt} RC币，余额不足扣至归零保全成果交付)"
 
         # 记录流水台账
         ledger_id = f"led_{int(time.time())}_{os.urandom(3).hex()}"

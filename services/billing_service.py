@@ -93,6 +93,13 @@ def check_user_can_start_task(user: Optional[Dict[str, Any]]) -> Tuple[bool, flo
                 "账户算力余额不足：当前账户余额为 0 RC币，请先前往兑换卡密充值"
             )
 
+        if min_required > 0 and cur_points < min_required:
+            return (
+                False,
+                cur_points,
+                f"账户算力余额不足：提交任务最低需持有 {int(min_required)} RC币（当前仅有 {cur_points} RC币），请先前往兑换卡密充值"
+            )
+
         return True, cur_points, ""
 
 

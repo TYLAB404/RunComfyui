@@ -117,7 +117,7 @@ async def generate_task(
         # Plus (高档位): plus, 48GB 显存，0.4 RC币/秒
         # Standard (低档位): default, 24GB 显存，0.2 RC币/秒
         instance_type, tier_name, rate = resolve_instance_tier(req.instanceType, req.taskType)
-        max_billable_seconds = int(cur_points / rate) if (rate > 0 and not is_admin) else 7200
+        max_billable_seconds = 0
 
         temp_id = f"task_{int(time.time())}_{uuid.uuid4().hex[:8]}"
         user_id = current_user["id"] if current_user else ""

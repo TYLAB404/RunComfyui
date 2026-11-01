@@ -369,21 +369,6 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                     if "采样" not in cur_text and "节点" not in cur_text and "排队等待" not in cur_text:
                         cur_text = f"云端 GPU 正在计算 ({run_duration}s)"
 
-                    # 算力预算智能安全守护：基于当前余额换算的最大运行时长
-                    max_billable = int(cur_t.get("maxBillableSeconds") or 0) if cur_t else 0
-                    if max_billable > 0:
-                        remain_s = max(0, max_billable - run_duration)
-                        if run_duration >= max_billable:
-                            print(f"[Budget Guard] Task {task_id} reached max billable seconds ({run_duration}s >= {max_billable}s). Cancelling via RunningHub.", flush=True)
-                            await execute_task_cancellation(cur_t, cancelled_by="SYSTEM", operator_name="系统安全看门狗", reason="当前RC币不足以完成该项目，请保持RC币充足以完成运行", is_admin=True)
-                            return
-                        elif run_duration >= int(max_billable * 0.7):
-                            if "算力偏紧" not in cur_text:
-                                cur_text += f" · ⚠️ 算力偏紧 (余约{remain_s}s)"
-                        elif run_duration >= int(max_billable * 0.5):
-                            if "余额支持" not in cur_text and "算力偏紧" not in cur_text:
-                                cur_text += f" · 提示: 余额支持余约{remain_s}s"
-
                     db_update_task(str(task_id), {
                         "status": "RUNNING",
                         "duration": run_duration,
