@@ -285,6 +285,11 @@ def restore_from_zip(
         if os.path.exists(ext_secret):
             shutil.copy2(ext_secret, os.path.join(DATA_DIR, ".secret.key"))
             result_meta["restoredFiles"].append("data/.secret.key")
+            try:
+                from core.security import reload_cipher
+                reload_cipher()
+            except Exception:
+                pass
 
         # 恢复系统配置
         ext_cfg = os.path.join(temp_extract_dir, "data", "config.json")

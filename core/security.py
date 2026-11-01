@@ -63,6 +63,13 @@ def encrypt_key(plain_key: str) -> str:
         print(f"[Security Error] Encryption failed: {e}")
         raise RuntimeError(f"Data encryption failed securely: {e}")
 
+def reload_cipher():
+    """热重载对称加密套件并清空 LRU 缓存（用于灾备还原 .secret.key 之后）"""
+    global _CIPHER
+    _CIPHER = _init_master_cipher()
+    decrypt_key.cache_clear()
+    mask_key.cache_clear()
+
 @functools.lru_cache(maxsize=512)
 def decrypt_key(encrypted_key: str) -> str:
     """将 Fernet 密文解密为明文 API Key"""
@@ -75,6 +82,15 @@ def decrypt_key(encrypted_key: str) -> str:
         raw_bytes = _CIPHER.decrypt(encrypted_key.encode("utf-8"))
         return raw_bytes.decode("utf-8")
     except Exception as e:
+        # 弹性自愈：若内存中密码本解密失败，尝试重新读取磁盘上的 .secret.key（适配热还原场景）
+        try:
+            fresh_cipher = _init_master_cipher()
+            raw_bytes = fresh_cipher.decrypt(encrypted_key.encode("utf-8"))
+            global _CIPHER
+            _CIPHER = fresh_cipher
+            return raw_bytes.decode("utf-8")
+        except Exception:
+            pass
         print(f"[Security Error] Decryption failed: {e}")
         return ""
 
