@@ -1474,13 +1474,12 @@
               <!-- 成果展示区 (视频与图片无缝双轨渲染) -->
               <div class="bg-slate-950 border border-slate-800/80 rounded-xl overflow-hidden aspect-square flex items-center justify-center relative group">
                 <template v-if="currentDisplayOutput">
-                  <!-- 视频输出渲染 -->
+                  <!-- 视频输出渲染 (禁止自动播放，由用户手动点击播放按钮) -->
                   <video 
                     v-if="isVideoOutput(currentDisplayOutput)" 
                     :src="currentDisplayOutput.url" 
                     controls 
-                    autoplay 
-                    loop 
+                    preload="metadata" 
                     playsinline 
                     class="w-full h-full object-contain bg-black"></video>
                   
@@ -1494,7 +1493,7 @@
                     <div class="text-xs font-mono text-slate-300 truncate max-w-[85%] text-center">
                       {{ currentDisplayOutput.filename || '音频成果输出' }}
                     </div>
-                    <audio :src="currentDisplayOutput.url" controls class="w-full max-w-sm"></audio>
+                    <audio :src="currentDisplayOutput.url" controls preload="metadata" class="w-full max-w-sm"></audio>
                   </div>
 
                   <!-- 图像输出渲染 -->
@@ -2597,8 +2596,7 @@
           v-if="isVideoUrl(lightboxUrl)" 
           :src="lightboxUrl" 
           controls 
-          autoplay 
-          loop 
+          preload="metadata" 
           playsinline 
           class="max-w-[94vw] max-h-[72dvh] sm:max-h-[82vh] rounded-2xl shadow-2xl bg-black object-contain"></video>
         <img 
