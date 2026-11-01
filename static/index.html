@@ -1566,13 +1566,12 @@
                 
                 <div v-else-if="latestTask && latestTask.status === 'CANCELLED'" class="text-center p-6 text-slate-400 space-y-2">
                   <span class="text-3xl">🚫</span>
-                  <p class="text-xs font-medium text-slate-300">
-                    <span v-if="latestTask.cancelledBy === 'ADMIN'">任务已被管理员中止 (RC币已全额退还)</span>
-                    <span v-else-if="latestTask.cancelledBy === 'SYSTEM'">任务运行超时，系统已自动熔断退单 (RC币已全额退还)</span>
-                    <span v-else-if="latestTask.cancelledBy === 'CLOUD'">云端算力节点异常撤单 (RC币已全额退还)</span>
-                    <span v-else>任务已主动取消 (RC币已全额退还)</span>
+                  <p class="text-xs font-bold text-slate-200">
+                    任务已取消 (RC币已全额退还)
                   </p>
-                  <p class="text-[11px] text-slate-500">{{ latestTask.cancelReason || '云端与本地后台已停止计算，扣减的RC币已全额退还' }}</p>
+                  <p class="text-[11px] text-slate-400 max-w-sm mx-auto leading-relaxed">
+                    {{ latestTask.cancelReason || latestTask.error || '当前RC币不足以完成该项目，请保持RC币充足以完成运行' }}
+                  </p>
                 </div>
 
                 <div v-else-if="latestTask && latestTask.status === 'FAILED'" class="text-center p-6 text-red-400 space-y-2">
@@ -2009,12 +2008,7 @@
                       <span v-else-if="t.currentStep && t.status === 'RUNNING'" class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800">
                         进度 {{ t.currentStep }} ({{ t.progressPercent }}%)
                       </span>
-                      <span v-else-if="t.status === 'CANCELLED'" class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                        <span v-if="t.cancelledBy === 'ADMIN'">👑 管理员中止</span>
-                        <span v-else-if="t.cancelledBy === 'SYSTEM'">⏱️ 系统熔断</span>
-                        <span v-else-if="t.cancelledBy === 'CLOUD'">☁️ 云端撤单</span>
-                        <span v-else>👤 用户取消</span>
-                      </span>
+
                       <span v-if="t.taskType" class="text-[9px] font-mono px-1.5 py-0.2 rounded" :class="t.taskType === 'Standard' ? 'bg-indigo-950 text-indigo-400 border border-indigo-900/60' : 'bg-slate-900 text-slate-400 border border-slate-800'">
                         {{ t.taskType }}
                       </span>

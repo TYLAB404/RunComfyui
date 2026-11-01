@@ -313,6 +313,29 @@ async def generate_task(
         if u_lock and u_lock.locked():
             u_lock.release()
 
+def sanitize_task_for_user(t: Dict[str, Any]) -> Dict[str, Any]:
+    """面向前台普通用户的任务视图：彻底隐藏后台审计流细节（取消主体、操作人、批注），确保报错人性化直白"""
+    t_clean = dict(t)
+    # 彻底移除仅限后端的审计流字段
+    t_clean.pop("cancelledBy", None)
+    t_clean.pop("cancelledOperator", None)
+    t_clean.pop("adminNote", None)
+    
+    cur_status = t_clean.get("status")
+    cur_reason = str(t_clean.get("cancelReason") or t_clean.get("error") or "")
+    if cur_status == "CANCELLED":
+        if any(k in cur_reason for k in ["RC币", "算力", "时限", "超时", "熔断", "不足", "上限"]):
+            friendly_text = "当前RC币不足以完成该项目，请保持RC币充足以完成运行"
+        elif any(k in cur_reason for k in ["用户", "主动"]):
+            friendly_text = "您已主动取消本次任务，消耗的RC币已全额退还"
+        else:
+            friendly_text = "任务已停止运行，消耗的RC币已全额退还至您的账户"
+        t_clean["cancelReason"] = friendly_text
+        t_clean["statusText"] = "已取消 (RC币已全额退还)"
+        t_clean["error"] = friendly_text
+        t_clean["errorMessage"] = friendly_text
+    return t_clean
+
 @router.get("/api/tasks")
 async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
     cfg = load_config()
@@ -362,7 +385,7 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
                 ACTIVE_POLL_TASKS.add(tid)
                 asyncio.create_task(poll_task_status(tid, poll_api_key, key_id=task_key_id))
     
-    return user_tasks
+    return [sanitize_task_for_user(t) if not is_admin else t for t in user_tasks]
 
 @router.get("/api/tasks/{task_id}")
 def get_task(task_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):
@@ -396,7 +419,7 @@ def get_task(task_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_
         t["status"] = "SUCCESS"
         t["statusText"] = "生成完成 (已安全截流有效成果)"
 
-    return t
+    return sanitize_task_for_user(t) if not is_admin else t
 
 @router.post("/api/tasks/{task_id}/cancel")
 async def cancel_task_endpoint(task_id: str, current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)):

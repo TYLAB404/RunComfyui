@@ -375,7 +375,7 @@ async def poll_task_status(task_id: str, api_key: str, key_id: Optional[str] = N
                         remain_s = max(0, max_billable - run_duration)
                         if run_duration >= max_billable:
                             print(f"[Budget Guard] Task {task_id} reached max billable seconds ({run_duration}s >= {max_billable}s). Cancelling via RunningHub.", flush=True)
-                            await execute_task_cancellation(cur_t, cancelled_by="SYSTEM", operator_name="系统安全看门狗", reason="算力余额时限已达上限自动安全熔断取消", is_admin=True)
+                            await execute_task_cancellation(cur_t, cancelled_by="SYSTEM", operator_name="系统安全看门狗", reason="当前RC币不足以完成该项目，请保持RC币充足以完成运行", is_admin=True)
                             return
                         elif run_duration >= int(max_billable * 0.7):
                             if "算力偏紧" not in cur_text:
@@ -910,7 +910,7 @@ async def execute_task_cancellation(
         elif cancelled_by == "ADMIN":
             reason = f"管理员【{operator_name or 'Admin'}】在后台强制中止"
         elif cancelled_by == "SYSTEM":
-            reason = "系统调度安全看门狗超时自动熔断退单"
+            reason = "当前RC币不足以完成该项目，请保持RC币充足以完成运行"
         elif cancelled_by == "CLOUD":
             reason = "RunningHub云端GPU节点返回任务异常已被取消"
         else:
@@ -930,13 +930,17 @@ async def execute_task_cancellation(
         }
 
     now_ts = int(time.time())
+    clean_cloud_status = ""
+    if cloud_status and cloud_status.lower() not in ("success", "ok", "本地已标记取消", "已通知 runninghub 云端取消"):
+        clean_cloud_status = f" ({cloud_status})"
+
     db_update_task(task_id_str, {
         "status": "CANCELLED",
-        "error": f"{reason} ({cloud_status})",
-        "errorMessage": f"{reason} ({cloud_status})",
+        "error": f"{reason}{clean_cloud_status}",
+        "errorMessage": f"{reason}{clean_cloud_status}",
         "statusText": f"已取消 · {reason}",
         "cancelledBy": cancelled_by,
-        "cancelReason": f"{reason} ({cloud_status})",
+        "cancelReason": f"{reason}{clean_cloud_status}",
         "cancelledAt": now_ts,
         "cancelledOperator": op_display,
         "updatedAt": now_ts,
