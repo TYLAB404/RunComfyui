@@ -1503,7 +1503,7 @@
                     v-else 
                     :src="currentDisplayOutput.url" 
                     class="w-full h-full object-contain cursor-pointer" 
-                    @click="openLightbox(currentDisplayOutput.url)">
+                    @click="openLightbox(currentDisplayOutput.url, currentDisplayOutput)">
                   
                   <!-- 悬浮操作栏 -->
                   <div class="absolute inset-0 bg-slate-950/60 opacity-0 group-hover:opacity-100 transition flex items-center justify-center gap-3 pointer-events-none">
@@ -1517,7 +1517,7 @@
                     </a>
                     <button 
                       v-if="!isAudioOutput(currentDisplayOutput)"
-                      @click="openLightbox(currentDisplayOutput.url)" 
+                      @click="openLightbox(currentDisplayOutput.url, currentDisplayOutput)" 
                       class="pointer-events-auto px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-medium">
                       全屏放大
                     </button>
@@ -2605,13 +2605,12 @@
 
       <!-- 底部操作栏 (安全区底部 padding，在手机底端拇指最舒适位置提供显眼关闭与保存入口) -->
       <div class="w-full flex items-center justify-center gap-3 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] z-50 bg-gradient-to-t from-black/90 via-black/50 to-transparent">
-        <a 
-          :href="lightboxUrl" 
-          target="_blank" 
-          download 
-          class="px-4 py-2 rounded-full bg-slate-900/90 border border-slate-700 hover:bg-slate-800 text-xs font-semibold text-slate-200 hover:text-white shadow-lg backdrop-blur-md flex items-center gap-1.5 active:scale-95 transition">
+        <button 
+          type="button"
+          @click="downloadMedia(lightboxUrl, lightboxItem ? lightboxItem.filename : null)" 
+          class="px-4 py-2 rounded-full bg-slate-900/90 border border-slate-700 hover:bg-slate-800 text-xs font-semibold text-slate-200 hover:text-white shadow-lg backdrop-blur-md flex items-center gap-1.5 active:scale-95 transition cursor-pointer">
           <span>⬇️</span> <span>保存原图</span>
-        </a>
+        </button>
         <button 
           type="button"
           @click="closeLightbox" 

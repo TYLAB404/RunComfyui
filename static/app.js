@@ -2077,9 +2077,10 @@ createApp({
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
       } catch (err) {
+        // 跨域或安全沙箱拦截时，走服务端强行流式下载网关，杜绝弹窗新开标签页
+        const downloadUrl = `/api/gallery/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(fallbackName)}`;
         const a = document.createElement('a');
-        a.href = url;
-        a.target = '_blank';
+        a.href = downloadUrl;
         a.download = fallbackName;
         document.body.appendChild(a);
         a.click();

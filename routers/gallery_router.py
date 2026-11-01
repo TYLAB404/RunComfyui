@@ -6,7 +6,11 @@ import os
 import time
 from typing import Optional, Dict, Any, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
+import urllib.parse
+import aiohttp
+from core.config import BASE_DIR, OUTPUTS_DIR
 from core.auth import get_current_user_optional
 from core.database import db_load_tasks, db_get_task, update_task_record
 from services.imgbed_service import infer_media_type
@@ -179,3 +183,54 @@ def delete_gallery_file(
         raise HTTPException(status_code=404, detail="未找到匹配的成果或无权操作")
 
     return {"status": "ok", "message": "该成果已成功从您的画廊中移除（前台已隐藏）"}
+
+
+@router.get("/api/gallery/download")
+async def download_gallery_media(url: str, filename: Optional[str] = None):
+    """
+    通用媒体文件直链下载网关：
+    跨域解决浏览器无法直接保存文件的限制，强制注入 Content-Disposition: attachment
+    """
+    if not url:
+        raise HTTPException(status_code=400, detail="缺少下载地址")
+    
+    clean_url = urllib.parse.unquote(url).strip()
+    safe_filename = filename or os.path.basename(clean_url.split("?")[0]) or "output.png"
+    safe_filename = os.path.basename(safe_filename)
+
+    # 1. 本地生成成果
+    if clean_url.startswith("/outputs/") or clean_url.startswith("outputs/"):
+        rel_path = clean_url.lstrip("/")
+        full_path = os.path.join(BASE_DIR, rel_path)
+        if os.path.exists(full_path):
+            encoded_fn = urllib.parse.quote(safe_filename)
+            return FileResponse(
+                path=full_path,
+                filename=safe_filename,
+                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fn}"}
+            )
+
+    # 2. 远端 CDN / 官方直链
+    if clean_url.startswith("http://") or clean_url.startswith("https://"):
+        try:
+            encoded_fn = urllib.parse.quote(safe_filename)
+            async def stream_remote():
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(clean_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+                        if resp.status == 200:
+                            async for chunk in resp.content.iter_chunked(64 * 1024):
+                                yield chunk
+                        else:
+                            yield b""
+            return StreamingResponse(
+                stream_remote(),
+                media_type="application/octet-stream",
+                headers={
+                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fn}",
+                    "Access-Control-Expose-Headers": "Content-Disposition"
+                }
+            )
+        except Exception:
+            return RedirectResponse(clean_url)
+
+    raise HTTPException(status_code=400, detail="不支持的下载地址")
