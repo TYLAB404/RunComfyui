@@ -1310,8 +1310,13 @@ createApp({
           // 指纹哈希中排除每秒都变动的 duration，防止全量 DOM 抖动重建
           const newHash = data.map(t => `${t.taskId}:${t.status}:${t.progressPercent}:${t.currentStep}:${t.statusText}:${t.updatedAt}:${(t.outputs||[]).length}`).join('|');
           if (newHash !== lastTasksHash) {
+            const hadInitialTasks = lastTasksHash !== '';
             lastTasksHash = newHash;
             tasks.value = data;
+            // 当任务状态变化（例如有任务渲染完毕交付新作品）时，自动触发画廊静默更新
+            if (hadInitialTasks) {
+              refreshGallery(false);
+            }
           } else {
             // 指纹未变时（仅秒数或微小进度变动），直接就地更新对象属性，保证零闪烁与极致平滑
             data.forEach(t => {
@@ -2511,7 +2516,8 @@ createApp({
       activeTab.value = tab;
       window.scrollTo({ top: 0, behavior: 'smooth' });
       if (tab === 'gallery') {
-        refreshGallery(true);
+        // 静默平滑切换：若已有作品直接 0 毫秒秒开显示，杜绝骨架屏闪烁，后台静默拉取增量更新
+        refreshGallery(false);
       }
       if (tab === 'workflows' && workflows.value.length === 0) {
         fetchConfig();
@@ -2728,20 +2734,12 @@ createApp({
       }, 1000);
 
       // 智能自适应静默轮询：
-      // 1. 标签页处于后台静默或切换到其他窗口时自动跳过轮询，彻底释放浏览器线程
-      // 2. 有任务运行中时按 3 秒频率轮询任务与画廊；任务空闲时画廊每 10 秒低频同步
+      // 1. 标签页处于后台静默或切换到其他窗口时自动跳过轮询，彻底释放浏览器线程与带宽
+      // 2. 按 3 秒频率轮询任务状态；当任务完成时由事件自动触发画廊刷新，废除无脑 10 秒死循环轮询
       pollingTimer = setInterval(async () => {
         if (document.hidden) return;
         await refreshTasks();
-        const hasActive = (tasks.value || []).some(t => t.status === 'RUNNING' || t.status === 'QUEUED');
-        if (hasActive) {
-          await refreshGallery();
-        }
       }, 3000);
-
-      galleryTimer = setInterval(() => {
-        if (!document.hidden) refreshGallery();
-      }, 10000);
     });
 
     onUnmounted(() => {
