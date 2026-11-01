@@ -1538,7 +1538,7 @@
                     <div v-if="latestTask.status === 'QUEUED'" 
                          class="inline-flex items-center gap-2 px-3.5 py-1.5 bg-amber-950/80 border border-amber-700/80 text-amber-300 rounded-full text-xs font-semibold animate-pulse shadow-md shadow-amber-950/40">
                       <span class="w-2 h-2 rounded-full bg-amber-400"></span>
-                      <span>云端排队调度中 (已等待 {{ latestTask.duration || latestTask.queueDuration || 0 }}s)</span>
+                      <span>云端排队调度中 (已等待 {{ formatDuration(latestTask.duration || latestTask.queueDuration || 0) }})</span>
                     </div>
 
                     <!-- 运行状态胶囊 -->
@@ -1609,7 +1609,7 @@
               </div>
               <div class="flex justify-between">
                 <span>算力通道 / 耗时:</span>
-                <span class="font-mono text-slate-200">[{{ latestTask.taskType || 'Standard' }}] · {{ latestTask.duration || 0 }} 秒</span>
+                <span class="font-mono text-slate-200">[{{ latestTask.taskType || 'Standard' }}] · {{ formatDuration(latestTask.duration || 0) }}</span>
               </div>
               <div class="flex justify-between">
                 <span>消耗费用:</span>
@@ -1999,7 +1999,7 @@
                       </span>
                       <!-- 状态补充标签 -->
                       <span v-if="t.status === 'QUEUED'" class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-amber-950/80 text-amber-300 border border-amber-800">
-                        排队中 · 已等 {{ t.duration || 0 }}s
+                        排队中 · 已等 {{ formatDuration(t.duration || 0) }}
                       </span>
                       <span v-else-if="t.currentStep && t.status === 'RUNNING'" class="text-[9px] font-mono px-1.5 py-0.2 rounded bg-indigo-950/80 text-indigo-300 border border-indigo-800">
                         进度 {{ t.currentStep }} ({{ t.progressPercent }}%)
@@ -2009,7 +2009,7 @@
                       </span>
                     </div>
                   </td>
-                  <td class="p-3 font-mono">{{ t.duration || 0 }}s</td>
+                  <td class="p-3 font-mono">{{ formatDuration(t.duration || 0) }}</td>
                   <td class="p-3 font-semibold text-emerald-400 font-mono">{{ Math.floor(t.cost || 0) }} RC币</td>
                   <!-- 开始时间列（替换原产出媒体列） -->
                   <td class="p-3 font-mono text-slate-400 whitespace-nowrap text-[11px]">
@@ -2192,7 +2192,7 @@
                     {{ Math.floor(item.cost || item.consumeCoins || 0) }} RC币
                   </span>
                   <span v-if="item.duration" class="px-2 py-0.5 rounded-lg text-[11px] font-mono text-slate-400 bg-slate-800 border border-slate-700/60">
-                    耗时: {{ item.duration }}s
+                    耗时: {{ formatDuration(item.duration) }}
                   </span>
                 </div>
               </div>

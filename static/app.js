@@ -2003,11 +2003,18 @@ createApp({
     };
 
     const formatDuration = (sec) => {
-      if (!sec || isNaN(sec)) return '00:00';
-      const s = Math.floor(sec);
-      const m = Math.floor(s / 60);
-      const rem = s % 60;
-      return `${m.toString().padStart(2, '0')}:${rem.toString().padStart(2, '0')}`;
+      if (!sec || isNaN(sec)) return '0秒';
+      const total = Math.max(0, Math.floor(sec));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      if (h > 0) {
+        return `${h}小时${m.toString().padStart(2, '0')}分${s.toString().padStart(2, '0')}秒`;
+      }
+      if (m > 0) {
+        return `${m}分${s.toString().padStart(2, '0')}秒`;
+      }
+      return `${s}秒`;
     };
 
     const reusePromptToStudio = (prompt) => {
