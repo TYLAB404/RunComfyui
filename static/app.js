@@ -1173,19 +1173,22 @@ createApp({
       }
     };
 
-    // 动态拉取指定工作流在云端的真实节点拓扑
-    const loadWorkflowSchema = async (wfId) => {
+    // 动态拉取指定工作流在云端的真实节点拓扑 (支持 force 强制同步云端最新画布配置)
+    const loadWorkflowSchema = async (wfId, force = false) => {
       if (!wfId || wfId === 'custom_upload') return;
       isLoadingSchema.value = true;
       try {
         const res = await authFetch('/api/workflows/inspect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ workflowId: wfId })
+          body: JSON.stringify({ workflowId: wfId, forceRefresh: Boolean(force) })
         });
         const data = await res.json();
         if (res.ok && data.status === 'ok') {
           applyParsedSchema(data);
+          if (force) {
+            showToastNotification('已强制从 RunningHub 云端同步该工作流最新节点配置！', 'success');
+          }
         } else {
           console.warn('获取工作流节点结构失败:', data);
           showToastNotification(data.detail || '未能获取该工作流节点参数，请检查平台 API Key', 'error');

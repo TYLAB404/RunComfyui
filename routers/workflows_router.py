@@ -227,12 +227,42 @@ def get_preset_workflow_schema(wf_id: str) -> Optional[Dict[str, Any]]:
 def save_preset_workflow_schema(wf_id: str, schema_data: Dict[str, Any]):
     global _PRESET_SCHEMAS_CACHE
     target_id = str(wf_id).strip()
+    schema_data["_cachedAt"] = int(time.time())
     _PRESET_SCHEMAS_CACHE[target_id] = schema_data
     try:
         with open(PRESET_SCHEMAS_PATH, "w", encoding="utf-8") as f:
             json.dump(_PRESET_SCHEMAS_CACHE, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"[Workflow Schema] Failed to persist schema: {e}")
+
+async def _revalidate_workflow_in_background(real_workflow_id: str, api_key: str, cfg: Dict[str, Any], workflow_id: str):
+    """SWR 机制：后台静默异步比对云端最新参数，如果 RunningHub 画布有变动自动更新本地持久化缓存"""
+    try:
+        url = f"{RUNNINGHUB_API_URL}/api/openapi/getJsonApiFormat"
+        res = await asyncio.to_thread(HTTP_SESSION.post, url, json={"apiKey": api_key, "workflowId": str(real_workflow_id)}, timeout=15)
+        raw_data = res.json()
+        if raw_data.get("code") == 0:
+            prompt_str = raw_data.get("data", {}).get("prompt", "{}")
+            try:
+                nodes = json.loads(prompt_str)
+            except Exception:
+                nodes = {}
+            parsed = parse_nodes_to_dynamic_schema(nodes, cfg)
+            visual_graph = build_visual_graph(nodes, set(parsed.get("hiddenAuxiliaryNodeIds") or []))
+            result = {
+                "status": "ok",
+                "workflowId": str(workflow_id),
+                "totalNodes": len(nodes),
+                "rawPrompt": nodes,
+                "visualGraph": visual_graph,
+                "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
+                "dynamicSchema": parsed["dynamicSchema"],
+                "_cachedAt": int(time.time())
+            }
+            save_preset_workflow_schema(str(real_workflow_id), result)
+            print(f"[Workflow Schema SWR] Workflow {real_workflow_id} background revalidation completed successfully.")
+    except Exception as e:
+        print(f"[Workflow Schema SWR] Background revalidation failed for {real_workflow_id}: {e}")
 
 @router.post("/api/workflows/inspect")
 def inspect_workflow_endpoint(payload: Dict[str, Any]):
@@ -246,11 +276,17 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
     api_key = payload.get("apiKey") or get_active_api_key(cfg)
 
     # 1. 如果已配置 API Key，始终优先向 RunningHub 实时动态拉取（保证新上传/新修改的工作流参数即时生效）
-    # 极速本地缓存优先：已解析过的工作流直接返回本地缓存，0 毫秒秒开，彻底消除切换工作流时的转圈等待
+    # SWR 双轨模式：
+    # 1. 命中缓存直接 0 毫秒瞬间返回，用户完全不转圈；
+    # 2. 若缓存超过 5 分钟 (300s)，在后台静默异步拉取云端新参数比对更新；
+    # 3. 若用户或管理员显式点击【🔄 同步最新云端配置】(forceRefresh=True)，立即强制连接云端更新！
     force_refresh = bool(payload.get("forceRefresh", False))
     if not force_refresh:
         cached = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
         if cached and cached.get("dynamicSchema"):
+            cached_at = int(cached.get("_cachedAt") or 0)
+            if time.time() - cached_at > 300 and api_key:
+                asyncio.create_task(_revalidate_workflow_in_background(real_workflow_id, api_key, cfg, str(workflow_id)))
             res = dict(cached)
             res["workflowId"] = str(workflow_id)
             res["cached"] = True
