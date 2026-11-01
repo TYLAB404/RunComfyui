@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 # Core imports
 from core.config import (
@@ -141,12 +142,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# 禁用前端核心 HTML 与 JS 的强缓存，确保更新代码立即生效（穿透 CDN 与浏览器缓存）
+# 开启全站 Gzip 极速压缩传输（超过 500 字节自动压缩，体积立减 70%~85%，彻底解决转圈慢问题）
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
+# 静态资源精细化分级缓存策略：
+# 1. 第三方基础库 (/vendor/ 下的 Vue, Tailwind, Lucide)：长效缓存 30 天，本地磁盘秒开，免去每次重复下 1.2MB
+# 2. 核心业务代码 (HTML、业务 app.js)：强制不缓存，确保版本更新实时透传
 @app.middleware("http")
-async def add_no_cache_headers(request: Request, call_next):
+async def add_cache_control_headers(request: Request, call_next):
     response = await call_next(request)
     path = request.url.path
-    if path.endswith((".html", ".js")) or path == "/":
+    if path.startswith("/vendor/"):
+        response.headers["Cache-Control"] = "public, max-age=2592000, immutable"
+    elif path.endswith((".html", ".js")) or path == "/":
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

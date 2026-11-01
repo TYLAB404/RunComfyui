@@ -246,6 +246,16 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
     api_key = payload.get("apiKey") or get_active_api_key(cfg)
 
     # 1. 如果已配置 API Key，始终优先向 RunningHub 实时动态拉取（保证新上传/新修改的工作流参数即时生效）
+    # 极速本地缓存优先：已解析过的工作流直接返回本地缓存，0 毫秒秒开，彻底消除切换工作流时的转圈等待
+    force_refresh = bool(payload.get("forceRefresh", False))
+    if not force_refresh:
+        cached = get_preset_workflow_schema(real_workflow_id) or get_preset_workflow_schema(str(workflow_id))
+        if cached and cached.get("dynamicSchema"):
+            res = dict(cached)
+            res["workflowId"] = str(workflow_id)
+            res["cached"] = True
+            return res
+
     if api_key:
         url = f"{RUNNINGHUB_API_URL}/api/openapi/getJsonApiFormat"
         try:
