@@ -372,7 +372,7 @@ async def get_current_admin(user: Dict[str, Any] = Depends(get_current_user)) ->
     return user
 
 
-# ----------------- 用户在线状态感知 (方案 B) -----------------
+# ----------------- 用户在线状态感知 (方案 B 秒级精准感应) -----------------
 _USER_LAST_ACTIVE: Dict[str, float] = {}  # user_id -> timestamp
 
 def record_user_activity(user_id: str):
@@ -381,19 +381,27 @@ def record_user_activity(user_id: str):
         _USER_LAST_ACTIVE[str(user_id)] = time.time()
 
 def record_user_offline(user_id: str):
-    """用户主动登出时立即置为离线"""
+    """用户关闭页面、登出或长连接断开时立即置为离线"""
     if user_id:
-        _USER_LAST_ACTIVE.pop(str(user_id), None)
+        uid_str = str(user_id)
+        _USER_LAST_ACTIVE.pop(uid_str, None)
+        USER_EVENT_CHANNELS.pop(uid_str, None)
 
 def get_user_online_status(user_id: str, running_tasks_count: int = 0) -> Dict[str, Any]:
     """
-    方案 B：双重智能活跃判定
-    1. 用户在最近 300 秒内有访问或心跳记录 -> 在线
-    2. 用户名下有正在运行/排队的生图任务 (running_tasks_count > 0) -> 即使关闭网页也判定为挂机渲染中
+    方案 B：双重智能活跃判定 (秒级精准感知)
+    1. 用户有存活的 SSE 长连接通道 (USER_EVENT_CHANNELS) 或在最近 40 秒内有心跳 -> 在线
+    2. 用户名下有正在运行/排队的生图任务 (running_tasks_count > 0) -> 即使关闭网页也判定为挂机渲染中 (免值守)
+    3. 否则 -> 离线
     """
     now = time.time()
-    last_active = _USER_LAST_ACTIVE.get(str(user_id), 0.0)
-    has_heartbeat = (now - last_active) <= 300
+    uid_str = str(user_id)
+    last_active = _USER_LAST_ACTIVE.get(uid_str, 0.0)
+
+    # 优先检测活跃的长连接 (EventSource SSE)
+    has_active_sse = bool(USER_EVENT_CHANNELS.get(uid_str))
+    # 心跳时效窗口收紧为 40 秒 (配合前台 15 秒轻量脉冲)
+    has_heartbeat = has_active_sse or ((now - last_active) <= 40)
     has_tasks = running_tasks_count > 0
 
     if has_heartbeat and has_tasks:
@@ -412,7 +420,9 @@ def get_user_online_status(user_id: str, running_tasks_count: int = 0) -> Dict[s
         status_key = "OFFLINE"
         if last_active > 0:
             diff = int(now - last_active)
-            if diff < 3600:
+            if diff < 60:
+                text = "离线 (刚刚)"
+            elif diff < 3600:
                 text = f"离线 ({max(1, diff // 60)}分钟前)"
             elif diff < 86400:
                 text = f"离线 ({diff // 3600}小时前)"
@@ -432,9 +442,10 @@ def get_user_online_status(user_id: str, running_tasks_count: int = 0) -> Dict[s
     }
 
 def get_online_user_ids(active_task_user_ids: Optional[Set[str]] = None) -> Set[str]:
-    """获取当前全部在线（心跳有效或长任务挂机）的用户 ID 集合"""
+    """获取当前全部在线（长连接/心跳有效或长任务挂机）的用户 ID 集合"""
     now = time.time()
-    online_set = {uid for uid, t in _USER_LAST_ACTIVE.items() if (now - t) <= 300}
+    online_set = {uid for uid, channels in USER_EVENT_CHANNELS.items() if channels}
+    online_set.update(uid for uid, t in _USER_LAST_ACTIVE.items() if (now - t) <= 40)
     if active_task_user_ids:
         online_set.update(str(uid) for uid in active_task_user_ids if uid)
     return online_set

@@ -5918,6 +5918,17 @@
               loadKeyPoolStatus();
             }
           }, 2500);
+
+          // 用户在线状态实时轮询 (仅在查看用户中心或概览时每 3.5 秒刷新)
+          setInterval(() => {
+            if (currentUser.value && currentUser.value.role === 'admin') {
+              if (activeSection.value === 'users') {
+                loadUsers();
+              } else if (activeSection.value === 'overview') {
+                loadOverview();
+              }
+            }
+          }, 3500);
         });
 
         return {

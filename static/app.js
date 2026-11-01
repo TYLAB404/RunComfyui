@@ -2159,6 +2159,22 @@ createApp({
     let userEventSource = null;
     let userHeartbeatTimer = null;
 
+    const sendOfflineBeacon = () => {
+      const token = localStorage.getItem('rh_auth_token') || '';
+      if (!token) return;
+      const offlineUrl = `/api/user/offline?token=${encodeURIComponent(token)}`;
+      if (navigator.sendBeacon) {
+        navigator.sendBeacon(offlineUrl);
+      } else {
+        try {
+          fetch(offlineUrl, { method: 'POST', keepalive: true });
+        } catch(e) {}
+      }
+    };
+
+    window.addEventListener('pagehide', sendOfflineBeacon);
+    window.addEventListener('beforeunload', sendOfflineBeacon);
+
     const startUserHeartbeat = () => {
       if (userHeartbeatTimer) clearInterval(userHeartbeatTimer);
       const sendPulse = async () => {
@@ -2168,7 +2184,7 @@ createApp({
         } catch(e) {}
       };
       sendPulse();
-      userHeartbeatTimer = setInterval(sendPulse, 60000);
+      userHeartbeatTimer = setInterval(sendPulse, 15000);
     };
 
     const initUserEventStream = () => {

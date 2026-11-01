@@ -416,10 +416,13 @@ async def user_events_stream(
     request: Request,
     current_user: Dict[str, Any] = Depends(get_current_user)
 ):
-    """用户长连接实时下行 SSE 事件通道 (秒级停用踢出、实时算力到账同步)"""
+    """用户长连接实时下行 SSE 事件通道 (秒级在线感知、秒级停用踢出、实时算力到账同步)"""
     user_id = str(current_user["id"])
     queue = asyncio.Queue()
     USER_EVENT_CHANNELS.setdefault(user_id, []).append(queue)
+
+    from core.auth import record_user_activity, record_user_offline
+    record_user_activity(user_id)
 
     async def event_generator():
         try:
@@ -428,9 +431,10 @@ async def user_events_stream(
                 if await request.is_disconnected():
                     break
                 try:
-                    msg = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    msg = await asyncio.wait_for(queue.get(), timeout=10.0)
                     yield f"data: {msg}\n\n"
                 except asyncio.TimeoutError:
+                    record_user_activity(user_id)
                     yield ": heartbeat\n\n"
         finally:
             if user_id in USER_EVENT_CHANNELS:
@@ -438,6 +442,8 @@ async def user_events_stream(
                     USER_EVENT_CHANNELS[user_id].remove(queue)
                     if not USER_EVENT_CHANNELS[user_id]:
                         del USER_EVENT_CHANNELS[user_id]
+                        # 该用户所有窗口断开，立即标记离线
+                        record_user_offline(user_id)
                 except Exception:
                     pass
 
@@ -593,3 +599,26 @@ async def user_heartbeat(current_user: Optional[Dict[str, Any]] = Depends(get_cu
         "onlineStatus": status_info,
         "timestamp": int(time.time())
     }
+
+
+@router.api_route("/api/user/offline", methods=["GET", "POST"])
+async def user_offline_beacon(
+    request: Request,
+    token: Optional[str] = None
+):
+    """用户关闭页面时的瞬时离线信标 (navigator.sendBeacon)"""
+    token_str = token
+    if not token_str:
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token_str = auth_header[7:].strip()
+    if not token_str:
+        token_str = request.cookies.get("auth_token")
+
+    if token_str:
+        from core.auth import decode_jwt_token, record_user_offline
+        user_info = decode_jwt_token(token_str)
+        if user_info and user_info.get("id"):
+            record_user_offline(str(user_info["id"]))
+
+    return {"status": "ok"}
