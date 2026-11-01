@@ -2405,7 +2405,7 @@
               <!-- 第二步按钮（必须第一步完成方可解锁） -->
               <button 
                 type="button"
-                @click="confirmAndExecuteRestore" 
+                @click="openRestoreConfirmModal" 
                 :disabled="!isPreSnapshotDone || isRestoring"
                 class="w-full sm:flex-1 py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold transition flex items-center justify-center gap-1.5 disabled:opacity-30 disabled:cursor-not-allowed text-xs shadow-lg shadow-rose-900/30"
               >
@@ -2423,6 +2423,51 @@
 
           <div class="flex justify-end border-t border-slate-800 pt-3">
             <button @click="showBackupModal = false" class="px-4 py-2 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 text-slate-300">关闭</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 弹窗: 全站数据回档二次确认优雅弹窗 -->
+      <div v-if="showRestoreConfirmModal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-rose-500/40 rounded-2xl p-6 max-w-md w-full space-y-4 shadow-2xl shadow-rose-950/50">
+          <div class="flex items-start gap-3">
+            <div class="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center shrink-0">
+              <i data-lucide="alert-triangle" class="w-5 h-5 text-rose-500"></i>
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-white">最终严重警告：全站数据回档</h3>
+              <p class="text-xs text-slate-400 mt-1">此操作不可逆，请务必仔细核对目标文件</p>
+            </div>
+          </div>
+
+          <div class="p-3.5 rounded-xl bg-rose-950/20 border border-rose-500/20 text-xs text-rose-200/90 leading-relaxed space-y-2">
+            <p>您即将把系统核心数据恢复为所选备份包的状态。现存的最新任务记录、新注册用户或积分变动将被该备份包当时的数据覆盖！</p>
+            <div class="p-2.5 rounded-lg bg-black/50 text-[11px] font-mono text-amber-300 break-all border border-slate-800">
+              目标备份包: {{ restoreMode === 'upload' ? (selectedRestoreFile ? selectedRestoreFile.name : '未选择本地文件') : (selectedRestoreFilename || '未选择历史快照') }}
+            </div>
+            <p class="text-[11px] text-emerald-400 flex items-center gap-1">
+              <i data-lucide="shield-check" class="w-3.5 h-3.5 text-emerald-400"></i>
+              <span>第一步保险快照已成功推送到管理员邮箱作为后悔药。</span>
+            </p>
+          </div>
+
+          <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+            <button 
+              type="button"
+              @click="showRestoreConfirmModal = false" 
+              class="px-4 py-2 rounded-xl text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 transition"
+            >
+              取消并返回
+            </button>
+            <button 
+              type="button"
+              @click="doExecuteRestore" 
+              :disabled="isRestoring"
+              class="px-5 py-2 rounded-xl text-xs bg-rose-600 hover:bg-rose-500 text-white font-bold transition flex items-center gap-1.5 shadow-lg shadow-rose-900/50 disabled:opacity-50"
+            >
+              <i data-lucide="check" :class="{'animate-spin': isRestoring}" class="w-3.5 h-3.5"></i>
+              <span>{{ isRestoring ? '正在还原并重载...' : '确认立即执行覆盖还原' }}</span>
+            </button>
           </div>
         </div>
       </div>
@@ -3331,6 +3376,7 @@
         const isPreSnapshotDone = ref(false);
         const isRestoring = ref(false);
         const restoreFileInput = ref(null);
+        const showRestoreConfirmModal = ref(false);
 
         let _iconRefreshTimer = null;
         const refreshIcons = () => {
@@ -5005,7 +5051,7 @@
         };
 
         const downloadBackupFile = (filename) => {
-          const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || '';
+          const token = localStorage.getItem('rh_admin_token') || localStorage.getItem('rh_auth_token') || localStorage.getItem('access_token') || '';
           window.open('/api/admin/system/backup/download/' + encodeURIComponent(filename) + '?token=' + encodeURIComponent(token), '_blank');
         };
 
@@ -5047,20 +5093,24 @@
           }
         };
 
-        const confirmAndExecuteRestore = async () => {
+        const openRestoreConfirmModal = () => {
           if (!isPreSnapshotDone.value) {
             showToastNotification('请先点击第一步完成保险快照拍摄', 'error');
             return;
           }
+          if (restoreMode.value === 'upload' && !selectedRestoreFile.value) {
+            showToastNotification('请先选择待上传的备份文件', 'error');
+            return;
+          }
+          if (restoreMode.value === 'select' && !selectedRestoreFilename.value) {
+            showToastNotification('请先选择目标历史快照', 'error');
+            return;
+          }
+          showRestoreConfirmModal.value = true;
+          refreshIcons();
+        };
 
-          const confirmed = window.confirm(
-            '⚠️ 最终严重警告：\n\n' +
-            '您正在执行全站数据回档！此操作将覆盖现有用户、积分总账与系统配置。\n' +
-            '系统已在第一步为您当前的系统生成了保险快照并发送至邮箱（防手滑后悔药）。\n\n' +
-            '确定立即执行覆盖还原并自动重载系统吗？'
-          );
-          if (!confirmed) return;
-
+        const doExecuteRestore = async () => {
           isRestoring.value = true;
           try {
             const formData = new FormData();
@@ -5068,6 +5118,7 @@
               if (!selectedRestoreFile.value) {
                 showToastNotification('请上传有效的备份 ZIP 文件', 'error');
                 isRestoring.value = false;
+                showRestoreConfirmModal.value = false;
                 return;
               }
               formData.append('file', selectedRestoreFile.value);
@@ -5075,32 +5126,37 @@
               if (!selectedRestoreFilename.value) {
                 showToastNotification('请选择要恢复的历史快照', 'error');
                 isRestoring.value = false;
+                showRestoreConfirmModal.value = false;
                 return;
               }
               formData.append('filename', selectedRestoreFilename.value);
             }
             formData.append('requirePreBackup', 'false');
 
-            const token = localStorage.getItem('access_token') || sessionStorage.getItem('access_token') || '';
+            // 关键修复：从 rh_admin_token 或 rh_auth_token 读取有效管理员凭证
+            const token = localStorage.getItem('rh_admin_token') || localStorage.getItem('rh_auth_token') || localStorage.getItem('access_token') || '';
             const res = await fetch('/api/admin/system/backup/restore', {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${token}`
+                'Authorization': token ? `Bearer ${token}` : ''
               },
               body: formData
             });
 
             if (res.ok) {
               showToastNotification('🎉 数据还原成功！全站已完成热重载，系统将在 3 秒后刷新...', 'success');
+              showRestoreConfirmModal.value = false;
               setTimeout(() => {
                 window.location.reload();
               }, 3000);
             } else {
               const err = await res.json();
               showToastNotification('还原失败: ' + (err.detail || '未知错误'), 'error');
+              showRestoreConfirmModal.value = false;
             }
           } catch (e) {
             showToastNotification('请求异常: ' + e.message, 'error');
+            showRestoreConfirmModal.value = false;
           } finally {
             isRestoring.value = false;
           }
@@ -5425,6 +5481,7 @@
           isPreSnapshotDone,
           isRestoring,
           restoreFileInput,
+          showRestoreConfirmModal,
           openBackupModal,
           fetchBackupList,
           createBackupNow,
@@ -5432,7 +5489,8 @@
           setRestoreMode,
           onRestoreFileChange,
           executePreRestoreSnapshot,
-          confirmAndExecuteRestore,
+          openRestoreConfirmModal,
+          doExecuteRestore,
           inspectAllKeys,
           resumeKeyInPool,
           openSmtpModal,
