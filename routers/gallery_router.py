@@ -210,27 +210,7 @@ async def download_gallery_media(url: str, filename: Optional[str] = None):
                 headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fn}"}
             )
 
-    # 2. 远端 CDN / 官方直链
+    # 2. 远端 CDN / 官方直链：直接 302 极速重定向至云端高速 CDN，0 VPS 流量与带宽消耗
     if clean_url.startswith("http://") or clean_url.startswith("https://"):
-        try:
-            encoded_fn = urllib.parse.quote(safe_filename)
-            async def stream_remote():
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(clean_url, timeout=aiohttp.ClientTimeout(total=60)) as resp:
-                        if resp.status == 200:
-                            async for chunk in resp.content.iter_chunked(64 * 1024):
-                                yield chunk
-                        else:
-                            yield b""
-            return StreamingResponse(
-                stream_remote(),
-                media_type="application/octet-stream",
-                headers={
-                    "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fn}",
-                    "Access-Control-Expose-Headers": "Content-Disposition"
-                }
-            )
-        except Exception:
-            return RedirectResponse(clean_url)
-
+        return RedirectResponse(url=clean_url, status_code=302)
     raise HTTPException(status_code=400, detail="不支持的下载地址")

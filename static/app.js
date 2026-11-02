@@ -697,7 +697,7 @@ createApp({
     });
     let toastTimer = null;
 
-    const showToastNotification = (msg, type = 'info') => {
+    const showToastNotification = (msg, type = 'info', duration = 4000) => {
       if (toastTimer) clearTimeout(toastTimer);
       toastState.value = {
         show: true,
@@ -706,7 +706,7 @@ createApp({
       };
       toastTimer = setTimeout(() => {
         toastState.value.show = false;
-      }, 4000);
+      }, duration);
     };
 
     // 现代化自定义操作确认弹窗 (彻底替换原生黑框 confirm)
@@ -2117,7 +2117,7 @@ createApp({
       }
     });
 
-    // 浏览器端纯前端直链下载 (零经过服务器，由浏览器直接请求 RunningHub CDN)
+    // 浏览器端直链极速下载 (优先尝试无感直存，跨域时优雅走 302 直链模式 + 人性化操作指引)
     const downloadMedia = async (url, defaultFilename) => {
       if (!url) return;
       if (url.startsWith('data:')) {
@@ -2135,6 +2135,7 @@ createApp({
       const fallbackName = defaultFilename || (isVideo ? 'output.mp4' : (isAudio ? 'output.mp3' : 'output.png'));
 
       try {
+        // 第一优先级：尝试由浏览器直接获取数据流（若 CDN 开放跨域，可直接无感一键下载到本地）
         const resp = await fetch(url, { mode: 'cors' });
         if (!resp.ok) throw new Error("direct fetch failed");
         const blob = await resp.blob();
@@ -2146,15 +2147,26 @@ createApp({
         a.click();
         document.body.removeChild(a);
         setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+        showToastNotification('已成功触发下载并保存到本地！', 'success');
       } catch (err) {
-        // 跨域或安全沙箱拦截时，走服务端强行流式下载网关，杜绝弹窗新开标签页
-        const downloadUrl = `/api/gallery/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(fallbackName)}`;
-        const a = document.createElement('a');
-        a.href = downloadUrl;
-        a.download = fallbackName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        // 第二优先级：跨域沙箱拦截时，走 302 直链模式 (0 VPS 流量消耗)
+        // 在新窗口安全打开 RunningHub 媒体直链，并弹出温暖详尽的人性化保存指引
+        const targetUrl = url.startsWith('http') ? url : `/api/gallery/download?url=${encodeURIComponent(url)}&filename=${encodeURIComponent(fallbackName)}`;
+        const win = window.open(targetUrl, '_blank');
+        if (!win) {
+          const a = document.createElement('a');
+          a.href = targetUrl;
+          a.target = '_blank';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        }
+        const mediaName = isVideo ? '视频' : (isAudio ? '音频' : '图片');
+        showToastNotification(
+          `已为您调起云端高速直链！在新页面中点击右下角「⋮」选择「下载」，或长按/右键「另存为」即可保存${mediaName}。`,
+          'info',
+          7000
+        );
       }
     };
 
