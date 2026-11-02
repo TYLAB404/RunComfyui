@@ -1178,9 +1178,21 @@ createApp({
       }
     };
 
-    // 动态拉取指定工作流在云端的真实节点拓扑（每次实时向云端拉取最新配置）
-    const loadWorkflowSchema = async (wfId) => {
+    // 会话级工作流节点结构内存缓存 (仅在当前页面标签页打开期间有效，关闭/刷新页面自动释放，不占服务端任何资源)
+    const workflowSchemaSessionCache = new Map();
+
+    // 动态拉取指定工作流在云端的真实节点拓扑
+    const loadWorkflowSchema = async (wfId, forceRefresh = false) => {
       if (!wfId || wfId === 'custom_upload') return;
+
+      const cacheKey = String(wfId);
+      // 会话缓存检查：如果非强制刷新且该工作流在本次打开期间已解析过，0毫秒秒开还原！
+      if (!forceRefresh && workflowSchemaSessionCache.has(cacheKey)) {
+        const cachedData = workflowSchemaSessionCache.get(cacheKey);
+        applyParsedSchema(cachedData);
+        return;
+      }
+
       isLoadingSchema.value = true;
       try {
         const res = await authFetch('/api/workflows/inspect', {
@@ -1190,7 +1202,12 @@ createApp({
         });
         const data = await res.json();
         if (res.ok && data.status === 'ok') {
+          // 写入当前标签页会话内存缓存
+          workflowSchemaSessionCache.set(cacheKey, data);
           applyParsedSchema(data);
+          if (forceRefresh) {
+            showToastNotification('已成功从云端重新拉取并同步最新工作流配置！', 'success');
+          }
         } else {
           console.warn('获取工作流节点结构失败:', data);
           showToastNotification(data.detail || '未能获取该工作流节点参数，请检查平台 API Key', 'error');
@@ -1900,9 +1917,10 @@ createApp({
           await fetchConfig();
           showAddWorkflowModal.value = false;
           const addedId = newWf.value.id;
+          workflowSchemaSessionCache.delete(String(addedId));
           newWf.value = { id: '', name: '', category: '视频生成', description: '', minPointsEnabled: false, minPoints: 50 };
           selectedWorkflowId.value = addedId;
-          await loadWorkflowSchema(addedId);
+          await loadWorkflowSchema(addedId, true);
           activeTab.value = 'studio';
           showToastNotification('工作流已成功添加并生效！', 'success');
         } else {
@@ -1979,6 +1997,7 @@ createApp({
       if (!ok) return;
       try {
         await authFetch(`/api/workflows/${id}`, { method: 'DELETE' });
+        workflowSchemaSessionCache.delete(String(id));
         await fetchConfig();
         showToastNotification('工作流已成功移除', 'success');
       } catch (err) {
