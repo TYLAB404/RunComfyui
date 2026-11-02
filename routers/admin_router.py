@@ -104,6 +104,10 @@ class AdminSystemConfigRequest(BaseModel):
     r2PublicUrl: Optional[str] = None
     allowRegistration: Optional[bool] = None
     defaultUserPoints: Optional[int] = None
+    blockDisposableEmails: Optional[bool] = None
+    emailDomainMode: Optional[str] = None
+    emailDomainWhitelist: Optional[str] = None
+    emailDomainBlacklist: Optional[str] = None
     requireLoginToGenerate: Optional[bool] = None
     hideAuxiliaryAudioChain: Optional[bool] = None
     imgbedEnabled: Optional[bool] = None
@@ -398,6 +402,14 @@ def admin_update_system_config(
         sys_cfg["allowRegistration"] = bool(req.allowRegistration)
     if req.defaultUserPoints is not None:
         sys_cfg["defaultUserPoints"] = max(0, int(req.defaultUserPoints))
+    if req.blockDisposableEmails is not None:
+        sys_cfg["blockDisposableEmails"] = bool(req.blockDisposableEmails)
+    if req.emailDomainMode is not None:
+        sys_cfg["emailDomainMode"] = req.emailDomainMode.strip()
+    if req.emailDomainWhitelist is not None:
+        sys_cfg["emailDomainWhitelist"] = req.emailDomainWhitelist.strip()
+    if req.emailDomainBlacklist is not None:
+        sys_cfg["emailDomainBlacklist"] = req.emailDomainBlacklist.strip()
     if req.requireLoginToGenerate is not None:
         sys_cfg["requireLoginToGenerate"] = bool(req.requireLoginToGenerate)
     if req.hideAuxiliaryAudioChain is not None:

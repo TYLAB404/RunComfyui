@@ -159,6 +159,12 @@ async def send_verify_code(req: SendCodeRequest, request: Request):
     if not EMAIL_REGEX.match(email):
         raise HTTPException(status_code=400, detail="请输入格式正确的电子邮箱地址（例如 name@example.com）")
     
+    # 2.1 临时邮箱与域名安全风控拦截 (防脚本批量发信与批量注册薅羊毛)
+    from services.email_service import validate_email_domain
+    ok, domain_err = validate_email_domain(email, sys_cfg)
+    if not ok:
+        raise HTTPException(status_code=400, detail=domain_err)
+    
     # 3. 业务逻辑检测
     purpose = req.purpose.strip().lower() if req.purpose else "register"
     user = get_user_by_identifier(email)
@@ -242,6 +248,12 @@ async def register_user(req: RegisterRequest, request: Request, response: Respon
     email = req.email.strip().lower()
     if not EMAIL_REGEX.match(email):
         raise HTTPException(status_code=400, detail="请输入格式正确的电子邮箱地址（例如 name@example.com）")
+    
+    # 4.1 临时邮箱与域名安全风控拦截
+    from services.email_service import validate_email_domain
+    ok, domain_err = validate_email_domain(email, sys_cfg)
+    if not ok:
+        raise HTTPException(status_code=400, detail=domain_err)
     
     # 5. 邮箱验证码校验（若系统开启了 SMTP 则必须验证）
     smtp_enabled = bool(sys_cfg.get("smtp", {}).get("enabled", False))

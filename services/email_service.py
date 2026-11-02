@@ -206,3 +206,102 @@ async def async_notify_key_incident(key_id: str, key_name: str, masked_key: str,
         f"【紧急运维告警】RunningHub 账号 [{key_name}] 已被自动熔断隔离",
         html
     )
+
+# ==================== 电子邮箱后缀与一次性临时邮箱安全风控 ====================
+
+DEFAULT_EMAIL_WHITELIST_STR = "qq.com, 163.com, 126.com, gmail.com, outlook.com, hotmail.com, icloud.com, aliyun.com, foxmail.com, 139.com, 189.com, sina.com, sohu.com, yahoo.com, proton.me, protonmail.com"
+
+# 内置 200+ 常见一次性临时邮箱域名黑名单
+BUILTIN_DISPOSABLE_DOMAINS = {
+    "tempmail.com", "10minutemail.com", "guerrillamail.com", "guerrillamail.net",
+    "guerrillamail.org", "guerrillamail.biz", "guerrillamailblock.com", "mailinator.com",
+    "yopmail.com", "yopmail.fr", "yopmail.net", "dispostable.com", "sharklasers.com",
+    "grr.la", "pokemail.net", "spam4.me", "throwawaymail.com", "fakeinbox.com",
+    "getairmail.com", "mohmal.com", "trashmail.com", "trashmail.net", "trashmail.me",
+    "temp-mail.org", "dropmail.me", "10mail.org", "minutemail.com", "generator.email",
+    "discard.email", "discardmail.com", "tempail.com", "emailondeck.com", "mytrashmailer.com",
+    "crazymailing.com", "maildrop.cc", "getnada.com", "inoutmail.de", "tempinbox.com",
+    "meltmail.com", "boun.cr", "chacuo.net", "linshiyouxiang.net", "027168.com",
+    "bccto.me", "binkmail.com", "bobmail.info", "chammy.info", "devnullmail.com",
+    "dfgh.net", "dmailman.com", "dodgit.com", "drdrb.net", "emailmiser.com",
+    "emailsensei.com", "emailtemporaneo.net", "fakemailgenerator.com", "fastacura.com",
+    "filzmail.com", "freemailmsn.com", "getonemail.com", "gishpuppy.com", "hidemail.biz",
+    "incognitomail.org", "instant-mail.de", "jetable.org", "kasmail.com", "kurzepost.de",
+    "link2mail.net", "lortemail.dk", "mailexpire.com", "mailfreeonline.com", "mailhazard.com",
+    "mailhazard.us", "mailimate.com", "mailin8r.com", "mailinator2.com", "mailnesia.com",
+    "mailnull.com", "mailscrap.com", "mailslite.com", "mailtemp.info", "mailtothis.com",
+    "messagebeamer.de", "mintemail.com", "mycleaninbox.net", "mytrashmail.com", "no-spam.ws",
+    "noclickemail.com", "nogmailspam.info", "nomail.xl.cx", "noobmail.com", "nospam.ze.tc",
+    "nospam4.us", "nospammail.net", "notsharingmy.info", "nowmymail.com", "objectmail.com",
+    "obobbo.com", "oneoffmail.com", "onewaymail.com", "ourklip.com", "owlpic.com",
+    "pookmail.com", "quickinbox.com", "rando.email", "rcpt.at", "safe-mail.net",
+    "safetymail.info", "sendspamhere.com", "shieldmail.com", "shortmail.net", "sibmail.com",
+    "sneakymail.com", "sogetthis.com", "spamavert.com", "spambob.com", "spambog.com",
+    "spambox.us", "spamcannibal.net", "spamcon.org", "spamcorptastic.com", "spamcowboy.com",
+    "spamday.com", "spamex.com", "spamfree24.org", "spamgourmet.com", "spamhole.com",
+    "spamify.com", "spaminator.de", "spamkill.info", "spaml.com", "spammotel.com",
+    "spamspot.com", "spamtrap.ro", "spamtrail.com", "speed.1s.fr", "superrito.com",
+    "tafmail.com", "teewars.org", "tempemail.biz", "tempemail.net", "tempinbox.co.uk",
+    "tempmail.eu", "tempmail2.com", "tempmailer.com", "tempomail.fr", "temporaryemail.net",
+    "temporaryforwarding.com", "temporaryinbox.com", "throwawayemailaddress.com", "tiffanycleaners.com",
+    "trbvm.com", "umail.net", "vefsida.com", "veryrealemail.com", "vidavee.com",
+    "voicemailx.com", "webemail.me", "wetrainbayarea.com", "whyspam.me", "willselfdestruct.com",
+    "winmail.garlic.com", "wronghead.com", "wuzup.net", "wuzupmail.net", "xagloo.com",
+    "xents.com", "xmaily.com", "yourtempemail.com", "zehnminutenmail.de", "zipmail.com.br"
+}
+
+def parse_domain_list(raw_str: str) -> set:
+    """解析以逗号、分号、换行或空格分隔的域名列表"""
+    if not raw_str:
+        return set()
+    cleaned = set()
+    formatted = raw_str.replace("，", ",").replace("；", ",").replace(";", ",").replace(" ", ",")
+    for line in formatted.splitlines():
+        for item in line.split(","):
+            dom = item.strip().lower().lstrip("@")
+            if dom and "." in dom:
+                cleaned.add(dom)
+    return cleaned
+
+def validate_email_domain(email: str, sys_cfg: Optional[Dict] = None) -> Tuple[bool, str]:
+    """
+    电子邮箱域名风控检测：
+    1. 提取 @ 后的域名；
+    2. 检查临时邮箱拦截（blockDisposableEmails）与自定义黑名单；
+    3. 检查域名过滤模式（disposable_only | whitelist_only | off）；
+    返回 (是否合规, 拦截提示文案)
+    """
+    if not email or "@" not in email:
+        return False, "请输入格式正确的电子邮箱地址"
+    
+    if sys_cfg is None:
+        cfg = load_config()
+        sys_cfg = cfg.get("system", {})
+    
+    domain = email.split("@")[-1].strip().lower()
+    if not domain or "." not in domain:
+        return False, "邮箱域名格式不正确"
+    
+    mode = (sys_cfg.get("emailDomainMode") or "disposable_only").strip().lower()
+    if mode == "off":
+        return True, ""
+    
+    # 1. 严格白名单模式 (whitelist_only)
+    if mode == "whitelist_only":
+        whitelist_raw = sys_cfg.get("emailDomainWhitelist") or DEFAULT_EMAIL_WHITELIST_STR
+        whitelist = parse_domain_list(whitelist_raw)
+        if domain not in whitelist:
+            return False, f"系统已开启正规大厂邮箱限制，暂不支持「@{domain}」，请使用常见正规邮箱（如 QQ、网易、Gmail、Outlook 等）注册"
+        return True, ""
+    
+    # 2. 临时邮箱黑名单过滤 (disposable_only)
+    is_disposable_blocked = bool(sys_cfg.get("blockDisposableEmails", True))
+    if is_disposable_blocked:
+        custom_blacklist_raw = sys_cfg.get("emailDomainBlacklist") or ""
+        custom_blacklist = parse_domain_list(custom_blacklist_raw)
+        
+        if domain in BUILTIN_DISPOSABLE_DOMAINS or domain in custom_blacklist:
+            return False, f"系统已拦截一次性临时邮箱「@{domain}」，请使用常用正规电子邮箱注册"
+    
+    return True, ""
+

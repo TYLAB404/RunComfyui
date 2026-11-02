@@ -269,6 +269,18 @@ def get_system_config_safe(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, An
     sys_cfg["r2SecretAccessKeyMasked"] = mask_key(r2_raw) if r2_raw else ""
     sys_cfg["hasR2Secret"] = bool(r2_raw)
 
+    from services.email_service import DEFAULT_EMAIL_WHITELIST_STR
+    if "defaultUserPoints" not in sys_cfg:
+        sys_cfg["defaultUserPoints"] = 10
+    if "blockDisposableEmails" not in sys_cfg:
+        sys_cfg["blockDisposableEmails"] = True
+    if "emailDomainMode" not in sys_cfg:
+        sys_cfg["emailDomainMode"] = "disposable_only"
+    if "emailDomainWhitelist" not in sys_cfg:
+        sys_cfg["emailDomainWhitelist"] = DEFAULT_EMAIL_WHITELIST_STR
+    if "emailDomainBlacklist" not in sys_cfg:
+        sys_cfg["emailDomainBlacklist"] = ""
+
     if "workflowCategories" not in sys_cfg or not sys_cfg["workflowCategories"]:
         sys_cfg["workflowCategories"] = ["文生图", "图生图", "视频生成", "声音音频", "画质增强", "其他"]
     return sys_cfg
