@@ -315,12 +315,14 @@ async def generate_task(
             u_lock.release()
 
 def sanitize_task_for_user(t: Dict[str, Any]) -> Dict[str, Any]:
-    """面向前台普通用户的任务视图：彻底隐藏后台审计流细节（取消主体、操作人、批注），确保报错人性化直白"""
+    """面向前台普通用户的任务视图：彻底隐藏后台审计流细节（取消主体、操作人、批注），确保报错人性化直白；并剔除冗余 nodeInfoList 减轻 3 秒轮询载荷"""
     t_clean = dict(t)
     # 彻底移除仅限后端的审计流字段
     t_clean.pop("cancelledBy", None)
     t_clean.pop("cancelledOperator", None)
     t_clean.pop("adminNote", None)
+    # 彻底剔除任务列表不需要展示的大体积工作流节点参数，为 3 秒轮询减负瘦身
+    t_clean.pop("nodeInfoList", None)
     
     cur_status = t_clean.get("status")
     cur_reason = str(t_clean.get("cancelReason") or t_clean.get("error") or "")
@@ -344,7 +346,7 @@ async def list_tasks(current_user: Optional[Dict[str, Any]] = Depends(get_curren
     
     if current_user:
         user_id_str = str(current_user["id"])
-        user_tasks = db_load_tasks(user_id=user_id_str, limit=200)
+        user_tasks = db_load_tasks(user_id=user_id_str, limit=200, include_node_info=False)
     else:
         user_tasks = []
 

@@ -272,15 +272,19 @@ def init_database():
 
 # ----------------- 任务表 (Tasks) 封装操作 -----------------
 
-def db_row_to_task(row: sqlite3.Row) -> Dict[str, Any]:
+def db_row_to_task(row: sqlite3.Row, include_node_info: bool = True) -> Dict[str, Any]:
     d = dict(row)
     try:
         outputs = json.loads(d.get("outputs_json") or "[]")
     except Exception:
         outputs = []
-    try:
-        node_info = json.loads(d.get("node_info_json") or "[]")
-    except Exception:
+    
+    if include_node_info:
+        try:
+            node_info = json.loads(d.get("node_info_json") or "[]")
+        except Exception:
+            node_info = []
+    else:
         node_info = []
 
     task_type = d.get("task_type", "Standard")
@@ -326,7 +330,8 @@ def db_load_tasks(
     limit: int = 200,
     search_user: Optional[str] = None,
     cancelled_by: Optional[str] = None,
-    keyword: Optional[str] = None
+    keyword: Optional[str] = None,
+    include_node_info: bool = False
 ) -> List[Dict[str, Any]]:
     with get_db_connection() as conn:
         cursor = conn.cursor()
@@ -370,10 +375,14 @@ def db_load_tasks(
         
         cursor.execute(sql, tuple(params))
         rows = cursor.fetchall()
-        return [db_row_to_task(r) for r in rows]
+        return [db_row_to_task(r, include_node_info=include_node_info) for r in rows]
 
 def db_get_task(task_id: str) -> Optional[Dict[str, Any]]:
     with get_db_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM tasks WHERE task_id = ?;", (str(task_id),))
+        row = cursor.fetchone()
+        return db_row_to_task(row, include_node_info=True) if row else None
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM tasks WHERE task_id = ?;", (str(task_id),))
         row = cursor.fetchone()
