@@ -209,8 +209,8 @@
               @click="activeSection = 'security'" 
               :class="activeSection === 'security' ? 'bg-indigo-600/15 text-indigo-400 border border-indigo-500/30 font-semibold' : 'text-slate-400 hover:bg-slate-900 hover:text-slate-200 border border-transparent'"
               class="w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs transition duration-150">
-              <i data-lucide="shield-check" class="w-4 h-4"></i>
-              <span>安全防护 & Turnstile</span>
+              <i data-lucide="cloud-lightning" class="w-4 h-4 text-amber-400"></i>
+              <span>Cloudflare 专区 & 安全</span>
             </button>
 
             <button 
@@ -792,8 +792,121 @@
 
           </section>
 
-          <!-- 4. 安全防御 & Cloudflare Turnstile 视图 (Security) -->
+          <!-- 4. Cloudflare 专区与安全防护 (Turnstile & R2 对象存储) -->
           <section v-if="activeSection === 'security'" class="space-y-6">
+            
+            <!-- Cloudflare R2 对象存储与极速直传 -->
+            <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-6 space-y-6">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800/80 pb-4">
+                <div>
+                  <h3 class="text-base font-bold text-white flex items-center gap-2">
+                    <i data-lucide="database" class="w-5 h-5 text-amber-400"></i>
+                    <span>Cloudflare R2 对象存储与零带宽极速直传</span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      大厂级零带宽架构
+                    </span>
+                  </h3>
+                  <p class="text-xs text-slate-400 mt-1">
+                    启用后，用户在大文件/视频上传时将通过 5 分钟单次临时预签名凭证直接推入 Cloudflare R2 全球骨干网，<strong>完全不经过你的 VPS，VPS 带宽与内存消耗纯降为 0</strong>。RunningHub 亦将通过公网直链秒级获取素材。
+                  </p>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <button 
+                    @click="testR2Connection" 
+                    :disabled="testingR2"
+                    class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition flex items-center gap-1.5 disabled:opacity-50 shadow-sm">
+                    <span v-if="testingR2" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                    <i v-else data-lucide="activity" class="w-3.5 h-3.5 text-amber-400"></i>
+                    <span>测试 R2 连通性</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- R2 核心参数表单 -->
+              <div class="space-y-4 max-w-3xl">
+                
+                <!-- R2 总开关 -->
+                <div class="flex items-center justify-between p-4 rounded-xl bg-slate-950 border border-slate-800">
+                  <div>
+                    <div class="text-xs font-bold text-white flex items-center gap-2">
+                      <span>R2 前端直传总开关</span>
+                      <span v-if="systemConfig.r2Enabled" class="px-1.5 py-0.5 rounded text-[10px] bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 font-mono">已启用</span>
+                      <span v-else class="px-1.5 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 font-mono">未启用 (回退传统中转)</span>
+                    </div>
+                    <div class="text-[11px] text-slate-400 mt-0.5">开启后前台工作流视频/图像优先走 R2 直传，未开启或异常时无缝降级回退至传统模式</div>
+                  </div>
+                  <input type="checkbox" v-model="systemConfig.r2Enabled" class="w-5 h-5 accent-indigo-500 cursor-pointer">
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1.5">Cloudflare Account ID (账户 ID)</label>
+                    <input 
+                      type="text" 
+                      v-model="systemConfig.r2AccountId" 
+                      placeholder="例如: db5f7ce7fc30321e..." 
+                      class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+                  </div>
+
+                  <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1.5">R2 Bucket Name (存储桶名称)</label>
+                    <input 
+                      type="text" 
+                      v-model="systemConfig.r2BucketName" 
+                      placeholder="例如: runcomfyui-media" 
+                      class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+                  </div>
+                </div>
+
+                <div>
+                  <label class="block text-xs font-medium text-slate-300 mb-1.5">Public Development URL (公网直链访问根地址)</label>
+                  <input 
+                    type="text" 
+                    v-model="systemConfig.r2PublicUrl" 
+                    placeholder="例如: https://pub-xxxxxxxx.r2.dev" 
+                    class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+                  <p class="text-[10px] text-slate-500 mt-1">在 R2 存储桶 Settings ➔ Public Development URL 中开启后自动分配的 pub-xxx.r2.dev 链接</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label class="block text-xs font-medium text-slate-300 mb-1.5">Access Key ID (访问密钥 ID)</label>
+                    <input 
+                      type="text" 
+                      v-model="systemConfig.r2AccessKeyId" 
+                      placeholder="例如: bcc41c892dd7..." 
+                      class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+                  </div>
+
+                  <div>
+                    <div class="flex items-center justify-between mb-1.5">
+                      <label class="block text-xs font-medium text-slate-300">Secret Access Key (机密私钥)</label>
+                      <span v-if="systemConfig.hasR2Secret" class="text-[10px] text-emerald-400 font-mono">
+                        ✓ 已 AES-256 安全加密存储 (留空表示不修改)
+                      </span>
+                    </div>
+                    <input 
+                      type="password" 
+                      v-model="systemConfig.r2SecretAccessKey" 
+                      :placeholder="systemConfig.r2SecretAccessKeyMasked ? ('当前密文: ' + systemConfig.r2SecretAccessKeyMasked) : '输入 Secret Access Key'" 
+                      class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+                  </div>
+                </div>
+
+                <div class="pt-4 border-t border-slate-800/80">
+                  <button 
+                    @click="saveSystemSettings" 
+                    :disabled="savingSettings" 
+                    class="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-500 shadow-md shadow-indigo-600/20 disabled:opacity-50 transition flex items-center gap-2">
+                    <span v-if="savingSettings" class="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block"></span>
+                    <span>保存 Cloudflare R2 配置</span>
+                  </button>
+                </div>
+
+              </div>
+
+            </div>
+
             
             <div class="bg-slate-900/90 border border-slate-800/90 rounded-2xl p-6 space-y-6">
               
@@ -3622,6 +3735,23 @@
         const galleryStatusFilter = ref('all');
         const imgbedInfo = ref({ totalOutputs: 0, syncedOutputs: 0, pendingSync: 0 });
         const showImgbedModal = ref(false);
+        const testingR2 = ref(false);
+        const testR2Connection = async () => {
+          testingR2.value = true;
+          try {
+            const res = await authFetch('/api/admin/r2/test', { method: 'POST' });
+            const data = await res.json();
+            if (data.status === 'ok') {
+              showToastNotification('✓ ' + (data.message || 'Cloudflare R2 连通性测试通过！'), 'success');
+            } else {
+              showToastNotification('R2 测试未通过: ' + (data.message || '请检查配置'), 'error');
+            }
+          } catch (e) {
+            showToastNotification('R2 测试异常: ' + e.message, 'error');
+          } finally {
+            testingR2.value = false;
+          }
+        };
         const testingImgbed = ref(false);
         const syncingAllImgbed = ref(false);
         const syncingPending = ref(false);
@@ -6136,6 +6266,8 @@
           galleryUniqueUsers,
           imgbedInfo,
           showImgbedModal,
+          testingR2,
+          testR2Connection,
           testingImgbed,
           syncingAllImgbed,
           imgbedForm,

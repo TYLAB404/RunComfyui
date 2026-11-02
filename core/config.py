@@ -138,6 +138,12 @@ def _sanitize_and_migrate_config(cfg: Dict[str, Any]) -> Tuple[Dict[str, Any], b
         "turnstileEnabled": False,
         "turnstileSiteKey": "",
         "turnstileSecretKeyEncrypted": "",
+        "r2Enabled": False,
+        "r2AccountId": "",
+        "r2BucketName": "",
+        "r2AccessKeyId": "",
+        "r2SecretAccessKeyEncrypted": "",
+        "r2PublicUrl": "",
         "allowRegistration": True,
         "defaultUserPoints": 100,
         "requireLoginToGenerate": False,
@@ -257,9 +263,33 @@ def get_system_config_safe(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, An
     imgbed_raw = decrypt_key(imgbed_enc) if imgbed_enc else ""
     sys_cfg["imgbedAuthHeaderMasked"] = mask_key(imgbed_raw) if imgbed_raw else ""
     sys_cfg["hasImgbedAuthHeader"] = bool(imgbed_raw)
+
+    r2_enc = sys_cfg.pop("r2SecretAccessKeyEncrypted", "")
+    r2_raw = decrypt_key(r2_enc) if r2_enc else ""
+    sys_cfg["r2SecretAccessKeyMasked"] = mask_key(r2_raw) if r2_raw else ""
+    sys_cfg["hasR2Secret"] = bool(r2_raw)
+
     if "workflowCategories" not in sys_cfg or not sys_cfg["workflowCategories"]:
         sys_cfg["workflowCategories"] = ["文生图", "图生图", "视频生成", "声音音频", "画质增强", "其他"]
     return sys_cfg
+
+def get_r2_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    from core.security import decrypt_key, mask_key
+    if cfg is None:
+        cfg = load_config()
+    sys_cfg = cfg.get("system", {})
+    enc_secret = sys_cfg.get("r2SecretAccessKeyEncrypted", "")
+    raw_secret = decrypt_key(enc_secret) if enc_secret else ""
+    return {
+        "enabled": bool(sys_cfg.get("r2Enabled", False)),
+        "accountId": str(sys_cfg.get("r2AccountId", "")).strip(),
+        "bucketName": str(sys_cfg.get("r2BucketName", "")).strip(),
+        "accessKeyId": str(sys_cfg.get("r2AccessKeyId", "")).strip(),
+        "rawSecretKey": raw_secret,
+        "secretKeyMasked": mask_key(raw_secret) if raw_secret else "",
+        "hasSecret": bool(raw_secret),
+        "publicUrl": str(sys_cfg.get("r2PublicUrl", "")).strip().rstrip("/")
+    }
 
 def get_imgbed_config(cfg: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     from core.security import decrypt_key, mask_key

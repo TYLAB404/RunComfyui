@@ -29,6 +29,7 @@ from core.config import (
     save_config,
     get_active_api_key,
     get_imgbed_config,
+    get_r2_config,
     get_system_config_safe,
 )
 from core.database import (
@@ -95,6 +96,12 @@ class AdminSystemConfigRequest(BaseModel):
     turnstileEnabled: Optional[bool] = None
     turnstileSiteKey: Optional[str] = None
     turnstileSecretKey: Optional[str] = None
+    r2Enabled: Optional[bool] = None
+    r2AccountId: Optional[str] = None
+    r2BucketName: Optional[str] = None
+    r2AccessKeyId: Optional[str] = None
+    r2SecretAccessKey: Optional[str] = None
+    r2PublicUrl: Optional[str] = None
     allowRegistration: Optional[bool] = None
     defaultUserPoints: Optional[int] = None
     requireLoginToGenerate: Optional[bool] = None
@@ -371,6 +378,22 @@ def admin_update_system_config(
                 raw_secret = "0x" + parts[1]
         if not raw_secret.startswith("****") and "****" not in raw_secret:
             sys_cfg["turnstileSecretKeyEncrypted"] = encrypt_key(raw_secret)
+    # Cloudflare R2 对象存储设置
+    if req.r2Enabled is not None:
+        sys_cfg["r2Enabled"] = bool(req.r2Enabled)
+    if req.r2AccountId is not None:
+        sys_cfg["r2AccountId"] = req.r2AccountId.strip()
+    if req.r2BucketName is not None:
+        sys_cfg["r2BucketName"] = req.r2BucketName.strip()
+    if req.r2AccessKeyId is not None:
+        sys_cfg["r2AccessKeyId"] = req.r2AccessKeyId.strip()
+    if req.r2PublicUrl is not None:
+        sys_cfg["r2PublicUrl"] = req.r2PublicUrl.strip().rstrip("/")
+    if req.r2SecretAccessKey is not None and req.r2SecretAccessKey.strip():
+        raw_r2_sec = req.r2SecretAccessKey.strip()
+        if not raw_r2_sec.startswith("****") and "****" not in raw_r2_sec:
+            sys_cfg["r2SecretAccessKeyEncrypted"] = encrypt_key(raw_r2_sec)
+
     if req.allowRegistration is not None:
         sys_cfg["allowRegistration"] = bool(req.allowRegistration)
     if req.defaultUserPoints is not None:
@@ -1309,3 +1332,28 @@ def admin_delete_tasks_batch_endpoint(payload: Dict[str, Any], _: Dict[str, Any]
         "deletedCount": count,
         "message": f"成功批量清理 {count} 条任务审计记录"
     }
+
+
+@router.post("/api/admin/r2/test")
+async def admin_test_r2(_: Dict[str, Any] = Depends(get_current_admin)):
+    """管理员在线测试 Cloudflare R2 预签名与直传公网读回连通性"""
+    from services.r2_service import test_r2_connectivity
+    cfg = load_config()
+    r2_cfg = get_r2_config(cfg)
+    if not r2_cfg.get("hasSecret") or not r2_cfg.get("accessKeyId"):
+        return {"status": "error", "message": "尚未配置完整的 R2 AccessKey 或 SecretKey"}
+    if not r2_cfg.get("accountId") or not r2_cfg.get("bucketName"):
+        return {"status": "error", "message": "尚未配置 R2 Account ID 或 Bucket 名称"}
+
+    ok, msg = await asyncio.to_thread(
+        test_r2_connectivity,
+        r2_cfg["accountId"],
+        r2_cfg["accessKeyId"],
+        r2_cfg["rawSecretKey"],
+        r2_cfg["bucketName"],
+        r2_cfg["publicUrl"]
+    )
+    if ok:
+        return {"status": "ok", "message": msg}
+    else:
+        return {"status": "error", "message": msg}

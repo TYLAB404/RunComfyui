@@ -1420,6 +1420,54 @@ createApp({
     };
 
     // 参考图上传处理 (自动上传至 RunningHub OpenAPI 并关联对应节点)
+    // 智能媒体上传分发：优先尝试 Cloudflare R2 零带宽直传，未启用或异常时无缝降级回退到常规中转
+    const uploadMediaSmart = async (file) => {
+      try {
+        const presignRes = await authFetch('/api/upload/r2-presign', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            filename: file.name,
+            contentType: file.type || 'application/octet-stream',
+            fileSize: file.size
+          })
+        });
+        if (presignRes.ok) {
+          const presignData = await presignRes.json();
+          if (presignData.status === 'ok' && presignData.uploadUrl && presignData.publicUrl) {
+            // 浏览器直接 PUT 到 Cloudflare R2 (完全不经过 VPS，零带宽/零内存消耗)
+            const putRes = await fetch(presignData.uploadUrl, {
+              method: 'PUT',
+              headers: {
+                'Content-Type': file.type || 'application/octet-stream'
+              },
+              body: file
+            });
+            if (putRes.ok || putRes.status === 200 || putRes.status === 204) {
+              return {
+                status: 'ok',
+                fileName: presignData.publicUrl,
+                publicUrl: presignData.publicUrl,
+                fileType: presignData.fileType,
+                mode: 'r2_direct'
+              };
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[R2 Direct Upload Notice] Fallback to standard upload:', err);
+      }
+
+      // 降级回退方案：传统 VPS 后端中转
+      const formData = new FormData();
+      formData.append('file', file);
+      const res = await authFetch('/api/upload', {
+        method: 'POST',
+        body: formData
+      });
+      return await res.json();
+    };
+
     const handleNodeImageUpload = async (event, imgNode) => {
       if (isBelowThreshold.value) {
         if (event && event.target) event.target.value = '';
@@ -1432,15 +1480,8 @@ createApp({
       imgNode.previewUrl = URL.createObjectURL(file);
       imgNode.isUploading = true;
 
-      const formData = new FormData();
-      formData.append('file', file);
-
       try {
-        const res = await authFetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        const data = await res.json();
+        const data = await uploadMediaSmart(file);
         if (data.status === 'ok') {
           imgNode.uploadedFileName = data.fileName;
           // 同步写入全节点覆盖字典
@@ -1475,15 +1516,8 @@ createApp({
       vidNode.previewUrl = URL.createObjectURL(file);
       vidNode.isUploading = true;
 
-      const formData = new FormData();
-      formData.append('file', file);
-
       try {
-        const res = await authFetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        const data = await res.json();
+        const data = await uploadMediaSmart(file);
         if (data.status === 'ok') {
           vidNode.uploadedFileName = data.fileName;
           // 同步写入全节点覆盖字典
@@ -1518,15 +1552,8 @@ createApp({
       audNode.previewUrl = URL.createObjectURL(file);
       audNode.isUploading = true;
 
-      const formData = new FormData();
-      formData.append('file', file);
-
       try {
-        const res = await authFetch('/api/upload', {
-          method: 'POST',
-          body: formData
-        });
-        const data = await res.json();
+        const data = await uploadMediaSmart(file);
         if (data.status === 'ok') {
           audNode.uploadedFileName = data.fileName;
           // 同步写入全节点覆盖字典

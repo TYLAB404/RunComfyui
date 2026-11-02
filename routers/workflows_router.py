@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
 from pydantic import BaseModel, Field
 
 from core.config import (
-    load_config, save_config, get_active_api_key,
+    load_config, save_config, get_active_api_key, get_r2_config,
     filter_workflows_for_user, sort_workflows, resolve_real_workflow_id, RUNNINGHUB_API_URL,
     DATA_DIR
 )
@@ -366,6 +366,72 @@ async def parse_workflow_json_endpoint(
         "visualGraph": visual_graph,
         "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
         "dynamicSchema": parsed["dynamicSchema"]
+    }
+
+
+class R2PresignRequest(BaseModel):
+    filename: str
+    contentType: Optional[str] = "application/octet-stream"
+    fileSize: Optional[int] = None
+
+@router.post("/api/upload/r2-presign")
+async def get_r2_upload_presign(
+    req: R2PresignRequest,
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
+):
+    """获取 Cloudflare R2 临时预签名直传凭证 (零消耗 VPS 带宽)"""
+    cfg = load_config()
+    sys_cfg = cfg.get("system", {})
+    if sys_cfg.get("requireLoginToGenerate") and not current_user:
+        raise HTTPException(status_code=401, detail="当前系统已开启强制登录，请先登录后再上传素材")
+    
+    r2_cfg = get_r2_config(cfg)
+    if not r2_cfg.get("enabled"):
+        return {"status": "disabled", "message": "R2 直传功能未启用"}
+    
+    if not r2_cfg.get("hasSecret") or not r2_cfg.get("accessKeyId") or not r2_cfg.get("accountId") or not r2_cfg.get("bucketName"):
+        return {"status": "disabled", "message": "R2 配置不完整，回退至常规上传"}
+    
+    filename_raw = req.filename or ""
+    allowed_image_exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}
+    allowed_video_exts = {".mp4", ".webm", ".mov"}
+    allowed_audio_exts = {".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}
+    allowed_exts = allowed_image_exts | allowed_video_exts | allowed_audio_exts
+    ext = os.path.splitext(filename_raw)[1].lower()
+    if ext not in allowed_exts:
+        raise HTTPException(status_code=400, detail=f"不支持的文件格式: {ext}")
+    
+    # 50MB 上限
+    if req.fileSize and req.fileSize > 50 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="素材文件过大，单文件上传上限为 50MB")
+    
+    username = (current_user.get("username") if current_user else "guest") or "guest"
+    user_prefix = "".join(c for c in username if c.isalnum() or c in ("-", "_")).strip() or "guest"
+    safe_name = os.path.basename(filename_raw)
+    object_key = f"uploads/{user_prefix}/{int(time.time())}_{safe_name}"
+    
+    from services.r2_service import generate_r2_presigned_put_url
+    presigned_url = generate_r2_presigned_put_url(
+        r2_cfg["accountId"],
+        r2_cfg["accessKeyId"],
+        r2_cfg["rawSecretKey"],
+        r2_cfg["bucketName"],
+        object_key,
+        content_type=req.contentType or "application/octet-stream",
+        expires_in=300
+    )
+    
+    public_base = r2_cfg["publicUrl"].rstrip("/")
+    public_url = f"{public_base}/{object_key}"
+    inferred_type = "audio" if ext in allowed_audio_exts else ("video" if ext in allowed_video_exts else "image")
+    
+    return {
+        "status": "ok",
+        "uploadUrl": presigned_url,
+        "publicUrl": public_url,
+        "key": object_key,
+        "fileName": safe_name,
+        "fileType": inferred_type
     }
 
 @router.post("/api/upload")
