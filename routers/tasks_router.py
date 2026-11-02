@@ -515,6 +515,12 @@ async def proxy_media_view(
                 if expected_part not in u and not u.startswith(f"{clean_subfolder}/"):
                     continue
 
+            # 校验 type 是否与真实路径/记录严格吻合 (实现 user_id, filename, subfolder, type 四元组精准绑定)
+            if clean_type in ("output", "temp"):
+                expected_type = f"/{clean_type}/"
+                if ("/output/" in u or "/temp/" in u) and expected_type not in u:
+                    continue
+
             owns_file = True
             break
 
