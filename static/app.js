@@ -1419,9 +1419,8 @@ createApp({
       return true;
     };
 
-    // 参考图上传处理 (自动上传至 RunningHub OpenAPI 并关联对应节点)
-    // 智能媒体上传分发：优先尝试 Cloudflare R2 零带宽直传，未启用或异常时无缝降级回退到常规中转
-    const uploadMediaSmart = async (file) => {
+    // 参考媒体上传处理 (支持图片/视频/音频，智能分发至 Cloudflare R2 零带宽直传或回退中转)
+    const uploadMediaSmart = async (file, signal = null) => {
       try {
         const presignRes = await authFetch('/api/upload/r2-presign', {
           method: 'POST',
@@ -1430,7 +1429,8 @@ createApp({
             filename: file.name,
             contentType: file.type || 'application/octet-stream',
             fileSize: file.size
-          })
+          }),
+          signal
         });
         if (presignRes.ok) {
           const presignData = await presignRes.json();
@@ -1441,7 +1441,8 @@ createApp({
               headers: {
                 'Content-Type': file.type || 'application/octet-stream'
               },
-              body: file
+              body: file,
+              signal
             });
             if (putRes.ok || putRes.status === 200 || putRes.status === 204) {
               return {
@@ -1455,7 +1456,16 @@ createApp({
           }
         }
       } catch (err) {
+        if (err.name === 'AbortError' || signal?.aborted) {
+          throw err;
+        }
         console.warn('[R2 Direct Upload Notice] Fallback to standard upload:', err);
+      }
+
+      if (signal?.aborted) {
+        const err = new Error('Upload aborted');
+        err.name = 'AbortError';
+        throw err;
       }
 
       // 降级回退方案：传统 VPS 后端中转
@@ -1463,9 +1473,31 @@ createApp({
       formData.append('file', file);
       const res = await authFetch('/api/upload', {
         method: 'POST',
-        body: formData
+        body: formData,
+        signal
       });
       return await res.json();
+    };
+
+    // 中止/移除节点媒体上传 (即刻中断正在进行的网络传输并清理状态)
+    const cancelNodeUpload = (node) => {
+      if (!node) return;
+      const wasUploading = !!node.isUploading;
+      if (node.abortController) {
+        try {
+          node.abortController.abort();
+        } catch (e) {}
+        node.abortController = null;
+      }
+      node.isUploading = false;
+      node.previewUrl = null;
+      node.uploadedFileName = '';
+      if (nodeOverrides.value && nodeOverrides.value[node.nodeId]) {
+        delete nodeOverrides.value[node.nodeId][node.fieldName];
+      }
+      if (wasUploading) {
+        showToastNotification('已终止文件上传', 'info');
+      }
     };
 
     const handleNodeImageUpload = async (event, imgNode) => {
@@ -1474,14 +1506,22 @@ createApp({
         handleUploadAreaClick(event);
         return;
       }
-      const file = event.target.files[0];
+      const file = event?.target?.files?.[0];
+      if (event && event.target) event.target.value = '';
       if (!file) return;
 
+      // 若当前节点已在上传中，先中止前次网络请求
+      if (imgNode.abortController) {
+        try { imgNode.abortController.abort(); } catch (e) {}
+      }
+      const controller = new AbortController();
+      imgNode.abortController = controller;
       imgNode.previewUrl = URL.createObjectURL(file);
       imgNode.isUploading = true;
 
       try {
-        const data = await uploadMediaSmart(file);
+        const data = await uploadMediaSmart(file, controller.signal);
+        if (controller.signal.aborted) return;
         if (data.status === 'ok') {
           imgNode.uploadedFileName = data.fileName;
           // 同步写入全节点覆盖字典
@@ -1495,11 +1535,17 @@ createApp({
           imgNode.uploadedFileName = '';
         }
       } catch (err) {
+        if (err.name === 'AbortError' || controller.signal.aborted) {
+          return; // 用户主动取消上传，静默退出
+        }
         showToastNotification('图片上传发生异常: ' + err.message, 'error');
         imgNode.previewUrl = null;
         imgNode.uploadedFileName = '';
       } finally {
-        imgNode.isUploading = false;
+        if (imgNode.abortController === controller) {
+          imgNode.abortController = null;
+          imgNode.isUploading = false;
+        }
       }
     };
 
@@ -1510,14 +1556,22 @@ createApp({
         handleUploadAreaClick(event);
         return;
       }
-      const file = event.target.files[0];
+      const file = event?.target?.files?.[0];
+      if (event && event.target) event.target.value = '';
       if (!file) return;
 
+      // 若当前节点已在上传中，先中止前次网络请求
+      if (vidNode.abortController) {
+        try { vidNode.abortController.abort(); } catch (e) {}
+      }
+      const controller = new AbortController();
+      vidNode.abortController = controller;
       vidNode.previewUrl = URL.createObjectURL(file);
       vidNode.isUploading = true;
 
       try {
-        const data = await uploadMediaSmart(file);
+        const data = await uploadMediaSmart(file, controller.signal);
+        if (controller.signal.aborted) return;
         if (data.status === 'ok') {
           vidNode.uploadedFileName = data.fileName;
           // 同步写入全节点覆盖字典
@@ -1531,11 +1585,17 @@ createApp({
           vidNode.uploadedFileName = '';
         }
       } catch (err) {
+        if (err.name === 'AbortError' || controller.signal.aborted) {
+          return; // 用户主动取消上传，静默退出
+        }
         showToastNotification('视频上传发生异常: ' + err.message, 'error');
         vidNode.previewUrl = null;
         vidNode.uploadedFileName = '';
       } finally {
-        vidNode.isUploading = false;
+        if (vidNode.abortController === controller) {
+          vidNode.abortController = null;
+          vidNode.isUploading = false;
+        }
       }
     };
 
@@ -1546,14 +1606,22 @@ createApp({
         handleUploadAreaClick(event);
         return;
       }
-      const file = event.target.files[0];
+      const file = event?.target?.files?.[0];
+      if (event && event.target) event.target.value = '';
       if (!file) return;
 
+      // 若当前节点已在上传中，先中止前次网络请求
+      if (audNode.abortController) {
+        try { audNode.abortController.abort(); } catch (e) {}
+      }
+      const controller = new AbortController();
+      audNode.abortController = controller;
       audNode.previewUrl = URL.createObjectURL(file);
       audNode.isUploading = true;
 
       try {
-        const data = await uploadMediaSmart(file);
+        const data = await uploadMediaSmart(file, controller.signal);
+        if (controller.signal.aborted) return;
         if (data.status === 'ok') {
           audNode.uploadedFileName = data.fileName;
           // 同步写入全节点覆盖字典
@@ -1567,11 +1635,17 @@ createApp({
           audNode.uploadedFileName = '';
         }
       } catch (err) {
+        if (err.name === 'AbortError' || controller.signal.aborted) {
+          return; // 用户主动取消上传，静默退出
+        }
         showToastNotification('音频上传发生异常: ' + err.message, 'error');
         audNode.previewUrl = null;
         audNode.uploadedFileName = '';
       } finally {
-        audNode.isUploading = false;
+        if (audNode.abortController === controller) {
+          audNode.abortController = null;
+          audNode.isUploading = false;
+        }
       }
     };
 
@@ -3002,6 +3076,7 @@ createApp({
       handleNodeImageUpload,
       handleNodeVideoUpload,
       handleNodeAudioUpload,
+      cancelNodeUpload,
       submitDynamicGeneration,
       saveSettings,
       saveNewWorkflow,

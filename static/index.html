@@ -633,7 +633,13 @@
                 </label>
                 <div v-if="imgNode.previewUrl" class="relative w-14 h-14 rounded-lg overflow-hidden border border-slate-700 bg-black flex-shrink-0">
                   <img :src="imgNode.previewUrl" class="w-full h-full object-cover">
-                  <button @click="imgNode.previewUrl = null; imgNode.uploadedFileName = ''" class="absolute top-0 right-0 bg-red-600 text-white text-[10px] w-4 h-4 rounded-bl flex items-center justify-center">✕</button>
+                  <div v-if="imgNode.isUploading" class="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
+                    <svg class="animate-spin h-5 w-5 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                    </svg>
+                  </div>
+                  <button type="button" @click.stop="cancelNodeUpload(imgNode)" class="absolute top-0 right-0 bg-red-600 hover:bg-red-500 text-white text-[10px] w-4 h-4 rounded-bl flex items-center justify-center transition cursor-pointer z-10" title="取消并移除">✕</button>
                 </div>
               </div>
               <div class="flex items-center gap-2 text-xs">
@@ -684,7 +690,13 @@
                 </label>
                 <div v-if="vidNode.previewUrl" class="relative w-16 h-14 rounded-lg overflow-hidden border border-slate-700 bg-black flex-shrink-0">
                   <video :src="vidNode.previewUrl" class="w-full h-full object-cover" muted preload="metadata"></video>
-                  <button @click="vidNode.previewUrl = null; vidNode.uploadedFileName = ''" class="absolute top-0 right-0 bg-red-600 text-white text-[10px] w-4 h-4 rounded-bl flex items-center justify-center">✕</button>
+                  <div v-if="vidNode.isUploading" class="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
+                    <svg class="animate-spin h-5 w-5 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                    </svg>
+                  </div>
+                  <button type="button" @click.stop="cancelNodeUpload(vidNode)" class="absolute top-0 right-0 bg-red-600 hover:bg-red-500 text-white text-[10px] w-4 h-4 rounded-bl flex items-center justify-center transition cursor-pointer z-10" title="取消并移除">✕</button>
                 </div>
               </div>
               <div class="flex items-center gap-2 text-xs">
@@ -735,8 +747,12 @@
                   <input type="file" accept="audio/*,.mp3,.wav,.flac,.ogg,.m4a,.aac" :disabled="isBelowThreshold" @change="e => handleNodeAudioUpload(e, audNode)" class="hidden" />
                 </label>
               </div>
-              <div v-if="audNode.previewUrl" class="space-y-1">
-                <audio :src="audNode.previewUrl" controls preload="metadata" class="w-full h-8 rounded-lg"></audio>
+              <div v-if="audNode.previewUrl" class="flex items-center gap-2">
+                <audio :src="audNode.previewUrl" controls preload="metadata" class="flex-1 h-8 rounded-lg"></audio>
+                <button type="button" @click.stop="cancelNodeUpload(audNode)" class="px-2 py-1 bg-red-600 hover:bg-red-500 text-white text-xs rounded-lg transition cursor-pointer flex items-center gap-1" title="取消并移除">
+                  <span>✕</span>
+                  <span class="text-[11px]" v-if="audNode.isUploading">取消</span>
+                </button>
               </div>
               <div class="flex items-center gap-2 text-xs">
                 <span class="text-slate-500 whitespace-nowrap">当前音频名:</span>

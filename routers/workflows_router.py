@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import uuid
 import asyncio
 import requests
 from typing import Optional, Dict, Any, List
@@ -405,10 +406,10 @@ async def get_r2_upload_presign(
     if req.fileSize and req.fileSize > 50 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="素材文件过大，单文件上传上限为 50MB")
     
-    username = (current_user.get("username") if current_user else "guest") or "guest"
-    user_prefix = "".join(c for c in username if c.isalnum() or c in ("-", "_")).strip() or "guest"
+    # 采用安全随机 UUID4 (128-bit 随机熵) 彻底隔离用户身份与原始文件名，防止碰撞、撞库枚举与隐私泄露
+    random_token = uuid.uuid4().hex
+    object_key = f"uploads/{random_token}{ext}"
     safe_name = os.path.basename(filename_raw)
-    object_key = f"uploads/{user_prefix}/{int(time.time())}_{safe_name}"
     
     from services.r2_service import generate_r2_presigned_put_url
     presigned_url = generate_r2_presigned_put_url(
@@ -430,7 +431,8 @@ async def get_r2_upload_presign(
         "uploadUrl": presigned_url,
         "publicUrl": public_url,
         "key": object_key,
-        "fileName": safe_name,
+        "fileName": f"{random_token}{ext}",
+        "originalName": safe_name,
         "fileType": inferred_type
     }
 
