@@ -1005,7 +1005,12 @@ createApp({
           if (!selectedWorkflowId.value || !currentExists) {
             selectedWorkflowId.value = workflows.value[0].id;
           }
-          await loadWorkflowSchema(selectedWorkflowId.value);
+          // 极致性能优化：按需懒加载！
+          // 主页（工作流广场）仅负责极速展示卡片外观，不进行耗时的云端节点探测；
+          // 仅当用户已经在工作台 (studio) 时，才触发具体节点拓扑解析。
+          if (activeTab.value === 'studio' && selectedWorkflowId.value) {
+            await loadWorkflowSchema(selectedWorkflowId.value);
+          }
         }
       } catch (err) {
         console.error('Failed to load config:', err);
@@ -2552,6 +2557,9 @@ createApp({
       if (tab === 'gallery') {
         // 静默平滑切换：若已有作品直接 0 毫秒秒开显示，杜绝骨架屏闪烁，后台静默拉取增量更新
         refreshGallery(false);
+      }
+      if (tab === 'studio' && !dynamicSchema.value && selectedWorkflowId.value) {
+        loadWorkflowSchema(selectedWorkflowId.value);
       }
       if (tab === 'workflows' && workflows.value.length === 0) {
         fetchConfig();
