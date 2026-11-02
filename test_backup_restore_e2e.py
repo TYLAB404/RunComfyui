@@ -33,9 +33,11 @@ from services.backup_service import (
     BACKUP_DIR
 )
 from services.email_service import send_smtp_email, send_admin_alert_email
+from unittest.mock import patch
 
 
-def run_e2e_tests():
+@patch('services.backup_service.send_admin_alert_email', return_value=(True, 'Mock test mail sent'))
+def run_e2e_tests(mock_email=None):
     print("=" * 70)
     print("🚀 开始 RunComfyUI 自动灾备与双相回档全流程端到端自动化测试")
     print("=" * 70)

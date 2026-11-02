@@ -235,15 +235,34 @@ def save_preset_workflow_schema(wf_id: str, schema_data: Dict[str, Any]):
         print(f"[Workflow Schema] Failed to persist schema: {e}")
 
 @router.post("/api/workflows/inspect")
-def inspect_workflow_endpoint(payload: Dict[str, Any]):
-    """通过 RunningHub OpenAPI 实时动态拉取工作流的 ComfyUI 原始结构并做深度动态提取"""
+def inspect_workflow_endpoint(
+    payload: Dict[str, Any],
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
+):
+    """通过 RunningHub OpenAPI 实时动态拉取工作流的 ComfyUI 结构并解析为动态表单 (强制登录鉴权与拓扑脱敏)"""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="未授权访问：请先登录后再解析工作流参数")
+
     workflow_id = payload.get("workflowId")
     if not workflow_id:
         raise HTTPException(status_code=400, detail="Missing workflowId")
     
+    is_admin = bool(current_user.get("role") == "admin")
     cfg = load_config()
     real_workflow_id = resolve_real_workflow_id(workflow_id, cfg)
-    api_key = payload.get("apiKey") or get_active_api_key(cfg)
+    api_key = (payload.get("apiKey") if is_admin else None) or get_active_api_key(cfg)
+
+    def sanitize_schema_response(res_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """对非管理员剥离底层 rawPrompt 与完整 visualGraph 拓扑，仅保留动态表单所需的 dynamicSchema"""
+        if is_admin:
+            return res_dict
+        return {
+            "status": "ok",
+            "workflowId": str(workflow_id),
+            "totalNodes": res_dict.get("totalNodes", 0),
+            "dynamicSchema": res_dict.get("dynamicSchema", {}),
+            "hiddenAuxiliaryNodeIds": res_dict.get("hiddenAuxiliaryNodeIds", [])
+        }
 
     # 1. 每次均直接向 RunningHub 实时动态拉取（严格确保画布新修改/新参数即时同步生效）
     if api_key:
@@ -269,9 +288,10 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
                     "hiddenAuxiliaryNodeIds": parsed["hiddenAuxiliaryNodeIds"],
                     "dynamicSchema": parsed["dynamicSchema"]
                 }
-                # 动态刷新持久化缓存以备容灾
-                save_preset_workflow_schema(str(real_workflow_id), result)
-                return result
+                # 动态刷新持久化缓存以备容灾 (仅管理员操作时写入预设缓存)
+                if is_admin:
+                    save_preset_workflow_schema(str(real_workflow_id), result)
+                return sanitize_schema_response(result)
             else:
                 err_msg = str(raw_data.get("msg") or "获取工作流信息失败")
                 if "WORKFLOW_NOT_SAVED" in err_msg.upper() or "NOT_RUNNING" in err_msg.upper():
@@ -281,7 +301,7 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
                 if fallback:
                     res = dict(fallback)
                     res["workflowId"] = str(workflow_id)
-                    return res
+                    return sanitize_schema_response(res)
                 raise HTTPException(status_code=400, detail=err_msg)
         except HTTPException:
             raise
@@ -290,7 +310,7 @@ def inspect_workflow_endpoint(payload: Dict[str, Any]):
             if fallback:
                 res = dict(fallback)
                 res["workflowId"] = str(workflow_id)
-                return res
+                return sanitize_schema_response(res)
             raise HTTPException(status_code=500, detail=f"连接 RunningHub 失败: {str(e)}")
 
     # 2. 若当前未配置有效 API Key，预置工作流尝试容灾，新工作流则友好引导进入后台配置

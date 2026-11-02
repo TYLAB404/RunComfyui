@@ -233,9 +233,7 @@ async def download_gallery_media(
         allowed_domain_suffixes = (
             "runninghub.cn",
             "runninghub.ai",
-            "xiaoyaoyou.com",
-            "aliyuncs.com",
-            "myqcloud.com"
+            "xiaoyaoyou.com"
         )
         
         is_trusted = any(host == d or host.endswith("." + d) for d in allowed_domain_suffixes)

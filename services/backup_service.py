@@ -94,11 +94,14 @@ def create_backup(
                 zf.write(config_json_path, arcname="data/config.json")
                 meta["filesIncluded"].append("data/config.json")
 
-            # 写入环境配置 .env (若存在)
-            env_path = os.path.join(BASE_DIR, ".env")
-            if os.path.exists(env_path):
-                zf.write(env_path, arcname=".env")
-                meta["filesIncluded"].append(".env")
+            # 写入环境配置 .env (仅在本地保留；严禁向外发邮件中打包可能包含 MASTER_SECRET 或 JWT 密钥的 .env)
+            if include_secret_key:
+                env_path = os.path.join(BASE_DIR, ".env")
+                if os.path.exists(env_path):
+                    zf.write(env_path, arcname=".env")
+                    meta["filesIncluded"].append(".env")
+            meta["secretKeyIncluded"] = bool(include_secret_key)
+            meta["envIncluded"] = bool(include_secret_key)
 
             # 写入自定义工作流目录
             if include_workflows:
@@ -417,7 +420,8 @@ def send_backup_to_admin(zip_filepath: str, meta: Dict[str, Any], is_pre_restore
       <div style="background-color: #1e293b; padding: 14px 18px; border-radius: 8px; font-size: 13px; margin: 16px 0; border-left: 4px solid {'#f59e0b' if is_pre_restore else '#10b981'};">
         <p style="margin: 4px 0;"><b>备份文件名：</b> <code style="color: #93c5fd;">{meta['filename']}</code></p>
         <p style="margin: 4px 0;"><b>压缩包大小：</b> {size_str}</p>
-        <p style="margin: 4px 0;"><b>包含核心资产：</b> SQLite数据库 (app.db)、秘钥 (.secret.key)、配置 (config.json)、工作流</p>
+        <p style="margin: 4px 0;"><b>包含核心资产：</b> SQLite数据库 (app.db)、配置 (config.json)、工作流</p>
+        <p style="margin: 4px 0;"><b>安全脱敏策略：</b> <span style="color: {'#f59e0b' if meta.get('secretKeyIncluded') else '#10b981'};">{'本地完整镜像（含主密钥）' if meta.get('secretKeyIncluded') else '已自动剔除主密钥 (.secret.key) 与环境配置 (.env)，杜绝邮件外发泄密风险'}</span></p>
         <p style="margin: 4px 0;"><b>备份生成时间：</b> {now_str}</p>
       </div>
       <p style="font-size: 12px; color: #94a3b8; line-height: 1.5;">

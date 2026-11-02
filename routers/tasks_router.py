@@ -12,6 +12,7 @@ from core.config import load_config, get_active_api_key, resolve_real_workflow_i
 from core.security import is_key_fatal_error, decrypt_key
 from core.http_client import HTTP_SESSION
 from core.database import (
+    get_db_connection,
     db_get_task, db_save_task, db_update_task,
     db_deduct_user_points, db_refund_user_points, db_load_tasks,
     db_count_user_active_tasks, db_atomic_cancel_and_refund
@@ -453,29 +454,70 @@ async def proxy_media_view(
     subfolder: Optional[str] = "",
     type: Optional[str] = "temp",
     format: Optional[str] = "",
+    task_id: Optional[str] = None,
     current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
 ):
-    """安全代理获取 RunningHub 实例产物，杜绝将明文 Key 暴露给前端页面 (严格鉴权防越权)"""
+    """安全代理获取 RunningHub 实例产物，杜绝将明文 Key 暴露给前端页面 (严格鉴权防越权与三元组路径归属校验)"""
     if not current_user:
         raise HTTPException(status_code=401, detail="未授权访问：请先登录后再查看生成产物")
 
-    safe_name = os.path.basename(filename)
-    if not safe_name or ".." in filename or ".." in (subfolder or ""):
+    # 1. 严格参数校验与白名单防御
+    clean_type = (type or "temp").strip().lower()
+    if clean_type not in ("temp", "output", "input"):
+        raise HTTPException(status_code=400, detail="非法的 type 参数 (仅支持 temp, output, input)")
+
+    clean_subfolder = (subfolder or "").strip().replace("\\", "/").strip("/")
+    if ".." in clean_subfolder or ".." in filename or any(c in clean_subfolder for c in (":", "*", "?", '"', "<", ">", "|", "\0")):
         raise HTTPException(status_code=400, detail="非法的路径参数")
 
+    safe_name = os.path.basename(filename)
+    if not safe_name or safe_name != filename.strip():
+        raise HTTPException(status_code=400, detail="非法的媒体文件名")
+
+    # 2. 用户归属三元组精准校验 (杜绝跨租户同名文件通过 subfolder 越权拉取)
     is_admin = bool(current_user.get("role") == "admin")
     if not is_admin:
         user_id = str(current_user["id"])
-        user_tasks = db_load_tasks(user_id=user_id, limit=100)
+        candidate_outputs = []
+
+        if task_id and task_id.strip():
+            t = db_get_task(task_id.strip())
+            if not t or str(t.get("userId") or "") != user_id:
+                raise HTTPException(status_code=403, detail="无权访问非本人任务生成的媒体产物")
+            candidate_outputs.extend(t.get("outputs", []))
+        else:
+            # 精准按用户 ID 及 outputs_json 检索，不受 limit=100 截断限制
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT outputs_json FROM tasks WHERE user_id = ? AND outputs_json LIKE ? ORDER BY created_at DESC LIMIT 50;",
+                    (user_id, f"%{safe_name}%")
+                )
+                rows = cur.fetchall()
+            for r in rows:
+                try:
+                    candidate_outputs.extend(json.loads(r[0]))
+                except Exception:
+                    pass
+
         owns_file = False
-        for t in user_tasks:
-            for out in t.get("outputs", []):
-                fname = out.get("filename") or os.path.basename(out.get("url", "").split("?")[0])
-                if safe_name == fname or (out.get("url") and safe_name in out.get("url")) or (out.get("remoteUrl") and safe_name in out.get("remoteUrl")):
-                    owns_file = True
-                    break
-            if owns_file:
-                break
+        for out in candidate_outputs:
+            fname = out.get("filename") or os.path.basename(out.get("url", "").split("?")[0])
+            u = out.get("url") or out.get("remoteUrl") or ""
+            
+            # 文件名必须精确匹配
+            if safe_name != fname and not (u and u.split("?")[0].endswith("/" + safe_name)):
+                continue
+
+            # 如果请求传了 subfolder，则该 subfolder 必须与 output 真实路径完全吻合，严防篡改子目录
+            if clean_subfolder:
+                expected_part = f"/{clean_subfolder}/"
+                if expected_part not in u and not u.startswith(f"{clean_subfolder}/"):
+                    continue
+
+            owns_file = True
+            break
+
         if not owns_file:
             raise HTTPException(status_code=403, detail="无权访问非本人任务生成的媒体产物")
 
