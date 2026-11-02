@@ -239,30 +239,33 @@ def inspect_workflow_endpoint(
     payload: Dict[str, Any],
     current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
 ):
-    """通过 RunningHub OpenAPI 实时动态拉取工作流的 ComfyUI 结构并解析为动态表单 (强制登录鉴权与拓扑脱敏)"""
-    if not current_user:
-        raise HTTPException(status_code=401, detail="未授权访问：请先登录后再解析工作流参数")
+    """通过 RunningHub OpenAPI 实时动态拉取工作流结构并解析为表单与画布 (安全脱敏 rawPrompt，保留 visualGraph 与表单)"""
+    cfg = load_config()
+    sys_cfg = cfg.get("system", {})
+    if sys_cfg.get("requireLoginToGenerate") and not current_user:
+        raise HTTPException(status_code=401, detail="当前系统已开启强制登录，请先登录后再查看工作流节点")
 
     workflow_id = payload.get("workflowId")
     if not workflow_id:
         raise HTTPException(status_code=400, detail="Missing workflowId")
     
-    is_admin = bool(current_user.get("role") == "admin")
-    cfg = load_config()
+    is_admin = bool(current_user and current_user.get("role") == "admin")
     real_workflow_id = resolve_real_workflow_id(workflow_id, cfg)
     api_key = (payload.get("apiKey") if is_admin else None) or get_active_api_key(cfg)
 
     def sanitize_schema_response(res_dict: Dict[str, Any]) -> Dict[str, Any]:
-        """对非管理员剥离底层 rawPrompt 与完整 visualGraph 拓扑，仅保留动态表单所需的 dynamicSchema"""
-        if is_admin:
-            return res_dict
-        return {
+        """非管理员剥离底层 ComfyUI rawPrompt，但完整保留前端画布渲染与参数提交所需的 dynamicSchema 与 visualGraph"""
+        clean_res = {
             "status": "ok",
             "workflowId": str(workflow_id),
             "totalNodes": res_dict.get("totalNodes", 0),
             "dynamicSchema": res_dict.get("dynamicSchema", {}),
+            "visualGraph": res_dict.get("visualGraph") or {"nodes": [], "edges": []},
             "hiddenAuxiliaryNodeIds": res_dict.get("hiddenAuxiliaryNodeIds", [])
         }
+        if is_admin:
+            clean_res["rawPrompt"] = res_dict.get("rawPrompt")
+        return clean_res
 
     # 1. 每次均直接向 RunningHub 实时动态拉取（严格确保画布新修改/新参数即时同步生效）
     if api_key:
@@ -318,7 +321,7 @@ def inspect_workflow_endpoint(
     if fallback:
         res = dict(fallback)
         res["workflowId"] = str(workflow_id)
-        return res
+        return sanitize_schema_response(res)
 
     raise HTTPException(status_code=400, detail="未配置有效 API Key。请以管理员身份登录管理后台 (/admin.html)，在【API 密钥池】中添加并启用您的 RunningHub 密钥")
 
