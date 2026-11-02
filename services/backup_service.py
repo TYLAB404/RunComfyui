@@ -33,16 +33,14 @@ def create_backup(
     include_workflows: bool = True,
     send_email: bool = False,
     is_pre_restore: bool = False,
-    include_secret_key: Optional[bool] = None
+    include_secret_key: bool = True
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     创建一次完整的应用灾备快照压缩包。
     文件名严格带有创建时间戳：{prefix}YYYYMMDD_HHMMSS.zip
     使用 SQLite 在线备份 API，保证在业务并发写入时数据库文件 100% 事务一致、绝不损坏。
-    安全策略：若推送到外部邮箱 (send_email=True)，默认禁止打包对称主密钥 .secret.key，实现钥匙与保险箱物理隔离。
+    满血灾备策略：包含核心数据库、主密钥 (.secret.key)、系统配置与环境，支持新服务器一键 100% 满血复原！
     """
-    if include_secret_key is None:
-        include_secret_key = not send_email
 
     os.makedirs(BACKUP_DIR, exist_ok=True)
     now = datetime.now()
@@ -420,8 +418,8 @@ def send_backup_to_admin(zip_filepath: str, meta: Dict[str, Any], is_pre_restore
       <div style="background-color: #1e293b; padding: 14px 18px; border-radius: 8px; font-size: 13px; margin: 16px 0; border-left: 4px solid {'#f59e0b' if is_pre_restore else '#10b981'};">
         <p style="margin: 4px 0;"><b>备份文件名：</b> <code style="color: #93c5fd;">{meta['filename']}</code></p>
         <p style="margin: 4px 0;"><b>压缩包大小：</b> {size_str}</p>
-        <p style="margin: 4px 0;"><b>包含核心资产：</b> SQLite数据库 (app.db)、配置 (config.json)、工作流</p>
-        <p style="margin: 4px 0;"><b>安全脱敏策略：</b> <span style="color: {'#f59e0b' if meta.get('secretKeyIncluded') else '#10b981'};">{'本地完整镜像（含主密钥）' if meta.get('secretKeyIncluded') else '已自动剔除主密钥 (.secret.key) 与环境配置 (.env)，杜绝邮件外发泄密风险'}</span></p>
+        <p style="margin: 4px 0;"><b>包含核心资产：</b> SQLite数据库 (app.db)、主密钥 (.secret.key)、配置 (config.json)、工作流与环境变量</p>
+        <p style="margin: 4px 0;"><b>恢复特性：</b> <span style="color: #10b981;">🛡️ 完整满血镜像，支持新服务器一键 100% 满血复原（无需重新配置任何密钥）</span></p>
         <p style="margin: 4px 0;"><b>备份生成时间：</b> {now_str}</p>
       </div>
       <p style="font-size: 12px; color: #94a3b8; line-height: 1.5;">

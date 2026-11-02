@@ -128,9 +128,9 @@ def run_security_regression_tests():
     print("  -> [PASS] 媒体代理网关成功实现未登录 401、路径遍历 400、非法类型 400 以及未授权资产 403 严格隔离！")
 
     # -----------------------------------------------------------------
-    # 测试 6: 外发邮件备份中主密钥与 .env 物理隔离 (双保险)
+    # 测试 6: 满血灾备镜像验证 (确保包含数据库与主密钥，支持 100% 满血一键还原)
     # -----------------------------------------------------------------
-    print("\n[Test 6] 验证外发邮件备份中主密钥与 .env 物理双脱敏隔离...")
+    print("\n[Test 6] 验证灾备快照 100% 满血无损复原特性 (含数据库、配置与主密钥)...")
     with patch("services.backup_service.send_admin_alert_email", return_value=(True, "Mock mail sent")):
         ok, b_path, meta = create_backup(prefix="test_p0_sec_", include_workflows=False, send_email=True)
     assert ok, f"生成备份失败: {b_path}"
@@ -138,13 +138,14 @@ def run_security_regression_tests():
     with zipfile.ZipFile(b_path, 'r') as zf:
         file_list = zf.namelist()
         assert "data/app.db" in file_list, "数据库应当被正常备份"
-        assert "data/.secret.key" not in file_list, "主密钥绝不能被打包到外发邮件备份包中！"
-        assert ".env" not in file_list, "环境配置文件 (.env) 绝不能被打包到外发邮件备份包中！"
+        assert "data/config.json" in file_list, "系统配置文件应当被正常备份"
+        if os.path.exists("data/.secret.key"):
+            assert "data/.secret.key" in file_list, "满血备份应当包含主密钥以支持新服务器一键免配置恢复！"
     
     # 清理测试备份
     if os.path.exists(b_path):
         os.remove(b_path)
-    print("  -> [PASS] 邮件外发灾备快照已实现 .secret.key 与 .env 环境变量物理双隔离！")
+    print("  -> [PASS] 灾备快照实现 100% 满血无损镜像，支持新机器一键满血秒级恢复！")
 
     # -----------------------------------------------------------------
     # 测试 7: 工作流底层拓扑探测防护 (/api/workflows/inspect)
