@@ -67,7 +67,7 @@ def check_user_can_start_task(user: Optional[Dict[str, Any]]) -> Tuple[bool, flo
     返回 (是否允许, 当前余额, 错误/提示原因)
     """
     if not user:
-        return True, 0.0, ""
+        return False, 0.0, "未登录用户禁止提交生成任务，请先登录账号"
 
     if user.get("role") == "admin":
         return True, float(user.get("points", 999999)), "管理员免计费特权"

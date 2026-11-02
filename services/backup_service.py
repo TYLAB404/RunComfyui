@@ -32,13 +32,18 @@ def create_backup(
     prefix: str = "runcomfyui_backup_",
     include_workflows: bool = True,
     send_email: bool = False,
-    is_pre_restore: bool = False
+    is_pre_restore: bool = False,
+    include_secret_key: Optional[bool] = None
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     创建一次完整的应用灾备快照压缩包。
     文件名严格带有创建时间戳：{prefix}YYYYMMDD_HHMMSS.zip
     使用 SQLite 在线备份 API，保证在业务并发写入时数据库文件 100% 事务一致、绝不损坏。
+    安全策略：若推送到外部邮箱 (send_email=True)，默认禁止打包对称主密钥 .secret.key，实现钥匙与保险箱物理隔离。
     """
+    if include_secret_key is None:
+        include_secret_key = not send_email
+
     os.makedirs(BACKUP_DIR, exist_ok=True)
     now = datetime.now()
     timestamp_str = now.strftime("%Y%m%d_%H%M%S")
@@ -76,11 +81,12 @@ def create_backup(
             zf.write(temp_db_path, arcname="data/app.db")
             meta["filesIncluded"].append("data/app.db")
 
-            # 写入对称加密密钥（关键：解密 Key 必需）
-            secret_key_path = os.path.join(DATA_DIR, ".secret.key")
-            if os.path.exists(secret_key_path):
-                zf.write(secret_key_path, arcname="data/.secret.key")
-                meta["filesIncluded"].append("data/.secret.key")
+            # 写入对称加密密钥（仅在本地安全留存时写入，禁止向外发邮件中打包主密钥）
+            if include_secret_key:
+                secret_key_path = os.path.join(DATA_DIR, ".secret.key")
+                if os.path.exists(secret_key_path):
+                    zf.write(secret_key_path, arcname="data/.secret.key")
+                    meta["filesIncluded"].append("data/.secret.key")
 
             # 写入系统配置文件
             config_json_path = os.path.join(DATA_DIR, "config.json")

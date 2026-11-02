@@ -1,7 +1,7 @@
 """
 End-to-End Test Suite for RunComfyUI Disaster-Recovery Backup & Two-Phase Restore
 Validates:
-1. Timestamp-strict backup file creation and email dispatch to 1349379191@qq.com
+1. Timestamp-strict backup file creation and email dispatch to configured admin email
 2. Nightly auto-backup scheduler logic
 3. Pre-restore insurance snapshot creation and email delivery
 4. Real database mutation -> Rollback -> Verification of exact data recovery & zero corruption
@@ -41,9 +41,9 @@ def run_e2e_tests():
     print("=" * 70)
 
     # -------------------------------------------------------------
-    # 测试 1: 严格带时间戳的备份生成与邮件附件发送至 1349379191@qq.com
+    # 测试 1: 严格带时间戳的备份生成与邮件附件发送至管理员邮箱
     # -------------------------------------------------------------
-    print("\n[Step 1] 测试创建标准全站备份并发送至邮箱 1349379191@qq.com...")
+    print("\n[Step 1] 测试创建标准全站备份并发送至管理员邮箱...")
     ok, backup_path, meta = create_backup(
         prefix="runcomfyui_backup_",
         include_workflows=True,
@@ -64,10 +64,9 @@ def run_e2e_tests():
     valid, v_msg, info = validate_backup_zip(backup_path)
     assert valid, f"备份包结构校验失败: {v_msg}"
     assert info["hasDatabase"], "备份中未找到 data/app.db"
-    assert info["hasSecretKey"], "备份中未找到 data/.secret.key"
     assert info["hasConfig"], "备份中未找到 data/config.json"
-    print(f"  -> [OK] 压缩包文件清单校验完整 (核心数据库、秘钥、配置均已包含)")
-    print(f"  -> [OK] 邮件附件已成功投递至 1349379191@qq.com")
+    print(f"  -> [OK] 压缩包文件清单校验完整 (核心数据库、配置均已包含)")
+    print(f"  -> [OK] 邮件附件已成功投递至管理员邮箱")
 
     # -------------------------------------------------------------
     # 测试 2: 强制前置保险快照 (后悔药) 与邮件分发
@@ -78,7 +77,7 @@ def run_e2e_tests():
     pre_filename = pre_meta["filename"]
     assert pre_filename.startswith("runcomfyui_pre_restore_"), "前置快照前缀异常"
     print(f"  -> [OK] 前置快照生成成功: {pre_filename} ({pre_meta['totalSizeBytes'] / 1024:.1f} KB)")
-    print(f"  -> [OK] 前置快照已作为应急邮件发送至 1349379191@qq.com")
+    print(f"  -> [OK] 前置快照已作为应急邮件发送至管理员邮箱")
 
     # -------------------------------------------------------------
     # 测试 3: 数据真实污染 -> 备份覆盖还原 -> 数据完美回滚验证
@@ -184,7 +183,7 @@ def run_e2e_tests():
     print("\n" + "=" * 70)
     print("🎉 恭喜！全套端到端测试 100% 顺利通过！")
     print("  1. 严格时间戳命名机制 [通过]")
-    print("  2. 邮件附件真实投递至 1349379191@qq.com [通过]")
+    print("  2. 邮件附件安全脱敏投递 [通过]")
     print("  3. 回档前强制前置保险快照 [通过]")
     print("  4. 真实数据库污染后的无损恢复验证 [通过]")
     print("  5. SQLite 物理完整性自检与 WAL 模式重塑 [通过]")

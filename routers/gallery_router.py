@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse, RedirectResponse
 import urllib.parse
 import aiohttp
-from core.config import BASE_DIR, OUTPUTS_DIR
+from core.config import BASE_DIR, OUTPUTS_DIR, load_config
 from core.auth import get_current_user_optional
 from core.database import db_load_tasks, db_get_task, update_task_record
 from services.imgbed_service import infer_media_type
@@ -119,16 +119,19 @@ def delete_gallery_file(
     current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
 ):
     """用户软删除成果：支持传入 taskId 精确定位，彻底对用户自身隐藏，管理员后台依然完整保留可见"""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="未授权操作：请先登录后再管理画廊成果")
+    
     safe_name = os.path.basename(filename)
-    user_id = str(current_user["id"]) if current_user else ""
-    is_admin = bool(current_user and current_user.get("role") == "admin")
+    user_id = str(current_user["id"])
+    is_admin = bool(current_user.get("role") == "admin")
     
     # 优先基于精确 taskId 处理
     if task_id:
         t = db_get_task(str(task_id).strip())
         if t:
             task_owner = str(t.get("userId") or "")
-            if task_owner and user_id and not is_admin and task_owner != user_id:
+            if not is_admin and task_owner and task_owner != user_id:
                 raise HTTPException(status_code=403, detail="无权操作其他用户的成果文件")
             outs = t.get("outputs", [])
             modified = False
@@ -163,7 +166,7 @@ def delete_gallery_file(
             remote_fname = os.path.basename(o.get("remoteUrl", "").split("?")[0])
             if safe_name in (fname, remote_fname) or (o.get("url") and safe_name in o.get("url")) or (o.get("remoteUrl") and safe_name in o.get("remoteUrl")):
                 task_owner = str(t.get("userId") or "")
-                if user_id and not is_admin and task_owner and task_owner != user_id:
+                if not is_admin and task_owner and task_owner != user_id:
                     continue
                 o_copy = dict(o)
                 o_copy["userHidden"] = True
@@ -186,10 +189,16 @@ def delete_gallery_file(
 
 
 @router.get("/api/gallery/download")
-async def download_gallery_media(url: str, filename: Optional[str] = None):
+async def download_gallery_media(
+    url: str, 
+    filename: Optional[str] = None,
+    current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
+):
     """
-    通用媒体文件直链下载网关：
-    跨域解决浏览器无法直接保存文件的限制，强制注入 Content-Disposition: attachment
+    通用媒体文件直链下载网关 (严格加固)：
+    1. 杜绝路径穿越 (Path Traversal)：本地文件严格限制在 outputs 目录内并做 realpath 隔离；
+    2. 杜绝开放重定向 (Open Redirect)：远端直链严格限制在 RunningHub/官方图床白名单域名；
+    3. 302 极速跳转，零消耗 VPS 流量与带宽。
     """
     if not url:
         raise HTTPException(status_code=400, detail="缺少下载地址")
@@ -198,19 +207,52 @@ async def download_gallery_media(url: str, filename: Optional[str] = None):
     safe_filename = filename or os.path.basename(clean_url.split("?")[0]) or "output.png"
     safe_filename = os.path.basename(safe_filename)
 
-    # 1. 本地生成成果
+    # 1. 本地生成成果 (严格防路径穿越)
     if clean_url.startswith("/outputs/") or clean_url.startswith("outputs/"):
         rel_path = clean_url.lstrip("/")
-        full_path = os.path.join(BASE_DIR, rel_path)
-        if os.path.exists(full_path):
-            encoded_fn = urllib.parse.quote(safe_filename)
-            return FileResponse(
-                path=full_path,
-                filename=safe_filename,
-                headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fn}"}
-            )
+        outputs_root = os.path.realpath(OUTPUTS_DIR)
+        full_path = os.path.realpath(os.path.join(BASE_DIR, rel_path))
+        
+        # 严格校验：禁止使用 .. 逃逸出 outputs_root 目录
+        if not (full_path == outputs_root or full_path.startswith(outputs_root + os.sep)):
+            raise HTTPException(status_code=403, detail="非法访问路径：安全策略已拒绝跳级跨目录读取")
+        if not os.path.isfile(full_path):
+            raise HTTPException(status_code=404, detail="本地成果文件不存在或已被归档")
 
-    # 2. 远端 CDN / 官方直链：直接 302 极速重定向至云端高速 CDN，0 VPS 流量与带宽消耗
+        encoded_fn = urllib.parse.quote(safe_filename)
+        return FileResponse(
+            path=full_path,
+            filename=safe_filename,
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_fn}"}
+        )
+
+    # 2. 远端 CDN / 官方直链 (严格防开放重定向钓鱼)
     if clean_url.startswith("http://") or clean_url.startswith("https://"):
+        parsed = urllib.parse.urlparse(clean_url)
+        host = (parsed.netloc or "").split(":")[0].lower()
+        allowed_domain_suffixes = (
+            "runninghub.cn",
+            "runninghub.ai",
+            "xiaoyaoyou.com",
+            "aliyuncs.com",
+            "myqcloud.com"
+        )
+        
+        is_trusted = any(host == d or host.endswith("." + d) for d in allowed_domain_suffixes)
+        if not is_trusted:
+            try:
+                cfg = load_config()
+                ib_url = cfg.get("system", {}).get("imgbed", {}).get("publicBaseUrl", "")
+                if ib_url:
+                    ib_host = urllib.parse.urlparse(ib_url).netloc.split(":")[0].lower()
+                    if host == ib_host or (ib_host and host.endswith("." + ib_host)):
+                        is_trusted = True
+            except Exception:
+                pass
+
+        if not is_trusted:
+            raise HTTPException(status_code=400, detail="安全拦截：仅允许跳转至官方及受信任的媒体存储 CDN")
+
         return RedirectResponse(url=clean_url, status_code=302)
-    raise HTTPException(status_code=400, detail="不支持的下载地址")
+
+    raise HTTPException(status_code=400, detail="不支持的下载地址协议")

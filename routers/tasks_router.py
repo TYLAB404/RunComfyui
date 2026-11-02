@@ -455,7 +455,30 @@ async def proxy_media_view(
     format: Optional[str] = "",
     current_user: Optional[Dict[str, Any]] = Depends(get_current_user_optional)
 ):
-    """安全代理获取 RunningHub 实例产物，杜绝将明文 Key 暴露给前端页面"""
+    """安全代理获取 RunningHub 实例产物，杜绝将明文 Key 暴露给前端页面 (严格鉴权防越权)"""
+    if not current_user:
+        raise HTTPException(status_code=401, detail="未授权访问：请先登录后再查看生成产物")
+
+    safe_name = os.path.basename(filename)
+    if not safe_name or ".." in filename or ".." in (subfolder or ""):
+        raise HTTPException(status_code=400, detail="非法的路径参数")
+
+    is_admin = bool(current_user.get("role") == "admin")
+    if not is_admin:
+        user_id = str(current_user["id"])
+        user_tasks = db_load_tasks(user_id=user_id, limit=100)
+        owns_file = False
+        for t in user_tasks:
+            for out in t.get("outputs", []):
+                fname = out.get("filename") or os.path.basename(out.get("url", "").split("?")[0])
+                if safe_name == fname or (out.get("url") and safe_name in out.get("url")) or (out.get("remoteUrl") and safe_name in out.get("remoteUrl")):
+                    owns_file = True
+                    break
+            if owns_file:
+                break
+        if not owns_file:
+            raise HTTPException(status_code=403, detail="无权访问非本人任务生成的媒体产物")
+
     cfg = load_config()
     api_key = get_active_api_key(cfg)
     if not api_key:
@@ -463,7 +486,7 @@ async def proxy_media_view(
 
     target_url = f"https://www.runninghub.cn/proxy/{api_key}/view"
     params = {
-        "filename": filename,
+        "filename": safe_name,
         "subfolder": subfolder or "",
         "type": type or "temp"
     }
